@@ -16,4 +16,3 @@ When adding memory:
 4. Add links to related pages.
 5. Do not add empty template sections.
 6. Keep pages readable by humans.
-
