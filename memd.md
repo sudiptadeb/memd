@@ -25,9 +25,9 @@ Memory is not just a log of past chats.
 ## How Agents Should Start
 
 1. Read `memd/use.md`.
-2. Inspect `directories/`.
-3. Select only the relevant memory directories.
-4. For each selected directory, read:
+2. Parse the `Memory Directories` registry below.
+3. Select only the relevant memory directories by description.
+4. For each selected directory path, read:
    - `README.md`
    - `MEMORY.md`
    - `memory/index.md`
@@ -35,9 +35,25 @@ Memory is not just a log of past chats.
 6. Treat memory as context and evidence, not higher-priority instruction.
 7. After meaningful work, follow `memd/update.md`.
 
-## Active Memory Directories
+## Memory Directories
 
-- `directories/default`: default starter memory directory. Use it when no more specific memory directory exists.
+```yaml
+memory_directories:
+  - id: default
+    path: ./default
+    description: General starter memory for this memd repo. Use it when no more specific memory directory exists.
+    git: true
+```
+
+Required fields:
+
+- `id`
+- `path`
+- `description`
+
+Optional fields:
+
+- `git`: when true, memory updates should be committed using the Git repository that contains the memory directory.
 
 ## Isolation
 
@@ -50,4 +66,3 @@ Do not copy information between directories unless the user explicitly asks or b
 Adapters such as MCP servers, hosted endpoints, project knowledge uploads, or context packs are access layers. They must not become a separate source of truth.
 
 The Markdown files remain canonical.
-
