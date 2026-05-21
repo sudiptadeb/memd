@@ -4,7 +4,11 @@ Different agents connect to memd through different surfaces.
 
 ## Local Coding Agents
 
-Use the repo directly.
+Use either:
+
+- the memd skill at `skills/memd/SKILL.md`
+- a global instruction block pointing to `memd.md`
+- the repo directly
 
 Prompt:
 
@@ -42,6 +46,17 @@ Use local repo access and project instruction files.
 
 Point their startup instructions at `memd.md`.
 
+## Install Prompt Pattern
+
+For terminal agents, give this prompt:
+
+```text
+Install memd from https://github.com/sudiptadeb/memd.
+Clone it to ~/.memd if needed.
+Follow ~/.memd/memd/install.md.
+Do not overwrite my existing instructions.
+```
+
 ## Integration Rule
 
 Every integration should eventually reduce to:
@@ -51,4 +66,3 @@ Every integration should eventually reduce to:
 3. read/search Markdown memory
 4. write Markdown changes if allowed
 5. commit or propose changes through Git
-

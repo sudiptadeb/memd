@@ -33,15 +33,16 @@ Do not store raw chat transcripts by default.
 
 ## How To Edit
 
-1. Read the selected directory's `README.md`, `MEMORY.md`, and `memory/index.md`.
-2. Search existing pages.
-3. Prefer updating an existing page.
-4. Create a new page only when the idea has durable independent meaning.
-5. Link related pages.
-6. Keep pages readable by humans.
-7. Do not add empty template sections.
-8. Do not force a folder structure.
-9. Split or organize only when the current structure becomes painful.
+1. Read `memd.md` and identify the correct memory directory.
+2. Read the selected directory's `README.md`, `MEMORY.md`, and `memory/index.md`.
+3. Search existing pages.
+4. Prefer updating an existing page.
+5. Create a new page only when the idea has durable independent meaning.
+6. Link related pages.
+7. Keep pages readable by humans.
+8. Do not add empty template sections.
+9. Do not force a folder structure.
+10. Split or organize only when the current structure becomes painful.
 
 ## When To Ask First
 
@@ -62,7 +63,9 @@ When an old decision or direction matters historically, keep a short note explai
 
 ## Commit Message
 
-For Git-backed memory, use a direct commit message such as:
+When the selected memory directory has `git: true`, commit changes using the Git repository that contains that directory.
+
+Use a direct commit message such as:
 
 ```text
 Update memory for LinkedIn writing strategy
@@ -73,4 +76,3 @@ or:
 ```text
 Record rejected MCP-first memory direction
 ```
-

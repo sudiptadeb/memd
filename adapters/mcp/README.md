@@ -30,7 +30,7 @@ Example:
 {
   "name": "Claude Web Default",
   "repo": "git@github.com:user/memory.git",
-  "base_path": "directories/default",
+  "base_path": "default",
   "branch": "memd/connector-claude-web-default",
   "mode": "read_write"
 }
@@ -57,4 +57,3 @@ For write-enabled connectors:
 5. Open or update a pull request into main.
 
 Other connectors should not read another connector's unmerged branch by default.
-
