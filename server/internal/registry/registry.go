@@ -80,13 +80,15 @@ func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
 			return nil, err
 		}
 		g, err := storage.NewGit(storage.GitConfig{
-			WorkDir:     filepath.Join(workdirs, d.ID),
-			RemoteURL:   d.Git.RemoteURL,
-			Branch:      d.Git.Branch,
-			BasePath:    d.Git.BasePath,
-			AuthorName:  d.Git.AuthorName,
-			AuthorEmail: d.Git.AuthorEmail,
-			SSHKeyPath:  d.Git.SSHKeyPath,
+			WorkDir:       filepath.Join(workdirs, d.ID),
+			RemoteURL:     d.Git.RemoteURL,
+			Branch:        d.Git.Branch,
+			BasePath:      d.Git.BasePath,
+			AuthorName:    d.Git.AuthorName,
+			AuthorEmail:   d.Git.AuthorEmail,
+			SSHKeyPath:    d.Git.SSHKeyPath,
+			WaitForWrites: parseDurationOrZero(d.Git.WaitForWrites),
+			SaveEvery:     parseDurationOrZero(d.Git.SaveEvery),
 		})
 		if err != nil {
 			return nil, err
@@ -265,6 +267,31 @@ func removeString(list []string, target string) []string {
 		}
 	}
 	return out
+}
+
+// Close flushes and closes every open backend. Safe to call once at server
+// shutdown.
+func (r *Registry) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, b := range r.backends {
+		_ = b.Close()
+		delete(r.backends, id)
+	}
+	return nil
+}
+
+// parseDurationOrZero returns the parsed duration or zero (which downstream
+// callers interpret as "use the default").
+func parseDurationOrZero(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 func newID() string {

@@ -55,7 +55,11 @@ func Run(port int) error {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nshutting down…")
-		return srv.Shutdown(context.Background())
+		shutdownErr := srv.Shutdown(context.Background())
+		if err := reg.Close(); err != nil {
+			logs.Warn("registry close: %v", err)
+		}
+		return shutdownErr
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
 			return err
