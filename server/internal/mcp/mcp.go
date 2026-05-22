@@ -109,7 +109,7 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req)
+		return s.handleInitialize(conn, req)
 	case "notifications/initialized":
 		return nil
 	case "tools/list":
@@ -127,7 +127,7 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	}
 }
 
-func (s *Server) handleInitialize(req *rpcReq) *rpcResp {
+func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcResp {
 	return &rpcResp{
 		Jsonrpc: "2.0",
 		ID:      req.ID,
@@ -140,9 +140,45 @@ func (s *Server) handleInitialize(req *rpcReq) *rpcResp {
 				"name":    s.serverName,
 				"version": s.serverVer,
 			},
-			"instructions": s.instructions,
+			"instructions": s.instructions + s.activeMemorySection(conn),
 		},
 	}
+}
+
+// activeMemorySection composes a snapshot of the connector's accessible
+// directories — descriptions plus the current contents of each index.md —
+// appended to the static doctrine on every initialize. Goal: the agent never
+// has to call memory_directories or memory_read("index.md") on connect.
+func (s *Server) activeMemorySection(conn *registry.Connector) string {
+	dirs := s.reg.DirectoriesForConnector(conn)
+	var sb strings.Builder
+	sb.WriteString("\n\n---\n\n## Active Memory\n\n")
+	if len(dirs) == 0 {
+		sb.WriteString("_No directories are accessible through this connector._\n")
+		return sb.String()
+	}
+	sb.WriteString("This section is regenerated on every MCP initialize. It is the current state of memory — treat it as already loaded.\n\n")
+	for _, d := range dirs {
+		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
+		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
+		fmt.Fprintf(&sb, "- backend: %s\n", d.Directory.Backend)
+		if d.Directory.Description != "" {
+			fmt.Fprintf(&sb, "- purpose: %s\n", d.Directory.Description)
+		}
+		sb.WriteString("\n**`index.md`:**\n\n")
+		idx, err := d.Backend.Read("index.md")
+		if err != nil {
+			fmt.Fprintf(&sb, "_(could not read: %v)_\n\n", err)
+			continue
+		}
+		sb.WriteString("```markdown\n")
+		sb.Write(idx)
+		if len(idx) == 0 || idx[len(idx)-1] != '\n' {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("```\n\n")
+	}
+	return sb.String()
 }
 
 // --- Tool catalog ---
