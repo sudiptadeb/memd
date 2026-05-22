@@ -107,7 +107,7 @@ memory/
   ...
 ```
 
-If the directory is empty when memd first sees it, the server creates a stub `MEMORY.md`. memd never modifies a directory that already has Markdown at its root. An `index.md` at the root is also accepted as the entry page (legacy fallback for older memd directories).
+If the directory is empty when memd first sees it, the server creates a stub `MEMORY.md`. memd never modifies a directory that already has Markdown at its root.
 
 ## Isolation
 
