@@ -584,66 +584,32 @@ func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (s
 
 // --- Prompts ---
 
+// promptsCatalog lists workflows as MCP prompts (slash commands) with NO
+// arguments declared. Some clients (Claude Code) treat any declared
+// argument as a UI gate, blocking the slash command on user input even
+// when the argument is marked optional. Skipping the declaration fires
+// the prompt immediately; the body itself asks for whatever it needs.
+// The memd_* tool catalog still accepts JSON args.
 var promptsCatalog = []map[string]any{
 	{
 		"name":        "reorganise",
 		"description": "Rearrange the shelves: restructure existing memory, group root pages into folders, rewrite MEMORY.md as a clean curated index, bump last_reorganised.",
-		"arguments": []map[string]any{
-			{
-				"name":        "directory_id",
-				"description": "The id of the directory to reorganise. Omit if only one directory is accessible.",
-				"required":    false,
-			},
-		},
 	},
 	{
 		"name":        "harvest",
 		"description": "Bring in the crop: gather knowledge from external sources (Claude auto-memory, Cursor rules, raw notes, another memd directory) and integrate via ADD/UPDATE/DELETE/NONE.",
-		"arguments": []map[string]any{
-			{
-				"name":        "directory_id",
-				"description": "The id of the directory to harvest INTO. Omit if only one directory is accessible.",
-				"required":    false,
-			},
-		},
 	},
 	{
 		"name":        "dream",
 		"description": "Sleep consolidation: forget unused / contradicted pages, cement what was referenced this session. Uses the per-page memd: stats (last_read_at, access_count) to decide.",
-		"arguments": []map[string]any{
-			{
-				"name":        "directory_id",
-				"description": "The id of the directory to dream over. Omit if only one directory is accessible.",
-				"required":    false,
-			},
-		},
 	},
 	{
 		"name":        "recall",
 		"description": "Reminisce on a topic: search memory, walk linked pages, and synthesise an answer rather than dumping raw search hits.",
-		"arguments": []map[string]any{
-			{
-				"name":        "topic",
-				"description": "What to recall (free text).",
-				"required":    true,
-			},
-			{
-				"name":        "directory_id",
-				"description": "Optional directory to search. Omit to search every accessible directory.",
-				"required":    false,
-			},
-		},
 	},
 	{
 		"name":        "housekeep",
-		"description": "Daily tidying: find structural drift — dangling links, MEMORY.md entries pointing to deleted files, pages missing front matter, stale last_reorganised. Fix in place with approval.",
-		"arguments": []map[string]any{
-			{
-				"name":        "directory_id",
-				"description": "The id of the directory to housekeep. Omit if only one directory is accessible.",
-				"required":    false,
-			},
-		},
+		"description": "Daily tidying: find structural drift — dangling links, orphan pages, missing front matter, stale last_reorganised. Fix in place autonomously.",
 	},
 }
 
