@@ -128,10 +128,11 @@ func (g *Git) runQuiet(args ...string) error {
 	return nil
 }
 
-func (g *Git) List() ([]string, error)               { return g.local.List() }
-func (g *Git) Read(path string) ([]byte, error)      { return g.local.Read(path) }
-func (g *Git) Search(q string, l int) ([]Hit, error) { return g.local.Search(q, l) }
-func (g *Git) Close() error                          { return nil }
+func (g *Git) List() ([]string, error)                  { return g.local.List() }
+func (g *Git) ListPath(path string) ([]DirEntry, error) { return g.local.ListPath(path) }
+func (g *Git) Read(path string) ([]byte, error)         { return g.local.Read(path) }
+func (g *Git) Search(q string, l int) ([]Hit, error)    { return g.local.Search(q, l) }
+func (g *Git) Close() error                             { return nil }
 
 func (g *Git) Write(path string, content []byte, message string) error {
 	g.mu.Lock()
@@ -197,6 +198,6 @@ func (g *Git) EnsureIndex(description string) error {
 	if description == "" {
 		description = "Memory"
 	}
-	body := fmt.Sprintf("# %s\n\nShort active memory layer. Detailed pages go under `memory/` — link to them from here.\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
+	body := starterMemoryMD(description, time.Now())
 	return g.Write("MEMORY.md", []byte(body), "memd: initialize MEMORY.md")
 }
