@@ -707,24 +707,23 @@ func workflowBody(name string, args map[string]string) (text, description string
 }
 
 func reorganiseText(args map[string]string) string {
-	return fmt.Sprintf(`Run a focused reorganisation pass on memd memory, following the doctrine's procedure.
+	return fmt.Sprintf(backgroundPreamble+`Run a focused reorganisation pass on memd memory.
 
-1. If you have not already in this session, call %smemory_load()%s so you see the current topology.
+1. If you have not already in this session, call %smemory_load()%s.
 2. %s
-3. Walk every page with %smemory_list%s and %smemory_read%s. Note which pages are:
-   - duplicated or redundant (merge),
-   - stale or superseded (drop; keep a one-line historical note if it still matters),
-   - related (candidates for grouping under a descriptive multi-word folder).
-4. **Propose the new structure to the user BEFORE writing.** Show:
-   - The folder groupings you'd create (with names).
-   - The updated one-line entries for the new MEMORY.md.
-   - Anything you'd delete or merge.
-5. Once the user approves, perform the writes with %smemory_write%s. Move pages by writing the new path and deleting the old (memd has no rename — write-then-delete).
-6. Update MEMORY.md's front matter: set %slast_reorganised%s to today's date and %sentries%s to the final one-liner count.
+3. Walk every page with %smemory_list%s and %smemory_read%s. For each, decide:
+   - duplicated or redundant → merge into the better page.
+   - stale or superseded → archive under %smemory/_archive/%s with a one-line historical note in MEMORY.md if it still matters.
+   - related to others → group under a descriptive multi-word folder.
+4. Perform the moves and rewrites with %smemory_write%s. (memd has no rename — write the new path; if the old path is no longer needed, write an empty body... actually leave the old in place and archive it instead.)
+5. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule.
+6. Update MEMORY.md's agent front matter: %slast_reorganised%s = today, %sentries%s = the final one-liner count.
+7. Report the diff: counts of pages added / moved / archived / merged; the new MEMORY.md section headers; anything skipped.
 
-Keep the user in the loop. This is a structural change, not an opportunistic edit. Don't proceed without their go-ahead on the proposed structure.`,
+Only stop for user input if the *Run in background* preamble's drastic-action triggers apply (e.g. you're about to delete prose the user wrote, or restructure more than a third of the directory in one go).`,
 		"`", "`",
 		dirHint(args),
+		"`", "`",
 		"`", "`",
 		"`", "`",
 		"`", "`",
@@ -754,18 +753,29 @@ func promptMessage(text string) []map[string]any {
 
 // backgroundPreamble is prepended to long-running passes (harvest, dream,
 // housekeep) so the agent dispatches them to a background worker when one
-// is available — keeping the main conversation responsive.
-const backgroundPreamble = `**Run in background if you can.**
+// is available — keeping the main conversation responsive — and so the
+// agent acts autonomously instead of stopping for approval ceremonies.
+const backgroundPreamble = `**Run in background if you can. Act autonomously; report when done.**
 
-If your environment has a Task / subagent / background-agent capability (Claude Code's Task tool, Codex's worker, Cursor's background agent), dispatch this entire pass to one and immediately return control to the user. The background pass should:
+If your environment has a Task / subagent / background-agent capability (Claude Code's Task tool, Codex's worker, Cursor's background agent), dispatch this entire pass to one and immediately return control to the user.
 
-1. Do the analysis described below.
-2. **Produce its findings as a structured report — do NOT make destructive writes (move, delete, archive) on its own.** Reversible fixes (e.g. fixing a dangling link, adding missing agent FM) are fine; structural moves and deletions wait for the user.
-3. Return the report when it's done.
+**Default to acting.** Do the work, then report what was done. Don't stop to ask permission for ordinary changes — every change is tracked in git and the user can review or revert.
 
-The main conversation then shows the report to the user, gets approval, and applies the approved changes (which can itself be a second dispatch).
+**Only ask the user BEFORE writing when the change is *drastic*:**
 
-If no background-agent capability is available, run inline per the steps below, asking for approval at each step.
+- **Deleting a page** (prefer archiving — move to ` + "`memory/_archive/`" + ` — over deleting, since archives preserve content).
+- **Removing prose the user themselves wrote**, or large prose blocks (more than a paragraph) from any page.
+- **Overwriting a page tagged ` + "`priority: load-bearing`" + `** when your new content contradicts it.
+- **Restructuring more than a third of the directory in one pass** (mass moves and large folder reshuffles deserve a heads-up).
+
+For everything else — adding new pages, archiving stale ones, fixing links, rewriting MEMORY.md, promoting/demoting between sections, adding cross-links — proceed without asking.
+
+When you finish, report:
+- What you did (counts plus a one-line summary of each significant change).
+- What you skipped and why.
+- Anything you flagged for user attention.
+
+If no background-agent capability is available, run inline using the same autonomous policy.
 
 ---
 
@@ -784,27 +794,30 @@ func harvestText(args map[string]string) string {
 		"4. For each candidate fact:\n"+
 		"   - `memory_search` for related existing pages.\n"+
 		"   - Decide **ADD / UPDATE / DELETE / NONE**.\n"+
-		"   - ADD → new page under `memory/` plus a MEMORY.md entry. UPDATE → edit the existing page. DELETE → remove and (if it matters historically) add a one-line supersession note. NONE → skip.\n"+
-		"5. Show the user the proposed integration BEFORE writing. Group by ADD/UPDATE/DELETE.\n"+
-		"6. After integration, report a summary: counts plus a one-line description of each significant addition.\n\n"+
-		"This is structural integration, not opportunistic capture. Get the user's go-ahead before writing.", dirHint(args))
+		"   - ADD → write a new page under `memory/` and add a one-line MEMORY.md entry.\n"+
+		"   - UPDATE → edit the existing page in place.\n"+
+		"   - DELETE → only when the new info clearly invalidates the old. Archive (move to `memory/_archive/`) instead of deleting wherever possible; add a one-line supersession note.\n"+
+		"   - NONE → skip.\n"+
+		"5. Do the writes as you go — don't stop for approval ceremonies. Drastic actions (per the preamble) still wait.\n"+
+		"6. Report a summary at the end: ADD count, UPDATE count, ARCHIVE/DELETE count, with one-line descriptions of each significant change. List anything you skipped or flagged.", dirHint(args))
 }
 
 func dreamText(args map[string]string) string {
 	return fmt.Sprintf(backgroundPreamble+"Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
-		"Goal: for this session, decide what to **cement** (load-bearing, recently-used) and what to **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
+		"Goal: for this session, **cement** (load-bearing, recently-used) and **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
 		"3. For every page, `memory_read` it and inspect the `memd:` block:\n"+
 		"   - `last_read_at` — when was this last accessed?\n"+
 		"   - `access_count` — how often is it used?\n"+
 		"   - `updated_at` — when did its body last change?\n"+
-		"4. Classify each page:\n"+
-		"   - **Cement** — high `access_count`, recent `last_read_at`, or referenced this session. Promote into MEMORY.md's top sections. Add cross-links from related pages.\n"+
-		"   - **Fade** — `last_read_at` > 90 days, `access_count` 0–1, not linked from MEMORY.md. Propose archive (move under `memory/_archive/`) or delete with a one-line supersession note.\n"+
-		"   - **Resolve contradictions** — if two pages disagree and the recent session confirmed one, supersede the other.\n"+
-		"5. Propose every move / delete / re-link to the user BEFORE writing.\n\n"+
-		"Stats are signal, not gospel. A rarely-read page can still be load-bearing (e.g. a once-a-year procedure). Use judgement.", dirHint(args))
+		"4. Act:\n"+
+		"   - **Cement** — high `access_count`, recent `last_read_at`, or referenced this session. Pull into MEMORY.md's top sections; add cross-links from related pages. Do it.\n"+
+		"   - **Fade** — `last_read_at` > 90 days, `access_count` 0–1, not linked from MEMORY.md. Archive (move under `memory/_archive/`) with a one-line supersession note in MEMORY.md if it still matters historically. Do it.\n"+
+		"   - **Resolve contradictions** — if two pages disagree and the recent session confirmed one, supersede the other in place.\n"+
+		"   - Drastic actions (deleting prose the user wrote, removing >1 paragraph, overwriting a `priority: load-bearing` page) — ask first per the preamble.\n"+
+		"5. Report the diff: counts of pages cemented / faded / merged; pages skipped because the signal was ambiguous.\n\n"+
+		"Stats are signal, not gospel. A rarely-read page can still be load-bearing (e.g. a once-a-year procedure). Use judgement; if a page's `priority` field says `load-bearing` or `reference`, treat low access_count as expected and leave it alone.", dirHint(args))
 }
 
 func recallText(args map[string]string) string {
@@ -825,17 +838,17 @@ func recallText(args map[string]string) string {
 
 func housekeepText(args map[string]string) string {
 	return fmt.Sprintf(backgroundPreamble+"Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
-		"Goal: find and fix **structural drift** without restructuring content.\n\n"+
+		"Goal: find and fix **structural drift** without restructuring content. Housekeep is the most autonomous of the workflows — almost everything it does is reversible.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
-		"3. Walk every page with `memory_read`. Flag:\n"+
-		"   - **Dangling links** — `MEMORY.md` references a page that doesn't exist.\n"+
-		"   - **Orphan pages** — pages under `memory/` not linked from `MEMORY.md`.\n"+
-		"   - **Missing agent front matter** — pages where you'd expect a `topic`, `tags`, or `related` field but it's absent.\n"+
-		"   - **Stale `last_reorganised`** — `MEMORY.md` says it's been > 90 days; suggest `reorganise`.\n"+
-		"   - **Empty templates** — section headings with no content underneath.\n"+
-		"4. Propose fixes to the user BEFORE writing. Group by issue type.\n\n"+
-		"Housekeep tidies; it doesn't restructure. If the directory needs structural change, run `reorganise` instead.", dirHint(args))
+		"3. Walk every page with `memory_read`. For each issue you find, fix it directly:\n"+
+		"   - **Dangling links** — `MEMORY.md` references a missing page. Remove the entry (or add a redirect note if you can guess the new path).\n"+
+		"   - **Orphan pages** — pages under `memory/` not linked from `MEMORY.md`. Add a one-line entry in the right section.\n"+
+		"   - **Missing agent front matter** — add `topic` / `tags` / `related` where the page's subject makes them obvious.\n"+
+		"   - **Stale `last_reorganised`** — flag in the report. Don't bump it yourself; that's `reorganise`'s job.\n"+
+		"   - **Empty template sections** — delete the empty heading.\n"+
+		"4. Report what you fixed and what you flagged (with reasoning).\n\n"+
+		"Housekeep tidies; it doesn't restructure. If the directory needs structural change, recommend `reorganise` at the end of the report.", dirHint(args))
 }
 
 // --- Tool implementations ---
