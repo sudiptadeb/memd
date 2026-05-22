@@ -136,10 +136,10 @@ func (l *Local) resolve(rel string) (string, error) {
 	return clean, nil
 }
 
-// EnsureIndex creates a starter index.md only when the directory has no
+// EnsureIndex creates a starter MEMORY.md only when the directory has no
 // Markdown content at its root. If MEMORY.md, an existing index.md, or any
-// other *.md file is present, we leave the directory alone — the user already
-// chose an entry-point convention.
+// other *.md file is present, we leave the directory alone — the user (or
+// a previous memd run) already chose an entry-point file.
 func (l *Local) EnsureIndex(description string) error {
 	entries, err := os.ReadDir(l.root)
 	if err != nil {
@@ -156,6 +156,6 @@ func (l *Local) EnsureIndex(description string) error {
 	if description == "" {
 		description = "Memory"
 	}
-	body := fmt.Sprintf("# %s\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
-	return os.WriteFile(filepath.Join(l.root, "index.md"), []byte(body), 0o644)
+	body := fmt.Sprintf("# %s\n\nShort active memory layer. Detailed pages go under `memory/` — link to them from here.\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
+	return os.WriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
 }
