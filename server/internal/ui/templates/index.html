@@ -8,157 +8,261 @@
     <script defer src="/assets/alpine.min.js"></script>
   </head>
   <body>
-    <div class="wrap">
-      <header>
-        <h1>memd</h1>
-        <p class="subtitle">Local memory server for AI agents.</p>
-      </header>
+    <div class="app">
+      <div class="left">
+        <header>
+          <h1>memd</h1>
+          <p class="subtitle">Local memory server for AI agents.</p>
+        </header>
 
-      <main>
+        <main>
 
-        <section x-data="{ showForm: false, backend: 'local', err: '', submitting: false }">
-          <div class="row">
-            <h2>Directories</h2>
-            <button type="button" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Add directory'"></button>
-          </div>
-
-          <form x-show="showForm" x-cloak class="form" @submit.prevent="
-            err = '';
-            submitting = true;
-            const payload = {
-              name: $refs.name.value,
-              description: $refs.desc.value,
-              backend: backend,
-            };
-            if (backend === 'local') {
-              payload.local_path = $refs.localPath.value;
-            } else {
-              payload.git = {
-                remote_url: $refs.remoteURL.value,
-                branch: $refs.branch.value || 'main',
-                base_path: $refs.basePath.value || '',
-                author_name: $refs.authorName.value || 'memd',
-                author_email: $refs.authorEmail.value || 'memd@localhost',
-                ssh_key_path: $refs.sshKeyPath.value || ''
-              };
+          <section x-data="{
+            showForm: false,
+            backend: 'local',
+            err: '',
+            submitting: false,
+            pickerOpen: false,
+            pickerPath: '',
+            pickerEntries: [],
+            pickerParent: '',
+            async openPicker() {
+              this.pickerOpen = true;
+              await this.browse('');
+            },
+            async browse(path) {
+              try {
+                const u = '/api/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
+                const r = await fetch(u);
+                if (!r.ok) {
+                  const j = await r.json().catch(() => ({}));
+                  this.err = j.error || 'browse failed';
+                  return;
+                }
+                const d = await r.json();
+                this.pickerPath = d.path;
+                this.pickerEntries = d.dirs || [];
+                this.pickerParent = d.parent || '';
+                this.err = '';
+              } catch (e) { this.err = String(e); }
+            },
+            selectPicker() {
+              this.$refs.localPath.value = this.pickerPath;
+              this.pickerOpen = false;
             }
-            fetch('/api/directories', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify(payload)
-            }).then(r => r.ok ? location.reload() : r.json().then(j => { err = j.error; submitting = false; }));
-          ">
-            <label>Name <input x-ref="name" required placeholder="work-memory" /></label>
-            <label>Description <input x-ref="desc" placeholder="What this directory holds" /></label>
-            <label>Backend
-              <select x-model="backend">
-                <option value="local">Local folder</option>
-                <option value="git">Git repository</option>
-              </select>
-            </label>
+          }">
+            <div class="row">
+              <h2>Directories</h2>
+              <button type="button" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Add directory'"></button>
+            </div>
 
-            <template x-if="backend === 'local'">
-              <label>Path <input x-ref="localPath" required placeholder="/Users/you/memory" /></label>
-            </template>
+            <form x-show="showForm" x-cloak class="form" @submit.prevent="
+              err = '';
+              submitting = true;
+              const payload = {
+                name: $refs.name.value,
+                description: $refs.desc.value,
+                backend: backend,
+              };
+              if (backend === 'local') {
+                payload.local_path = $refs.localPath.value;
+              } else {
+                payload.git = {
+                  remote_url: $refs.remoteURL.value,
+                  branch: $refs.branch.value || 'main',
+                  base_path: $refs.basePath.value || '',
+                  author_name: $refs.authorName.value || 'memd',
+                  author_email: $refs.authorEmail.value || 'memd@localhost',
+                  ssh_key_path: $refs.sshKeyPath.value || ''
+                };
+              }
+              fetch('/api/directories', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+              }).then(r => r.ok ? location.reload() : r.json().then(j => { err = j.error; submitting = false; }));
+            ">
+              <label>Name <input x-ref="name" required placeholder="work-memory" /></label>
+              <label>Description <input x-ref="desc" placeholder="What this directory holds" /></label>
+              <label>Backend
+                <select x-model="backend">
+                  <option value="local">Local folder</option>
+                  <option value="git">Git repository</option>
+                </select>
+              </label>
 
-            <template x-if="backend === 'git'">
-              <div class="subform">
-                <label>Remote URL <input x-ref="remoteURL" required placeholder="git@github.com:you/memory.git" /></label>
-                <label>Branch <input x-ref="branch" placeholder="main" /></label>
-                <label>Base path in repo <input x-ref="basePath" placeholder="(repo root)" /></label>
-                <label>Author name <input x-ref="authorName" placeholder="memd" /></label>
-                <label>Author email <input x-ref="authorEmail" placeholder="memd@localhost" /></label>
-                <label>SSH key path (optional) <input x-ref="sshKeyPath" placeholder="~/.ssh/id_ed25519" /></label>
+              <template x-if="backend === 'local'">
+                <div class="subform">
+                  <label>Path
+                    <div class="path-row">
+                      <input x-ref="localPath" required placeholder="/Users/you/memory" />
+                      <button type="button" @click="openPicker()">Browse&hellip;</button>
+                    </div>
+                  </label>
+                  <div x-show="pickerOpen" x-cloak class="picker">
+                    <div class="picker-path" x-text="pickerPath"></div>
+                    <ul class="picker-list">
+                      <li x-show="pickerParent">
+                        <button type="button" @click="browse(pickerParent)">.. (up)</button>
+                      </li>
+                      <template x-for="e in pickerEntries" :key="e.name">
+                        <li>
+                          <button type="button" @click="browse(pickerPath + '/' + e.name)" x-text="e.name + '/'"></button>
+                        </li>
+                      </template>
+                      <li x-show="!pickerEntries.length && !pickerParent">
+                        <span class="muted">(no subdirectories)</span>
+                      </li>
+                    </ul>
+                    <div class="row">
+                      <button type="button" @click="selectPicker()">Select this folder</button>
+                      <button type="button" @click="pickerOpen = false" class="danger">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <template x-if="backend === 'git'">
+                <div class="subform">
+                  <label>Remote URL <input x-ref="remoteURL" required placeholder="git@github.com:you/memory.git" /></label>
+                  <label>Branch <input x-ref="branch" placeholder="main" /></label>
+                  <label>Base path in repo <input x-ref="basePath" placeholder="(repo root)" /></label>
+                  <label>Author name <input x-ref="authorName" placeholder="memd" /></label>
+                  <label>Author email <input x-ref="authorEmail" placeholder="memd@localhost" /></label>
+                  <label>SSH key path (optional) <input x-ref="sshKeyPath" placeholder="~/.ssh/id_ed25519" /></label>
+                </div>
+              </template>
+
+              <div class="row">
+                <button type="submit" :disabled="submitting">Create</button>
+                <span class="err" x-show="err" x-text="err"></span>
+              </div>
+            </form>
+
+            {{if .Directories}}
+              <ul class="cards">
+                {{range .Directories}}
+                  <li>
+                    <div class="row">
+                      <strong>{{.Name}}</strong>
+                      <span class="muted">({{.Backend}})</span>
+                    </div>
+                    {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
+                    <p><code>{{.Detail}}</code></p>
+                    <button type="button" class="danger" onclick="if(confirm('Delete directory {{.Name}}?')){fetch('/api/directories/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                  </li>
+                {{end}}
+              </ul>
+            {{else}}
+              <p class="empty">No directories configured yet.</p>
+            {{end}}
+          </section>
+
+          <section x-data="{ showForm: false, selected: [], write: true, err: '', submitting: false }">
+            <div class="row">
+              <h2>Connectors</h2>
+              <button type="button" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Add connector'"></button>
+            </div>
+
+            <form x-show="showForm" x-cloak class="form" @submit.prevent="
+              err = '';
+              submitting = true;
+              fetch('/api/connectors', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  name: $refs.name.value,
+                  directory_ids: selected,
+                  write: write
+                })
+              }).then(r => r.ok ? location.reload() : r.json().then(j => { err = j.error; submitting = false; }));
+            ">
+              <label>Name <input x-ref="name" required placeholder="Claude Code" /></label>
+              <fieldset>
+                <legend>Directories this connector can see</legend>
+                {{range .Directories}}
+                  <label class="checkbox"><input type="checkbox" value="{{.ID}}" @change="$event.target.checked ? selected.push('{{.ID}}') : selected = selected.filter(x => x !== '{{.ID}}')" /> {{.Name}}</label>
+                {{else}}
+                  <p class="muted empty">Add a directory first.</p>
+                {{end}}
+              </fieldset>
+              <label class="checkbox"><input type="checkbox" x-model="write" /> Allow writes</label>
+              <div class="row">
+                <button type="submit" :disabled="submitting || !selected.length">Create</button>
+                <span class="err" x-show="err" x-text="err"></span>
+              </div>
+            </form>
+
+            {{if .Connectors}}
+              <ul class="cards">
+                {{range .Connectors}}
+                  <li>
+                    <div class="row">
+                      <strong>{{.Name}}</strong>
+                      {{if not .Write}}<span class="muted">(read-only)</span>{{end}}
+                    </div>
+                    <p class="muted">Directories: {{.DirectoryNames}}</p>
+                    <div class="url-row">
+                      <code class="url">{{.URL}}</code>
+                      <button type="button" onclick="navigator.clipboard.writeText('{{.URL}}'); this.textContent='Copied'; setTimeout(()=>this.textContent='Copy', 1200)">Copy</button>
+                    </div>
+                    <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                  </li>
+                {{end}}
+              </ul>
+            {{else}}
+              <p class="empty">No connectors yet.</p>
+            {{end}}
+          </section>
+
+        </main>
+
+        <footer>
+          Bound to 127.0.0.1. Treat connector URLs like passwords.
+        </footer>
+      </div>
+
+      <aside class="right">
+        <div class="logs-header">
+          <h2>Logs</h2>
+          <span class="muted" x-data="{ tick: 0 }" x-init="setInterval(() => tick++, 1000)" x-text="'live'"></span>
+        </div>
+        <div x-data="{
+          entries: [],
+          lastID: -1,
+          async poll() {
+            try {
+              const r = await fetch('/api/logs?since=' + this.lastID);
+              if (!r.ok) return;
+              const d = await r.json();
+              const fresh = d.entries || [];
+              if (fresh.length) {
+                for (const e of fresh) e.timeLocal = new Date(e.time).toLocaleTimeString();
+                this.entries = [...this.entries, ...fresh].slice(-200);
+                this.lastID = fresh[fresh.length - 1].id;
+                this.$nextTick(() => {
+                  const el = this.$refs.scroll;
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              }
+            } catch (e) {}
+          },
+          init() {
+            this.poll();
+            setInterval(() => this.poll(), 2000);
+          }
+        }" class="logs-wrap">
+          <div class="logs-scroll" x-ref="scroll">
+            <template x-for="e in entries" :key="e.id">
+              <div class="log-line" :data-level="e.level">
+                <span class="log-time" x-text="e.timeLocal"></span>
+                <span class="log-msg" x-text="e.message"></span>
               </div>
             </template>
-
-            <div class="row">
-              <button type="submit" :disabled="submitting">Create</button>
-              <span class="err" x-show="err" x-text="err"></span>
-            </div>
-          </form>
-
-          {{if .Directories}}
-            <ul class="cards">
-              {{range .Directories}}
-                <li>
-                  <div class="row">
-                    <strong>{{.Name}}</strong>
-                    <span class="muted">({{.Backend}})</span>
-                  </div>
-                  {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
-                  <p><code>{{.Detail}}</code></p>
-                  <button type="button" class="danger" onclick="if(confirm('Delete directory {{.Name}}?')){fetch('/api/directories/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
-                </li>
-              {{end}}
-            </ul>
-          {{else}}
-            <p class="empty">No directories configured yet.</p>
-          {{end}}
-        </section>
-
-        <section x-data="{ showForm: false, selected: [], write: true, err: '', submitting: false }">
-          <div class="row">
-            <h2>Connectors</h2>
-            <button type="button" @click="showForm = !showForm" x-text="showForm ? 'Cancel' : '+ Add connector'"></button>
+            <p x-show="!entries.length" class="empty">Waiting for activity&hellip;</p>
           </div>
-
-          <form x-show="showForm" x-cloak class="form" @submit.prevent="
-            err = '';
-            submitting = true;
-            fetch('/api/connectors', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({
-                name: $refs.name.value,
-                directory_ids: selected,
-                write: write
-              })
-            }).then(r => r.ok ? location.reload() : r.json().then(j => { err = j.error; submitting = false; }));
-          ">
-            <label>Name <input x-ref="name" required placeholder="Claude Code" /></label>
-            <fieldset>
-              <legend>Directories this connector can see</legend>
-              {{range .Directories}}
-                <label class="checkbox"><input type="checkbox" value="{{.ID}}" @change="$event.target.checked ? selected.push('{{.ID}}') : selected = selected.filter(x => x !== '{{.ID}}')" /> {{.Name}}</label>
-              {{else}}
-                <p class="muted empty">Add a directory first.</p>
-              {{end}}
-            </fieldset>
-            <label class="checkbox"><input type="checkbox" x-model="write" /> Allow writes</label>
-            <div class="row">
-              <button type="submit" :disabled="submitting || !selected.length">Create</button>
-              <span class="err" x-show="err" x-text="err"></span>
-            </div>
-          </form>
-
-          {{if .Connectors}}
-            <ul class="cards">
-              {{range .Connectors}}
-                <li>
-                  <div class="row">
-                    <strong>{{.Name}}</strong>
-                    {{if not .Write}}<span class="muted">(read-only)</span>{{end}}
-                  </div>
-                  <p class="muted">Directories: {{.DirectoryNames}}</p>
-                  <div class="url-row">
-                    <code class="url">{{.URL}}</code>
-                    <button type="button" onclick="navigator.clipboard.writeText('{{.URL}}'); this.textContent='Copied'; setTimeout(()=>this.textContent='Copy', 1200)">Copy</button>
-                  </div>
-                  <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
-                </li>
-              {{end}}
-            </ul>
-          {{else}}
-            <p class="empty">No connectors yet.</p>
-          {{end}}
-        </section>
-
-      </main>
-
-      <footer>
-        Bound to 127.0.0.1. Treat connector URLs like passwords.
-      </footer>
+        </div>
+      </aside>
     </div>
   </body>
 </html>
