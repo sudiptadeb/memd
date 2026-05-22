@@ -127,12 +127,10 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	}
 }
 
-func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcResp {
-	// Active Memory comes FIRST so that any client-side truncation of the
-	// `instructions` field drops the (less critical) doctrine rather than the
-	// actual memory data. Tool schemas live in tools/list, so losing the
-	// doctrine does not break tool dispatch.
-	instr := s.activeMemorySection(conn) + "\n---\n\n" + s.instructions
+func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
+	// The instructions field carries the doctrine only (stable, small).
+	// Active memory content arrives via the memory_load tool, which the
+	// doctrine instructs the agent to call as its first action.
 	return &rpcResp{
 		Jsonrpc: "2.0",
 		ID:      req.ID,
@@ -145,7 +143,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 				"name":    s.serverName,
 				"version": s.serverVer,
 			},
-			"instructions": instr,
+			"instructions": s.instructions,
 		},
 	}
 }
@@ -166,7 +164,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		sb.WriteString("_No directories are accessible through this connector._\n")
 		return sb.String()
 	}
-	sb.WriteString("This section is regenerated on every MCP initialize. It is the current state of memory — treat it as already loaded.\n\n")
+	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know.\n\n")
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
 		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
@@ -227,8 +225,16 @@ func chooseEntryPage(pages []string) string {
 
 var toolsCatalog = []map[string]any{
 	{
+		"name":        "memory_load",
+		"description": "MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, page listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
 		"name":        "memory_directories",
-		"description": "List the memory directories this connector can access.",
+		"description": "List the memory directories this connector can access (no content). Rarely needed — memory_load returns more.",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -311,6 +317,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		isErr bool
 	)
 	switch params.Name {
+	case "memory_load":
+		text = s.activeMemorySection(conn)
 	case "memory_directories":
 		text = s.toolDirectories(conn)
 	case "memory_search":
