@@ -1,0 +1,122 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// Dir returns the platform-specific memd config directory.
+//
+//	macOS:   ~/Library/Application Support/memd
+//	Linux:   ~/.config/memd  (or $XDG_CONFIG_HOME/memd)
+//	Windows: %AppData%\memd
+func Dir() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "memd"), nil
+}
+
+// File returns the path to config.json.
+func File() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// WorkdirsRoot returns the root path for git working copies.
+func WorkdirsRoot() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "workdirs"), nil
+}
+
+// Config is the on-disk shape of memd state.
+type Config struct {
+	Directories []Directory `json:"directories"`
+	Connectors  []Connector `json:"connectors"`
+}
+
+// Directory describes one memory directory.
+type Directory struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Backend     string    `json:"backend"` // "local" or "git"
+	LocalPath   string    `json:"local_path,omitempty"`
+	Git         *Git      `json:"git,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Git is the per-directory git backend config.
+type Git struct {
+	RemoteURL   string `json:"remote_url"`
+	Branch      string `json:"branch"`
+	BasePath    string `json:"base_path"`
+	AuthorName  string `json:"author_name"`
+	AuthorEmail string `json:"author_email"`
+	SSHKeyPath  string `json:"ssh_key_path,omitempty"`
+}
+
+// Connector grants an MCP client access to one or more directories.
+type Connector struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Token        string    `json:"token"`
+	DirectoryIDs []string  `json:"directory_ids"`
+	Write        bool      `json:"write"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Load reads config.json. Returns an empty Config if the file does not exist.
+func Load() (*Config, error) {
+	path, err := File()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return &Config{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Save atomically writes config.json with 0600 mode.
+func Save(c *Config) error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path, err := File()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
