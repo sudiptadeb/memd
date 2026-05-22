@@ -136,17 +136,26 @@ func (l *Local) resolve(rel string) (string, error) {
 	return clean, nil
 }
 
-// EnsureIndex creates index.md with a starter message if it doesn't already exist.
+// EnsureIndex creates a starter index.md only when the directory has no
+// Markdown content at its root. If MEMORY.md, an existing index.md, or any
+// other *.md file is present, we leave the directory alone — the user already
+// chose an entry-point convention.
 func (l *Local) EnsureIndex(description string) error {
-	idx := filepath.Join(l.root, "index.md")
-	if _, err := os.Stat(idx); err == nil {
-		return nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	entries, err := os.ReadDir(l.root)
+	if err != nil {
 		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			return nil
+		}
 	}
 	if description == "" {
 		description = "Memory"
 	}
 	body := fmt.Sprintf("# %s\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
-	return os.WriteFile(idx, []byte(body), 0o644)
+	return os.WriteFile(filepath.Join(l.root, "index.md"), []byte(body), 0o644)
 }

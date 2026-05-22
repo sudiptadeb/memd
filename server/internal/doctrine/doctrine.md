@@ -96,7 +96,14 @@ Update pages in place when understanding changes. When an old decision matters h
 
 ## Directory Layout
 
-Each directory has at minimum `index.md` at its root. The server creates it for you if missing. Other pages emerge as memory grows — you decide when and how to split.
+Each directory has a top-level entry page at its root:
+
+- `MEMORY.md` (auto-memory convention) takes priority if present.
+- Otherwise `index.md` (wiki convention) is the entry.
+
+If the directory is empty when memd first sees it, the server creates a stub `index.md`. If the directory already has any Markdown at root, memd leaves it alone.
+
+Other pages and subdirectories emerge as memory grows — you decide when and how to split.
 
 ## Isolation
 
