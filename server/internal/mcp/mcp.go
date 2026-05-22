@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
@@ -109,6 +110,7 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	switch req.Method {
 	case "initialize":
+		logs.Info("MCP initialize from connector %q", conn.Name)
 		return s.handleInitialize(conn, req)
 	case "notifications/initialized":
 		return nil
@@ -312,6 +314,7 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		}
 	}
 
+	logs.Info("MCP tools/call %s from %q", params.Name, conn.Name)
 	var (
 		text  string
 		isErr bool
