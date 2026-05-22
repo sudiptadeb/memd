@@ -47,35 +47,74 @@ If the user mentions memory feels cluttered, or any *Reorganisation* trigger fir
 - `memory_status()` — backend health and last sync per directory.
 - `memory_directories()` — bare directory list, no content. Rarely needed; `memory_load` returns more.
 
-## Front Matter
+## Page Structure
 
-Every page (including `MEMORY.md`) carries YAML front matter. It has two parts:
+Every memory page is a Markdown file with YAML front matter followed by the body:
+
+```
+---
+<front matter (yaml)>
+---
+
+<body (markdown)>
+```
+
+Front matter has **two ownership zones**:
+
+| Zone                       | Who writes it     | What lives there                                                                         |
+|----------------------------|-------------------|------------------------------------------------------------------------------------------|
+| `memd:` subtree            | **Server only**   | `created_at`, `updated_at`, `last_read_at`, `access_count`                               |
+| Every other top-level key  | **Agent only**    | `topic`, `tags`, `priority`, `related`, `superseded_by`, plus per-page-type fields below |
+
+You can **read** the entire front matter freely — that's how `dream` and `housekeep` make decisions. You can **write** only the agent zone.
+
+Worked example:
 
 ```yaml
 ---
-memd:
-  created_at: 2026-04-10      # server-managed: first write
-  updated_at: 2026-05-22      # server-managed: last body change
-  last_read_at: 2026-05-23    # server-managed: last memory_read
-  access_count: 17            # server-managed: total reads
-topic: dlp
+memd:                                  # server-managed, read-only for you
+  created_at: 2026-04-10
+  updated_at: 2026-05-22
+  last_read_at: 2026-05-23
+  access_count: 17
+topic: dlp                             # agent-managed
 priority: load-bearing
 tags: [scanner, performance]
 related: [feedback-nftables-rule-order]
 ---
+
+# Page body...
 ```
 
-The **`memd:` subtree is server-reserved.** You read it (it's your signal for `dream` / `housekeep`); you do not write it. Any `memd:` block in your `memory_write` payload is silently discarded.
+### What the server does with your `memory_write` payload
 
-Every other top-level key is **agent-managed.** Suggested keys (use freely):
+- Any `memd:` block in your content is **silently discarded** and replaced with the server's authoritative values. You can't lie about access counts or timestamps.
+- All other front-matter keys you include are kept verbatim.
+- The body is kept verbatim.
+
+So when you call `memory_write`, just write the agent zone you care about plus the body. Leave `memd:` out (or include it harmlessly — it's discarded either way).
+
+### Suggested agent keys (every page)
 
 - `topic` — one-line subject (e.g. `dlp`, `parent-server`).
 - `tags` — list of short labels (e.g. `[scanner, performance]`).
-- `priority` — qualitative (e.g. `load-bearing`, `reference`, `historical`).
-- `superseded_by` — path of the page that replaced this one.
+- `priority` — qualitative weight (e.g. `load-bearing`, `reference`, `historical`).
+- `superseded_by` — path of the page that replaced this one (when keeping a historical stub).
 - `related` — list of related page paths or names.
 
 Add others if useful for the directory's domain. Keep agent FM compact — a one-liner per key, not paragraphs.
+
+### `MEMORY.md` carries these extra agent keys
+
+`MEMORY.md` is the index, and reorganisation hangs off its front matter. Agent-owned fields specific to it:
+
+```yaml
+last_reorganised: 2026-05-22    # date of last reorganise pass — drives the >90-day trigger
+entries: 14                     # current count of one-line entries in the file
+limit: 30                       # soft cap; exceeding it triggers reorganise
+```
+
+The `reorganise` prompt is the canonical place that bumps `last_reorganised` and sets `entries`. Don't update these as a side-effect of unrelated work — they describe the file as a whole.
 
 ## When To Update
 
