@@ -17,6 +17,14 @@ type Backend interface {
 	Write(path string, content []byte, message string) error
 	Search(query string, limit int) ([]Hit, error)
 	Status() Status
+
+	// Flush forces any deferred writes (e.g. debounced git commits) to
+	// complete. Local backends flush instantly on each write and so return
+	// nil. Idempotent.
+	Flush() error
+
+	// Close releases backend resources. Implementations should flush before
+	// closing.
 	Close() error
 }
 
