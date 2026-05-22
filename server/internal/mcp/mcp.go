@@ -14,7 +14,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
-const protocolVersion = "2024-11-05"
+const protocolVersion = "2025-03-26"
 
 // Server is an MCP endpoint backed by a registry.
 type Server struct {
@@ -66,8 +66,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	resp := s.dispatch(conn, &req)
 	if resp == nil {
-		// notification — no response body
-		w.WriteHeader(http.StatusOK)
+		// JSON-RPC notification — MCP Streamable HTTP spec requires
+		// 202 Accepted with no body. Strict clients (rmcp / Codex CLI)
+		// treat any other status as a protocol error and close the
+		// transport.
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
