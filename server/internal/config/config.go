@@ -65,6 +65,16 @@ type Git struct {
 	AuthorName  string `json:"author_name"`
 	AuthorEmail string `json:"author_email"`
 	SSHKeyPath  string `json:"ssh_key_path,omitempty"`
+
+	// WaitForWrites is the debounce window after a memory_write. Any further
+	// write resets the timer; on expiry the working copy is committed and
+	// pushed. Accepts Go duration strings ("5m", "30s"). Default: 5m.
+	WaitForWrites string `json:"wait_for_writes,omitempty"`
+
+	// SaveEvery is the periodic safety flush interval. If the working copy
+	// has dirty files (e.g. read-only session that bumped FM stats) it's
+	// committed regardless of write activity. Default: 10m.
+	SaveEvery string `json:"save_every,omitempty"`
 }
 
 // Connector grants an MCP client access to one or more directories.

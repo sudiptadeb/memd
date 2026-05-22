@@ -19,6 +19,15 @@ BINARY="memd"
 DIST_DIR="dist"
 LDFLAGS="-s -w -X github.com/sudiptadeb/memd/server/internal/version.Value=${VERSION}"
 
+sync_doctrine() {
+  # Mirror the canonical doctrine into the embedded copy so go:embed picks
+  # up the latest text. The two files must stay byte-identical.
+  if [[ ! -f docs/doctrine.md ]]; then
+    return
+  fi
+  cp docs/doctrine.md server/internal/doctrine/doctrine.md
+}
+
 build_one() {
   local goos="$1"
   local goarch="$2"
@@ -40,12 +49,14 @@ case "${TARGET}" in
     exit 0
     ;;
   all)
+    sync_doctrine
     build_one darwin arm64
     build_one darwin amd64
     build_one linux  arm64
     build_one linux  amd64
     ;;
   host)
+    sync_doctrine
     build_one "$(go env GOOS)" "$(go env GOARCH)"
     ;;
   *)

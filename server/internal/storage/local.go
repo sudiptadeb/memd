@@ -61,14 +61,57 @@ func (l *Local) List() ([]string, error) {
 	return out, err
 }
 
+// Read returns the page bytes after bumping its server-managed stats. For
+// Markdown pages the server parses the `memd:` front matter subtree, updates
+// last_read_at and access_count, writes the updated page back through to
+// disk, and returns the rendered bytes (so the agent sees the current
+// stats). Non-Markdown files pass through untouched.
 func (l *Local) Read(path string) ([]byte, error) {
 	abs, err := l.resolve(path)
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(abs)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, err
+	}
+	if !isMarkdownPath(path) {
+		return data, nil
+	}
+	p := ParsePage(data)
+	now := today()
+	// For legacy pages (no memd: block yet), seed timestamps from the file's
+	// mtime so the migration is roughly accurate. Today is the fallback if
+	// stat fails.
+	if p.Stats.CreatedAt.IsZero() || p.Stats.UpdatedAt.IsZero() {
+		seed := now
+		if info, err := os.Stat(abs); err == nil {
+			t := info.ModTime().UTC()
+			seed = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		}
+		if p.Stats.CreatedAt.IsZero() {
+			p.Stats.CreatedAt = seed
+		}
+		if p.Stats.UpdatedAt.IsZero() {
+			p.Stats.UpdatedAt = seed
+		}
+	}
+	p.Stats.LastReadAt = now
+	p.Stats.AccessCount++
+	out := Page{
+		Stats:   p.Stats,
+		AgentFM: p.AgentFM,
+		HasFM:   true,
+		Body:    p.Body,
+	}.Render()
+	_ = os.WriteFile(abs, out, 0o644)
+	return out, nil
 }
 
+// Write persists the page. The agent's `memd:` subtree (if any) in the
+// payload is discarded; the server merges its own authoritative stats with
+// whatever existed on disk. created_at is set on first write; updated_at is
+// bumped every write; last_read_at and access_count are preserved.
 func (l *Local) Write(path string, content []byte, _ string) error {
 	abs, err := l.resolve(path)
 	if err != nil {
@@ -77,7 +120,37 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(abs, content, 0o644)
+	if !isMarkdownPath(path) {
+		return os.WriteFile(abs, content, 0o644)
+	}
+
+	var existing MemdStats
+	if old, err := os.ReadFile(abs); err == nil {
+		existing = ParsePage(old).Stats
+	}
+
+	incoming := ParsePage(content)
+	now := today()
+	stats := MemdStats{
+		CreatedAt:   existing.CreatedAt,
+		UpdatedAt:   now,
+		LastReadAt:  existing.LastReadAt,
+		AccessCount: existing.AccessCount,
+	}
+	if stats.CreatedAt.IsZero() {
+		stats.CreatedAt = now
+	}
+	out := Page{
+		Stats:   stats,
+		AgentFM: incoming.AgentFM,
+		HasFM:   true,
+		Body:    incoming.Body,
+	}.Render()
+	return os.WriteFile(abs, out, 0o644)
+}
+
+func isMarkdownPath(p string) bool {
+	return strings.HasSuffix(strings.ToLower(p), ".md")
 }
 
 func (l *Local) Search(query string, limit int) ([]Hit, error) {
@@ -122,6 +195,8 @@ func (l *Local) Status() Status {
 	return Status{Backend: "local", Path: l.root, LastSync: time.Now()}
 }
 
+func (l *Local) Flush() error { return nil }
+
 func (l *Local) Close() error { return nil }
 
 // resolve maps a directory-relative path to an absolute path and rejects traversal.
@@ -162,13 +237,13 @@ func (l *Local) EnsureIndex(description string) error {
 }
 
 // starterMemoryMD returns the body for an empty-directory MEMORY.md stub.
+// The page carries both the server-managed memd: subtree (created via the
+// Page renderer for consistency) and the agent-managed last_reorganised /
+// entries / limit fields the reorganise prompt expects.
 func starterMemoryMD(description string, now time.Time) string {
-	return fmt.Sprintf(`---
-last_reorganised: %s
-entries: 0
-limit: 30
----
-
+	date := now.Format("2006-01-02")
+	agentFM := fmt.Sprintf("last_reorganised: %s\nentries: 0\nlimit: 30\n", date)
+	body := fmt.Sprintf(`
 # %s
 
 Curated index. Pages live under `+"`memory/`"+`; this file is the map.
@@ -176,7 +251,13 @@ Curated index. Pages live under `+"`memory/`"+`; this file is the map.
 Group entries under thematic H2 sections (e.g. `+"`## Rules & Conventions`, `## Architecture Notes`, `## Lessons / Feedback`"+`). Each entry is one line: a link to a page plus a concrete one-line description of what the page contains. Curate, don't just list files.
 
 _(no memory yet — populate as durable knowledge accrues)_
-`, now.Format("2006-01-02"), description)
+`, description)
+	stats := MemdStats{
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		LastReadAt: now,
+	}
+	return string(Page{Stats: stats, AgentFM: agentFM, HasFM: true, Body: []byte(body)}.Render())
 }
 
 // ListPath returns the direct children at the given path inside the directory.

@@ -524,11 +524,60 @@ func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (s
 var promptsCatalog = []map[string]any{
 	{
 		"name":        "reorganise",
-		"description": "Run a focused reorganisation pass on memd memory: drop stale content, group related pages into folders, rewrite MEMORY.md as a clean one-liner index, and update its front matter.",
+		"description": "Rearrange the shelves: restructure existing memory, group root pages into folders, rewrite MEMORY.md as a clean curated index, bump last_reorganised.",
 		"arguments": []map[string]any{
 			{
 				"name":        "directory_id",
 				"description": "The id of the directory to reorganise. Omit if only one directory is accessible.",
+				"required":    false,
+			},
+		},
+	},
+	{
+		"name":        "harvest",
+		"description": "Bring in the crop: gather knowledge from external sources (Claude auto-memory, Cursor rules, raw notes, another memd directory) and integrate via ADD/UPDATE/DELETE/NONE.",
+		"arguments": []map[string]any{
+			{
+				"name":        "directory_id",
+				"description": "The id of the directory to harvest INTO. Omit if only one directory is accessible.",
+				"required":    false,
+			},
+		},
+	},
+	{
+		"name":        "dream",
+		"description": "Sleep consolidation: forget unused / contradicted pages, cement what was referenced this session. Uses the per-page memd: stats (last_read_at, access_count) to decide.",
+		"arguments": []map[string]any{
+			{
+				"name":        "directory_id",
+				"description": "The id of the directory to dream over. Omit if only one directory is accessible.",
+				"required":    false,
+			},
+		},
+	},
+	{
+		"name":        "recall",
+		"description": "Reminisce on a topic: search memory, walk linked pages, and synthesise an answer rather than dumping raw search hits.",
+		"arguments": []map[string]any{
+			{
+				"name":        "topic",
+				"description": "What to recall (free text).",
+				"required":    true,
+			},
+			{
+				"name":        "directory_id",
+				"description": "Optional directory to search. Omit to search every accessible directory.",
+				"required":    false,
+			},
+		},
+	},
+	{
+		"name":        "housekeep",
+		"description": "Daily tidying: find structural drift — dangling links, MEMORY.md entries pointing to deleted files, pages missing front matter, stale last_reorganised. Fix in place with approval.",
+		"arguments": []map[string]any{
+			{
+				"name":        "directory_id",
+				"description": "The id of the directory to housekeep. Omit if only one directory is accessible.",
 				"required":    false,
 			},
 		},
@@ -561,8 +610,44 @@ func (s *Server) handlePromptsGet(_ *registry.Connector, req *rpcReq) *rpcResp {
 			Jsonrpc: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"description": "Run a focused reorganisation pass on memd memory.",
+				"description": "Rearrange the shelves.",
 				"messages":    reorganisePrompt(params.Arguments),
+			},
+		}
+	case "harvest":
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"description": "Bring in the crop.",
+				"messages":    harvestPrompt(params.Arguments),
+			},
+		}
+	case "dream":
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"description": "Sleep consolidation.",
+				"messages":    dreamPrompt(params.Arguments),
+			},
+		}
+	case "recall":
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"description": "Reminisce on a topic.",
+				"messages":    recallPrompt(params.Arguments),
+			},
+		}
+	case "housekeep":
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"description": "Daily tidying.",
+				"messages":    housekeepPrompt(params.Arguments),
 			},
 		}
 	default:
@@ -612,6 +697,96 @@ Keep the user in the loop. This is a structural change, not an opportunistic edi
 			},
 		},
 	}
+}
+
+func dirHint(args map[string]string) string {
+	if id := strings.TrimSpace(args["directory_id"]); id != "" {
+		return fmt.Sprintf("Target directory id: `%s`.", id)
+	}
+	return "If multiple directories are accessible, ask the user which one to operate on."
+}
+
+func promptMessage(text string) []map[string]any {
+	return []map[string]any{
+		{
+			"role": "user",
+			"content": map[string]any{
+				"type": "text",
+				"text": text,
+			},
+		},
+	}
+}
+
+func harvestPrompt(args map[string]string) []map[string]any {
+	text := fmt.Sprintf("Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
+		"Goal: gather durable knowledge from sources OUTSIDE memd (your other memory systems — Claude's auto-memory, Cursor rules, paste-in notes, another memd directory, prior session context) and integrate it INTO memd.\n\n"+
+		"1. Call `memory_load()` so you see the current state of memd memory.\n"+
+		"2. %s\n"+
+		"3. List the external sources you can see right now. Examples:\n"+
+		"   - Claude Code's `CLAUDE.md` / `AGENTS.md` auto-memory.\n"+
+		"   - Cursor's `.cursorrules` or rules pages.\n"+
+		"   - Notes the user has pasted into this conversation.\n"+
+		"   - Facts inferred from prior session context.\n"+
+		"4. For each candidate fact:\n"+
+		"   - `memory_search` for related existing pages.\n"+
+		"   - Decide **ADD / UPDATE / DELETE / NONE**.\n"+
+		"   - ADD → new page under `memory/` plus a MEMORY.md entry. UPDATE → edit the existing page. DELETE → remove and (if it matters historically) add a one-line supersession note. NONE → skip.\n"+
+		"5. Show the user the proposed integration BEFORE writing. Group by ADD/UPDATE/DELETE.\n"+
+		"6. After integration, report a summary: counts plus a one-line description of each significant addition.\n\n"+
+		"This is structural integration, not opportunistic capture. Get the user's go-ahead before writing.", dirHint(args))
+	return promptMessage(text)
+}
+
+func dreamPrompt(args map[string]string) []map[string]any {
+	text := fmt.Sprintf("Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
+		"Goal: for this session, decide what to **cement** (load-bearing, recently-used) and what to **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
+		"1. Call `memory_load()` to see the current state.\n"+
+		"2. %s\n"+
+		"3. For every page, `memory_read` it and inspect the `memd:` block:\n"+
+		"   - `last_read_at` — when was this last accessed?\n"+
+		"   - `access_count` — how often is it used?\n"+
+		"   - `updated_at` — when did its body last change?\n"+
+		"4. Classify each page:\n"+
+		"   - **Cement** — high `access_count`, recent `last_read_at`, or referenced this session. Promote into MEMORY.md's top sections. Add cross-links from related pages.\n"+
+		"   - **Fade** — `last_read_at` > 90 days, `access_count` 0–1, not linked from MEMORY.md. Propose archive (move under `memory/_archive/`) or delete with a one-line supersession note.\n"+
+		"   - **Resolve contradictions** — if two pages disagree and the recent session confirmed one, supersede the other.\n"+
+		"5. Propose every move / delete / re-link to the user BEFORE writing.\n\n"+
+		"Stats are signal, not gospel. A rarely-read page can still be load-bearing (e.g. a once-a-year procedure). Use judgement.", dirHint(args))
+	return promptMessage(text)
+}
+
+func recallPrompt(args map[string]string) []map[string]any {
+	topic := strings.TrimSpace(args["topic"])
+	if topic == "" {
+		topic = "(no topic supplied — ask the user what they want to recall)"
+	}
+	text := fmt.Sprintf("Run a `recall` pass on memd memory — reminisce on a topic.\n\n"+
+		"Topic: **%s**\n\n"+
+		"1. Call `memory_load()` if you haven't this session.\n"+
+		"2. %s\n"+
+		"3. Run `memory_search` for the topic and adjacent terms.\n"+
+		"4. `memory_read` each promising hit.\n"+
+		"5. Walk the in-page links — read related pages too.\n"+
+		"6. Synthesise an answer for the user: what memd actually says about the topic, with page links. Cite the pages you used.\n\n"+
+		"Don't dump raw search hits. Walk the wiki and present what you found.", topic, dirHint(args))
+	return promptMessage(text)
+}
+
+func housekeepPrompt(args map[string]string) []map[string]any {
+	text := fmt.Sprintf("Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
+		"Goal: find and fix **structural drift** without restructuring content.\n\n"+
+		"1. Call `memory_load()` to see the current state.\n"+
+		"2. %s\n"+
+		"3. Walk every page with `memory_read`. Flag:\n"+
+		"   - **Dangling links** — `MEMORY.md` references a page that doesn't exist.\n"+
+		"   - **Orphan pages** — pages under `memory/` not linked from `MEMORY.md`.\n"+
+		"   - **Missing agent front matter** — pages where you'd expect a `topic`, `tags`, or `related` field but it's absent.\n"+
+		"   - **Stale `last_reorganised`** — `MEMORY.md` says it's been > 90 days; suggest `reorganise`.\n"+
+		"   - **Empty templates** — section headings with no content underneath.\n"+
+		"4. Propose fixes to the user BEFORE writing. Group by issue type.\n\n"+
+		"Housekeep tidies; it doesn't restructure. If the directory needs structural change, run `reorganise` instead.", dirHint(args))
+	return promptMessage(text)
 }
 
 // --- Tool implementations ---
