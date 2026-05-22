@@ -208,15 +208,10 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 }
 
 // chooseEntryPage picks the directory's entry-point page from a flat list.
-// Priority: MEMORY.md (auto-memory convention) → index.md (wiki).
+// MEMORY.md is the canonical entry; nothing else is honored.
 func chooseEntryPage(pages []string) string {
 	for _, p := range pages {
 		if p == "MEMORY.md" {
-			return p
-		}
-	}
-	for _, p := range pages {
-		if p == "index.md" {
 			return p
 		}
 	}
