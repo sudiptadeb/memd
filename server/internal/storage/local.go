@@ -1,0 +1,152 @@
+package storage
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Local is a memory backend backed by a plain folder of Markdown files.
+type Local struct {
+	root string
+}
+
+func NewLocal(root string) (*Local, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", abs)
+	}
+	return &Local{root: abs}, nil
+}
+
+// Root returns the absolute root path.
+func (l *Local) Root() string { return l.root }
+
+func (l *Local) List() ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(l.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if path != l.root && strings.HasPrefix(name, ".") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(l.root, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	return out, err
+}
+
+func (l *Local) Read(path string) ([]byte, error) {
+	abs, err := l.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(abs)
+}
+
+func (l *Local) Write(path string, content []byte, _ string) error {
+	abs, err := l.resolve(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(abs, content, 0o644)
+}
+
+func (l *Local) Search(query string, limit int) ([]Hit, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, errors.New("empty query")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	paths, err := l.List()
+	if err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(query)
+	var hits []Hit
+	for _, p := range paths {
+		abs := filepath.Join(l.root, filepath.FromSlash(p))
+		f, err := os.Open(abs)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		lineNo := 0
+		for scanner.Scan() {
+			lineNo++
+			line := scanner.Text()
+			if strings.Contains(strings.ToLower(line), q) {
+				hits = append(hits, Hit{Path: p, Line: lineNo, Snippet: strings.TrimSpace(line)})
+				if len(hits) >= limit {
+					f.Close()
+					return hits, nil
+				}
+			}
+		}
+		f.Close()
+	}
+	return hits, nil
+}
+
+func (l *Local) Status() Status {
+	return Status{Backend: "local", Path: l.root, LastSync: time.Now()}
+}
+
+func (l *Local) Close() error { return nil }
+
+// resolve maps a directory-relative path to an absolute path and rejects traversal.
+func (l *Local) resolve(rel string) (string, error) {
+	if rel == "" {
+		return "", errors.New("empty path")
+	}
+	clean := filepath.Clean(filepath.Join(l.root, filepath.FromSlash(rel)))
+	rootClean := filepath.Clean(l.root)
+	if clean != rootClean && !strings.HasPrefix(clean, rootClean+string(filepath.Separator)) {
+		return "", errors.New("path escapes directory")
+	}
+	return clean, nil
+}
+
+// EnsureIndex creates index.md with a starter message if it doesn't already exist.
+func (l *Local) EnsureIndex(description string) error {
+	idx := filepath.Join(l.root, "index.md")
+	if _, err := os.Stat(idx); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if description == "" {
+		description = "Memory"
+	}
+	body := fmt.Sprintf("# %s\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
+	return os.WriteFile(idx, []byte(body), 0o644)
+}
