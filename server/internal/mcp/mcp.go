@@ -718,8 +718,27 @@ func promptMessage(text string) []map[string]any {
 	}
 }
 
+// backgroundPreamble is prepended to long-running passes (harvest, dream,
+// housekeep) so the agent dispatches them to a background worker when one
+// is available — keeping the main conversation responsive.
+const backgroundPreamble = `**Run in background if you can.**
+
+If your environment has a Task / subagent / background-agent capability (Claude Code's Task tool, Codex's worker, Cursor's background agent), dispatch this entire pass to one and immediately return control to the user. The background pass should:
+
+1. Do the analysis described below.
+2. **Produce its findings as a structured report — do NOT make destructive writes (move, delete, archive) on its own.** Reversible fixes (e.g. fixing a dangling link, adding missing agent FM) are fine; structural moves and deletions wait for the user.
+3. Return the report when it's done.
+
+The main conversation then shows the report to the user, gets approval, and applies the approved changes (which can itself be a second dispatch).
+
+If no background-agent capability is available, run inline per the steps below, asking for approval at each step.
+
+---
+
+`
+
 func harvestPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf("Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
+	text := fmt.Sprintf(backgroundPreamble+"Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
 		"Goal: gather durable knowledge from sources OUTSIDE memd (your other memory systems — Claude's auto-memory, Cursor rules, paste-in notes, another memd directory, prior session context) and integrate it INTO memd.\n\n"+
 		"1. Call `memory_load()` so you see the current state of memd memory.\n"+
 		"2. %s\n"+
@@ -739,7 +758,7 @@ func harvestPrompt(args map[string]string) []map[string]any {
 }
 
 func dreamPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf("Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
+	text := fmt.Sprintf(backgroundPreamble+"Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
 		"Goal: for this session, decide what to **cement** (load-bearing, recently-used) and what to **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
@@ -774,7 +793,7 @@ func recallPrompt(args map[string]string) []map[string]any {
 }
 
 func housekeepPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf("Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
+	text := fmt.Sprintf(backgroundPreamble+"Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
 		"Goal: find and fix **structural drift** without restructuring content.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
