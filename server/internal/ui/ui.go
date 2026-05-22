@@ -6,8 +6,14 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
@@ -33,6 +39,8 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/directories/", h.directoryAPI)
 	mux.HandleFunc("/api/connectors", h.connectorsAPI)
 	mux.HandleFunc("/api/connectors/", h.connectorAPI)
+	mux.HandleFunc("/api/browse", h.browseAPI)
+	mux.HandleFunc("/api/logs", h.logsAPI)
 }
 
 type pageData struct {
@@ -142,9 +150,11 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 		Git:         body.Git,
 	})
 	if err != nil {
+		logs.Error("add directory %q failed: %v", body.Name, err)
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	logs.Info("added directory %q (id=%s, backend=%s)", body.Name, id, body.Backend)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
@@ -158,6 +168,7 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	logs.Info("deleted directory id=%s", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -187,9 +198,11 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		Write:        body.Write,
 	})
 	if err != nil {
+		logs.Error("add connector %q failed: %v", body.Name, err)
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	logs.Info("added connector %q (id=%s, %d directories, write=%v)", body.Name, c.ID, len(body.DirectoryIDs), body.Write)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"id":  c.ID,
 		"url": fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
@@ -206,7 +219,83 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
+	logs.Info("deleted connector id=%s", id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Filesystem browse + logs API ---
+
+func (h *Handler) browseAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		path = home
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !info.IsDir() {
+		httpErr(w, http.StatusBadRequest, fmt.Errorf("not a directory: %s", abs))
+		return
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	type dirEntry struct {
+		Name string `json:"name"`
+	}
+	dirs := make([]dirEntry, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		dirs = append(dirs, dirEntry{Name: name})
+	}
+	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		parent = ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":   abs,
+		"parent": parent,
+		"dirs":   dirs,
+	})
+}
+
+func (h *Handler) logsAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	since := int64(-1)
+	if s := r.URL.Query().Get("since"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			since = v
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": logs.Since(since)})
 }
 
 func httpErr(w http.ResponseWriter, status int, err error) {

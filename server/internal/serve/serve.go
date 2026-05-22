@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
+	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/mcp"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/ui"
@@ -36,6 +37,13 @@ func Run(port int) error {
 
 	fmt.Printf("memd web UI:  %s\n", baseURL)
 	fmt.Println("Press Ctrl-C to stop.")
+	logs.Info("memd %s started on %s", version.Value, baseURL)
+	for _, d := range reg.Directories() {
+		logs.Info("loaded directory %q (id=%s, backend=%s)", d.Name, d.ID, d.Backend)
+	}
+	for _, c := range reg.Connectors() {
+		logs.Info("loaded connector %q (id=%s)", c.Name, c.ID)
+	}
 
 	srv := &http.Server{Handler: mux}
 	errCh := make(chan error, 1)
