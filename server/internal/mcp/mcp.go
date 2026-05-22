@@ -320,6 +320,62 @@ var toolsCatalog = []map[string]any{
 			"properties": map[string]any{},
 		},
 	},
+	// Workflow tools — equivalent to the MCP prompts of the same root name.
+	// MCP prompts only surface as slash commands in some clients (Claude
+	// Code yes; Codex CLI no). Exposing the same workflows as tools means
+	// every client can invoke them.
+	{
+		"name":        "memory_reorganise",
+		"description": "Workflow: rearrange the shelves — restructure existing memory, group root pages into folders, rewrite MEMORY.md as a curated sectioned index. Returns the workflow body; follow its steps. Same as the /<connector>:reorganise prompt.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string", "description": "Optional: the directory to reorganise."},
+			},
+		},
+	},
+	{
+		"name":        "memory_harvest",
+		"description": "Workflow: bring in the crop — gather knowledge from sources OUTSIDE memd (Claude auto-memory, Cursor rules, raw notes, another memd directory) and integrate via ADD/UPDATE/DELETE/NONE. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:harvest prompt.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string", "description": "Optional: the directory to harvest into."},
+			},
+		},
+	},
+	{
+		"name":        "memory_dream",
+		"description": "Workflow: sleep consolidation — forget unused / contradicted pages, cement what was referenced this session. Uses per-page memd: stats. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:dream prompt.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string", "description": "Optional: the directory to dream over."},
+			},
+		},
+	},
+	{
+		"name":        "memory_recall",
+		"description": "Workflow: reminisce on a topic — search, walk linked pages, synthesise an answer. Returns the workflow body; follow its steps. Same as the /<connector>:recall prompt.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"topic":        map[string]any{"type": "string", "description": "What to recall (free text)."},
+				"directory_id": map[string]any{"type": "string", "description": "Optional: restrict to one directory."},
+			},
+			"required": []string{"topic"},
+		},
+	},
+	{
+		"name":        "memory_housekeep",
+		"description": "Workflow: daily tidying — fix dangling links, orphan pages, missing front matter, stale last_reorganised. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:housekeep prompt.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string", "description": "Optional: the directory to housekeep."},
+			},
+		},
+	},
 }
 
 func (s *Server) handleToolsList(req *rpcReq) *rpcResp {
@@ -365,6 +421,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		text, isErr = s.toolWrite(conn, params.Arguments)
 	case "memory_status":
 		text = s.toolStatus(conn)
+	case "memory_reorganise", "memory_harvest", "memory_dream", "memory_recall", "memory_housekeep":
+		text, isErr = s.toolWorkflow(params.Name, params.Arguments)
 	default:
 		return &rpcResp{
 			Jsonrpc: "2.0",
@@ -604,67 +662,47 @@ func (s *Server) handlePromptsGet(_ *registry.Connector, req *rpcReq) *rpcResp {
 			Error:   &rpcError{Code: -32602, Message: "invalid params: " + err.Error()},
 		}
 	}
-	switch params.Name {
-	case "reorganise":
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"description": "Rearrange the shelves.",
-				"messages":    reorganisePrompt(params.Arguments),
-			},
-		}
-	case "harvest":
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"description": "Bring in the crop.",
-				"messages":    harvestPrompt(params.Arguments),
-			},
-		}
-	case "dream":
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"description": "Sleep consolidation.",
-				"messages":    dreamPrompt(params.Arguments),
-			},
-		}
-	case "recall":
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"description": "Reminisce on a topic.",
-				"messages":    recallPrompt(params.Arguments),
-			},
-		}
-	case "housekeep":
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"description": "Daily tidying.",
-				"messages":    housekeepPrompt(params.Arguments),
-			},
-		}
-	default:
+	body, desc, ok := workflowBody(params.Name, params.Arguments)
+	if !ok {
 		return &rpcResp{
 			Jsonrpc: "2.0",
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32602, Message: "unknown prompt: " + params.Name},
 		}
 	}
+	return &rpcResp{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result: map[string]any{
+			"description": desc,
+			"messages":    promptMessage(body),
+		},
+	}
 }
 
-func reorganisePrompt(args map[string]string) []map[string]any {
-	dirHint := "If multiple directories are accessible, ask the user which one to reorganise."
-	if id := strings.TrimSpace(args["directory_id"]); id != "" {
-		dirHint = fmt.Sprintf("Target directory id: `%s`.", id)
+// workflowBody returns the prompt text and short description for a named
+// workflow. Used both by prompts/get and by the equivalent memory_*
+// workflow tools (so clients that don't surface MCP prompts as slash
+// commands — e.g. Codex CLI — can still trigger the same workflow via
+// tools/call).
+func workflowBody(name string, args map[string]string) (text, description string, ok bool) {
+	switch name {
+	case "reorganise":
+		return reorganiseText(args), "Rearrange the shelves.", true
+	case "harvest":
+		return harvestText(args), "Bring in the crop.", true
+	case "dream":
+		return dreamText(args), "Sleep consolidation.", true
+	case "recall":
+		return recallText(args), "Reminisce on a topic.", true
+	case "housekeep":
+		return housekeepText(args), "Daily tidying.", true
 	}
-	text := fmt.Sprintf(`Run a focused reorganisation pass on memd memory, following the doctrine's procedure.
+	return "", "", false
+}
+
+func reorganiseText(args map[string]string) string {
+	return fmt.Sprintf(`Run a focused reorganisation pass on memd memory, following the doctrine's procedure.
 
 1. If you have not already in this session, call %smemory_load()%s so you see the current topology.
 2. %s
@@ -681,22 +719,13 @@ func reorganisePrompt(args map[string]string) []map[string]any {
 
 Keep the user in the loop. This is a structural change, not an opportunistic edit. Don't proceed without their go-ahead on the proposed structure.`,
 		"`", "`",
-		dirHint,
+		dirHint(args),
 		"`", "`",
 		"`", "`",
 		"`", "`",
 		"`", "`",
 		"`", "`",
 	)
-	return []map[string]any{
-		{
-			"role": "user",
-			"content": map[string]any{
-				"type": "text",
-				"text": text,
-			},
-		},
-	}
 }
 
 func dirHint(args map[string]string) string {
@@ -737,8 +766,8 @@ If no background-agent capability is available, run inline per the steps below, 
 
 `
 
-func harvestPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf(backgroundPreamble+"Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
+func harvestText(args map[string]string) string {
+	return fmt.Sprintf(backgroundPreamble+"Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
 		"Goal: gather durable knowledge from sources OUTSIDE memd (your other memory systems — Claude's auto-memory, Cursor rules, paste-in notes, another memd directory, prior session context) and integrate it INTO memd.\n\n"+
 		"1. Call `memory_load()` so you see the current state of memd memory.\n"+
 		"2. %s\n"+
@@ -754,11 +783,10 @@ func harvestPrompt(args map[string]string) []map[string]any {
 		"5. Show the user the proposed integration BEFORE writing. Group by ADD/UPDATE/DELETE.\n"+
 		"6. After integration, report a summary: counts plus a one-line description of each significant addition.\n\n"+
 		"This is structural integration, not opportunistic capture. Get the user's go-ahead before writing.", dirHint(args))
-	return promptMessage(text)
 }
 
-func dreamPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf(backgroundPreamble+"Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
+func dreamText(args map[string]string) string {
+	return fmt.Sprintf(backgroundPreamble+"Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
 		"Goal: for this session, decide what to **cement** (load-bearing, recently-used) and what to **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
@@ -772,15 +800,14 @@ func dreamPrompt(args map[string]string) []map[string]any {
 		"   - **Resolve contradictions** — if two pages disagree and the recent session confirmed one, supersede the other.\n"+
 		"5. Propose every move / delete / re-link to the user BEFORE writing.\n\n"+
 		"Stats are signal, not gospel. A rarely-read page can still be load-bearing (e.g. a once-a-year procedure). Use judgement.", dirHint(args))
-	return promptMessage(text)
 }
 
-func recallPrompt(args map[string]string) []map[string]any {
+func recallText(args map[string]string) string {
 	topic := strings.TrimSpace(args["topic"])
 	if topic == "" {
 		topic = "(no topic supplied — ask the user what they want to recall)"
 	}
-	text := fmt.Sprintf("Run a `recall` pass on memd memory — reminisce on a topic.\n\n"+
+	return fmt.Sprintf("Run a `recall` pass on memd memory — reminisce on a topic.\n\n"+
 		"Topic: **%s**\n\n"+
 		"1. Call `memory_load()` if you haven't this session.\n"+
 		"2. %s\n"+
@@ -789,11 +816,10 @@ func recallPrompt(args map[string]string) []map[string]any {
 		"5. Walk the in-page links — read related pages too.\n"+
 		"6. Synthesise an answer for the user: what memd actually says about the topic, with page links. Cite the pages you used.\n\n"+
 		"Don't dump raw search hits. Walk the wiki and present what you found.", topic, dirHint(args))
-	return promptMessage(text)
 }
 
-func housekeepPrompt(args map[string]string) []map[string]any {
-	text := fmt.Sprintf(backgroundPreamble+"Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
+func housekeepText(args map[string]string) string {
+	return fmt.Sprintf(backgroundPreamble+"Run a `housekeep` pass on memd memory — daily tidying.\n\n"+
 		"Goal: find and fix **structural drift** without restructuring content.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
@@ -805,10 +831,28 @@ func housekeepPrompt(args map[string]string) []map[string]any {
 		"   - **Empty templates** — section headings with no content underneath.\n"+
 		"4. Propose fixes to the user BEFORE writing. Group by issue type.\n\n"+
 		"Housekeep tidies; it doesn't restructure. If the directory needs structural change, run `reorganise` instead.", dirHint(args))
-	return promptMessage(text)
 }
 
 // --- Tool implementations ---
+
+// toolWorkflow returns the body of a workflow (reorganise / harvest /
+// dream / recall / housekeep) as a tool result. Equivalent to invoking the
+// MCP prompt of the matching name. Tool name is "memory_<workflow>".
+func (s *Server) toolWorkflow(toolName string, rawArgs json.RawMessage) (string, bool) {
+	var a map[string]string
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &a)
+	}
+	if a == nil {
+		a = map[string]string{}
+	}
+	workflow := strings.TrimPrefix(toolName, "memory_")
+	body, _, ok := workflowBody(workflow, a)
+	if !ok {
+		return "unknown workflow: " + workflow, true
+	}
+	return body, false
+}
 
 func (s *Server) toolStatus(conn *registry.Connector) string {
 	dirs := s.reg.DirectoriesForConnector(conn)
