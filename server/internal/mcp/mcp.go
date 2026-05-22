@@ -12,6 +12,7 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/sudiptadeb/memd/server/internal/storage"
 )
 
 const protocolVersion = "2025-03-26"
@@ -154,13 +155,15 @@ func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
 }
 
 // activeMemorySection composes a snapshot of the connector's accessible
-// directories — the file list plus the current contents of the chosen entry
-// page — appended to the static doctrine on every initialize. Goal: the agent
-// never has to call memory_directories or memory_read on the entry page just
-// to discover what's there.
+// directories. For each directory it renders:
 //
-// Entry-page priority: MEMORY.md → index.md. (MEMORY.md mirrors the Claude
-// auto-memory convention; index.md is the wiki-style fallback.)
+//   - the directory's metadata (id, backend, purpose),
+//   - a shallow topology — root entries plus the direct children of memory/
+//     if present — so the agent can see where things live without paying for
+//     a recursive listing,
+//   - the full contents of MEMORY.md (the canonical entry page).
+//
+// For deeper navigation the agent uses memory_list / memory_read.
 func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	dirs := s.reg.DirectoriesForConnector(conn)
 	var sb strings.Builder
@@ -169,7 +172,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		sb.WriteString("_No directories are accessible through this connector._\n")
 		return sb.String()
 	}
-	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know.\n\n")
+	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know. For deeper navigation, call `memory_list` on a folder or `memory_read` on a specific page.\n\n")
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
 		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
@@ -179,33 +182,21 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		}
 		sb.WriteString("\n")
 
-		pages, err := d.Backend.List()
+		root, err := d.Backend.ListPath("")
 		if err != nil {
-			fmt.Fprintf(&sb, "_(could not list pages: %v)_\n\n", err)
+			fmt.Fprintf(&sb, "_(could not list directory: %v)_\n\n", err)
 			continue
 		}
-		entry := chooseEntryPage(pages)
-		if len(pages) > 0 {
-			sb.WriteString("**Pages in this directory:**\n\n")
-			for _, p := range pages {
-				if p == entry {
-					fmt.Fprintf(&sb, "- `%s` (loaded below)\n", p)
-				} else {
-					fmt.Fprintf(&sb, "- `%s`\n", p)
-				}
-			}
-			sb.WriteString("\n")
-		}
-		if entry == "" {
-			sb.WriteString("_(no entry page found)_\n\n")
-			continue
-		}
-		body, err := d.Backend.Read(entry)
+		sb.WriteString("**Topology (root + first layer of `memory/`):**\n\n```\n")
+		writeTopology(&sb, d.Backend, root)
+		sb.WriteString("```\n\n")
+
+		body, err := d.Backend.Read("MEMORY.md")
 		if err != nil {
-			fmt.Fprintf(&sb, "_(could not read %s: %v)_\n\n", entry, err)
+			sb.WriteString("_(MEMORY.md missing — bootstrap with `memory_write`)_\n\n")
 			continue
 		}
-		fmt.Fprintf(&sb, "**`%s`:**\n\n```markdown\n", entry)
+		sb.WriteString("**`MEMORY.md`:**\n\n```markdown\n")
 		sb.Write(body)
 		if len(body) == 0 || body[len(body)-1] != '\n' {
 			sb.WriteString("\n")
@@ -215,15 +206,34 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	return sb.String()
 }
 
-// chooseEntryPage picks the directory's entry-point page from a flat list.
-// MEMORY.md is the canonical entry; nothing else is honored.
-func chooseEntryPage(pages []string) string {
-	for _, p := range pages {
-		if p == "MEMORY.md" {
-			return p
+// writeTopology renders root entries. For a folder named "memory" we expand
+// one level deeper (its direct children); for any other folder we just show
+// the name with a child count.
+func writeTopology(sb *strings.Builder, b storage.Backend, root []storage.DirEntry) {
+	for _, e := range root {
+		if !e.IsDir {
+			fmt.Fprintf(sb, "%s\n", e.Name)
+			continue
+		}
+		children, err := b.ListPath(e.Path)
+		if err != nil {
+			fmt.Fprintf(sb, "%s/  (could not list)\n", e.Name)
+			continue
+		}
+		if e.Name == "memory" {
+			fmt.Fprintf(sb, "%s/\n", e.Name)
+			for _, c := range children {
+				if c.IsDir {
+					deep, _ := b.ListPath(c.Path)
+					fmt.Fprintf(sb, "  %s/  (%d items)\n", c.Name, len(deep))
+				} else {
+					fmt.Fprintf(sb, "  %s\n", c.Name)
+				}
+			}
+		} else {
+			fmt.Fprintf(sb, "%s/  (%d items)\n", e.Name, len(children))
 		}
 	}
-	return ""
 }
 
 // --- Tool catalog ---
@@ -265,9 +275,21 @@ var toolsCatalog = []map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"directory_id": map[string]any{"type": "string"},
-				"path":         map[string]any{"type": "string", "description": "Page path relative to the directory root (e.g. 'index.md' or 'subfolder/page.md')."},
+				"path":         map[string]any{"type": "string", "description": "Page path relative to the directory root (e.g. 'MEMORY.md' or 'memory/feedback/foo.md')."},
 			},
 			"required": []string{"directory_id", "path"},
+		},
+	},
+	{
+		"name":        "memory_list",
+		"description": "List the direct children of a path inside a memory directory. Use to dive into a folder the Active Memory topology shows by name. Pass an empty path (or omit it) to list the directory root.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"path":         map[string]any{"type": "string", "description": "Path relative to the directory root. Empty or '.' = root."},
+			},
+			"required": []string{"directory_id"},
 		},
 	},
 	{
@@ -327,6 +349,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		text = s.activeMemorySection(conn)
 	case "memory_directories":
 		text = s.toolDirectories(conn)
+	case "memory_list":
+		text, isErr = s.toolListPath(conn, params.Arguments)
 	case "memory_search":
 		text, isErr = s.toolSearch(conn, params.Arguments)
 	case "memory_read":
@@ -456,6 +480,37 @@ func (s *Server) toolWrite(conn *registry.Connector, args json.RawMessage) (stri
 		return err.Error(), true
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path), false
+}
+
+func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	var a struct {
+		DirectoryID string `json:"directory_id"`
+		Path        string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "invalid arguments: " + err.Error(), true
+	}
+	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
+	if d == nil {
+		return "directory not accessible: " + a.DirectoryID, true
+	}
+	entries, err := d.Backend.ListPath(a.Path)
+	if err != nil {
+		return err.Error(), true
+	}
+	if len(entries) == 0 {
+		return "(empty)", false
+	}
+	var sb strings.Builder
+	for _, e := range entries {
+		if e.IsDir {
+			children, _ := d.Backend.ListPath(e.Path)
+			fmt.Fprintf(&sb, "%s/  (%d items)\n", e.Name, len(children))
+		} else {
+			fmt.Fprintf(&sb, "%s\n", e.Name)
+		}
+	}
+	return sb.String(), false
 }
 
 func (s *Server) toolStatus(conn *registry.Connector) string {

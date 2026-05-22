@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -137,9 +138,9 @@ func (l *Local) resolve(rel string) (string, error) {
 }
 
 // EnsureIndex creates a starter MEMORY.md only when the directory has no
-// Markdown content at its root. If MEMORY.md, an existing index.md, or any
-// other *.md file is present, we leave the directory alone — the user (or
-// a previous memd run) already chose an entry-point file.
+// Markdown content at its root. The stub carries the front matter the doctrine
+// expects (last_reorganised, entries, limit) so future agents start from a
+// well-formed index.
 func (l *Local) EnsureIndex(description string) error {
 	entries, err := os.ReadDir(l.root)
 	if err != nil {
@@ -156,6 +157,66 @@ func (l *Local) EnsureIndex(description string) error {
 	if description == "" {
 		description = "Memory"
 	}
-	body := fmt.Sprintf("# %s\n\nShort active memory layer. Detailed pages go under `memory/` — link to them from here.\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
+	body := starterMemoryMD(description, time.Now())
 	return os.WriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
+}
+
+// starterMemoryMD returns the body for an empty-directory MEMORY.md stub.
+func starterMemoryMD(description string, now time.Time) string {
+	return fmt.Sprintf(`---
+last_reorganised: %s
+entries: 0
+limit: 30
+---
+
+# %s
+
+Short index. Each line below should be one link to a page under `+"`memory/`"+` plus a one-line summary.
+
+_(no memory yet — populate as durable knowledge accrues)_
+`, now.Format("2006-01-02"), description)
+}
+
+// ListPath returns the direct children at the given path inside the directory.
+// Hidden entries (dotfiles, .git, etc.) are skipped. An empty path or "." means
+// the directory root. Folders sort before files; both sort case-insensitively.
+func (l *Local) ListPath(rel string) ([]DirEntry, error) {
+	abs := l.root
+	if rel != "" && rel != "." {
+		clean, err := l.resolve(rel)
+		if err != nil {
+			return nil, err
+		}
+		abs = clean
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", rel)
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		p := name
+		if rel != "" && rel != "." {
+			p = strings.TrimSuffix(filepath.ToSlash(rel), "/") + "/" + name
+		}
+		out = append(out, DirEntry{Name: name, Path: p, IsDir: e.IsDir()})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir // dirs first
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
 }
