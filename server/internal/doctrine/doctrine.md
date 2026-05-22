@@ -125,9 +125,9 @@ memory/
   project-ulaa.md
 ```
 
-### MEMORY.md schema
+### MEMORY.md is a curated, sectioned index
 
-Front matter plus one-line entries — nothing more:
+Front matter plus thematic sections of one-line entries. Group related pages under H2 headings. Each entry is a link plus a **concrete** one-line description of what the page actually holds — not a placeholder paraphrase of the filename.
 
 ```markdown
 ---
@@ -138,12 +138,38 @@ limit: 30
 
 # <directory description>
 
-- [topic-a](memory/topic-a.md) — one-line summary of what this page holds
-- [feedback/](memory/feedback/) — captured corrections and confirmations
-- [project-ulaa](memory/project-ulaa.md) — ULAA SASE working memory
+Curated index. Pages live under `memory/`; this file is the map.
+
+## Project Facts & Conventions
+
+- [hard-rules](memory/hard-rules.md) — Build script, dist/, .tmp/, .test TLD, logger, no-secrets.
+- [parent-server](memory/parent-server.md) — Production wire format: registration, policy fields, identity tags, glob hosts.
+- [ssh-access](memory/ssh-access.md) — EC2 test infrastructure: aliases, IPs, ProxyJump.
+
+## Architecture Notes
+
+- [module-internals](memory/module-internals.md) — `expr` / `policy` / `tunnel` / `mitm` / `h2proxy` activity log.
+- [dlp-engine](memory/dlp-engine.md) — DLP scanner (v1 + v2), pattern files, fast matchers, performance.
+
+## Lessons / Feedback
+
+- [feedback-always-build](memory/feedback-always-build.md) — Build immediately after any code edit.
+- [feedback-nftables-rule-order](memory/feedback-nftables-rule-order.md) — Insertion order, not `L4Rule.Priority`.
 ```
 
-Each entry is a single line: a link to a page (`memory/*.md`) or a folder (`memory/<name>/`), followed by a short summary. Folder names are descriptive — multi-word names are fine (e.g. `inflight-issues/`, `architecture-decisions/`).
+Folder names are descriptive — multi-word names are fine (e.g. `inflight-issues/`, `architecture-decisions/`).
+
+### Curate, don't enumerate
+
+The Active Memory section shows a raw topology — the file listing. That listing is for *verification* (so you can see what exists). **Do not model `MEMORY.md` after it.**
+
+When you write or update `MEMORY.md`:
+
+- **Group** entries under thematic H2 sections. Pick section names that describe the *category* (`## Architecture`, `## Lessons`, `## Operational Runbooks`), not the *folder* (`## memory/` would be useless).
+- **Describe** each page concretely — what it actually contains. "Build script, dist/, .tmp/, .test TLD, logger" is concrete; "the hard rules page" is not.
+- **Order** sections by relevance: authoritative rules and facts first, reference second, historical lessons last.
+
+A reader should be able to scan the index, find their topic by section, and click the right link without first opening files to discover what they contain.
 
 If the directory is empty when memd first sees it, the server creates a stub `MEMORY.md` with this shape. memd never modifies a directory that already has Markdown at its root.
 

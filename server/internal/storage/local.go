@@ -171,7 +171,9 @@ limit: 30
 
 # %s
 
-Short index. Each line below should be one link to a page under `+"`memory/`"+` plus a one-line summary.
+Curated index. Pages live under `+"`memory/`"+`; this file is the map.
+
+Group entries under thematic H2 sections (e.g. `+"`## Rules & Conventions`, `## Architecture Notes`, `## Lessons / Feedback`"+`). Each entry is one line: a link to a page plus a concrete one-line description of what the page contains. Curate, don't just list files.
 
 _(no memory yet — populate as durable knowledge accrues)_
 `, now.Format("2006-01-02"), description)
