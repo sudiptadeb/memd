@@ -179,15 +179,24 @@ func (g *Git) Status() Status {
 	}
 }
 
-// EnsureIndex creates index.md (committing and pushing) if missing.
+// EnsureIndex commits a starter MEMORY.md only when the directory has no
+// Markdown content at its root. Existing Markdown is left untouched.
 func (g *Git) EnsureIndex(description string) error {
-	idx := filepath.Join(g.local.Root(), "index.md")
-	if _, err := os.Stat(idx); err == nil {
-		return nil
+	entries, err := os.ReadDir(g.local.Root())
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			return nil
+		}
 	}
 	if description == "" {
 		description = "Memory"
 	}
-	body := fmt.Sprintf("# %s\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
-	return g.Write("index.md", []byte(body), "memd: initialize index.md")
+	body := fmt.Sprintf("# %s\n\nShort active memory layer. Detailed pages go under `memory/` — link to them from here.\n\n_(no memory yet — populate as durable knowledge accrues)_\n", description)
+	return g.Write("MEMORY.md", []byte(body), "memd: initialize MEMORY.md")
 }
