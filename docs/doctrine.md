@@ -287,15 +287,22 @@ A reorganisation pass:
 
 Do this in one focused pass, not as a side-effect of unrelated work. If you're not sure whether to reorganise *now*, finish the user's current task first and offer reorganisation as a follow-up.
 
-## Ask First
+## Default to Acting
 
-Ask the user before writing when:
+memd is a *working memory*, not an archive — friction kills it. **Default to acting; report when done.** Every change is tracked in git and the user can review or revert any commit. Don't burn the user's attention on approval ceremonies for ordinary edits.
 
-- The information is sensitive.
-- The preference is inferred, not explicitly stated.
-- The update affects identity, public voice, taste, or long-term direction.
-- The correct directory is ambiguous.
-- The update would remove or supersede a major decision.
+### Drastic actions still need a heads-up
+
+Stop and ask the user before writing only when:
+
+- The information is **sensitive** (credentials-adjacent, private personal data, secrets).
+- The change would **delete a page**, or **remove prose the user themselves wrote**, or **remove more than a paragraph** from any page. (Archiving — moving to `memory/_archive/` — is not drastic; content is preserved.)
+- The change would **remove or supersede a major decision** the user made explicitly.
+- The change would **overwrite a page tagged `priority: load-bearing`** with contradicting content.
+- The change affects the user's **public voice, identity, or long-term direction**.
+- The correct directory is **genuinely ambiguous** (not just "could fit either").
+
+For everything else — adding pages, restructuring layout, archiving stale content, fixing links, updating cross-references, rewriting MEMORY.md, inferring missing `topic`/`tags` fields — proceed.
 
 ## Superseding
 
