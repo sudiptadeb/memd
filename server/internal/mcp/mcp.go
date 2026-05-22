@@ -122,6 +122,11 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 		return s.handleToolsList(req)
 	case "tools/call":
 		return s.handleToolsCall(conn, req)
+	case "prompts/list":
+		return s.handlePromptsList(req)
+	case "prompts/get":
+		logs.Info("MCP prompts/get from connector %q", conn.Name)
+		return s.handlePromptsGet(conn, req)
 	case "ping":
 		return &rpcResp{Jsonrpc: "2.0", ID: req.ID, Result: map[string]any{}}
 	default:
@@ -143,7 +148,8 @@ func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
 		Result: map[string]any{
 			"protocolVersion": protocolVersion,
 			"capabilities": map[string]any{
-				"tools": map[string]any{},
+				"tools":   map[string]any{},
+				"prompts": map[string]any{},
 			},
 			"serverInfo": map[string]any{
 				"name":    s.serverName,
@@ -512,6 +518,103 @@ func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (s
 	}
 	return sb.String(), false
 }
+
+// --- Prompts ---
+
+var promptsCatalog = []map[string]any{
+	{
+		"name":        "reorganise",
+		"description": "Run a focused reorganisation pass on memd memory: drop stale content, group related pages into folders, rewrite MEMORY.md as a clean one-liner index, and update its front matter.",
+		"arguments": []map[string]any{
+			{
+				"name":        "directory_id",
+				"description": "The id of the directory to reorganise. Omit if only one directory is accessible.",
+				"required":    false,
+			},
+		},
+	},
+}
+
+func (s *Server) handlePromptsList(req *rpcReq) *rpcResp {
+	return &rpcResp{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result:  map[string]any{"prompts": promptsCatalog},
+	}
+}
+
+func (s *Server) handlePromptsGet(_ *registry.Connector, req *rpcReq) *rpcResp {
+	var params struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32602, Message: "invalid params: " + err.Error()},
+		}
+	}
+	switch params.Name {
+	case "reorganise":
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"description": "Run a focused reorganisation pass on memd memory.",
+				"messages":    reorganisePrompt(params.Arguments),
+			},
+		}
+	default:
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32602, Message: "unknown prompt: " + params.Name},
+		}
+	}
+}
+
+func reorganisePrompt(args map[string]string) []map[string]any {
+	dirHint := "If multiple directories are accessible, ask the user which one to reorganise."
+	if id := strings.TrimSpace(args["directory_id"]); id != "" {
+		dirHint = fmt.Sprintf("Target directory id: `%s`.", id)
+	}
+	text := fmt.Sprintf(`Run a focused reorganisation pass on memd memory, following the doctrine's procedure.
+
+1. If you have not already in this session, call %smemory_load()%s so you see the current topology.
+2. %s
+3. Walk every page with %smemory_list%s and %smemory_read%s. Note which pages are:
+   - duplicated or redundant (merge),
+   - stale or superseded (drop; keep a one-line historical note if it still matters),
+   - related (candidates for grouping under a descriptive multi-word folder).
+4. **Propose the new structure to the user BEFORE writing.** Show:
+   - The folder groupings you'd create (with names).
+   - The updated one-line entries for the new MEMORY.md.
+   - Anything you'd delete or merge.
+5. Once the user approves, perform the writes with %smemory_write%s. Move pages by writing the new path and deleting the old (memd has no rename — write-then-delete).
+6. Update MEMORY.md's front matter: set %slast_reorganised%s to today's date and %sentries%s to the final one-liner count.
+
+Keep the user in the loop. This is a structural change, not an opportunistic edit. Don't proceed without their go-ahead on the proposed structure.`,
+		"`", "`",
+		dirHint,
+		"`", "`",
+		"`", "`",
+		"`", "`",
+		"`", "`",
+		"`", "`",
+	)
+	return []map[string]any{
+		{
+			"role": "user",
+			"content": map[string]any{
+				"type": "text",
+				"text": text,
+			},
+		},
+	}
+}
+
+// --- Tool implementations ---
 
 func (s *Server) toolStatus(conn *registry.Connector) string {
 	dirs := s.reg.DirectoriesForConnector(conn)
