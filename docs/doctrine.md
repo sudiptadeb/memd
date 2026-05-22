@@ -8,13 +8,13 @@ A file-first memory system. Each *directory* is a self-organizing Markdown wiki 
 
 ## Active Memory Is Already Loaded
 
-At the bottom of these instructions, after a `---` separator, you will find an **Active Memory** section. For each directory this connector can see, it lists every page and includes the full contents of the top-level index (`MEMORY.md`). The server regenerates that section every time you connect.
+Above this doctrine (before the `---` separator) is an **Active Memory** section. For each directory this connector can see, it lists every page and includes the full contents of the top-level index (`MEMORY.md`). The server regenerates that section every time you connect.
 
 Treat it as memory you already know.
 
 - Do not say "I haven't loaded your memory yet" — you have.
-- Do not call `memory_directories` to discover directories — they are already listed below.
-- Do not call `memory_read` for the top-level index — its content is already included below.
+- Do not call `memory_directories` to discover directories — they are listed above.
+- Do not call `memory_read` for the top-level index — its content is already included above.
 - When the user asks about memory, preferences, project state, or anything that might be recorded, answer from the Active Memory section first. If the answer needs deeper detail, follow a link from `MEMORY.md` and call `memory_read` for that page.
 
 ## Authority

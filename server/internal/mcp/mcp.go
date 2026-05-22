@@ -128,6 +128,11 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 }
 
 func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcResp {
+	// Active Memory comes FIRST so that any client-side truncation of the
+	// `instructions` field drops the (less critical) doctrine rather than the
+	// actual memory data. Tool schemas live in tools/list, so losing the
+	// doctrine does not break tool dispatch.
+	instr := s.activeMemorySection(conn) + "\n---\n\n" + s.instructions
 	return &rpcResp{
 		Jsonrpc: "2.0",
 		ID:      req.ID,
@@ -140,7 +145,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 				"name":    s.serverName,
 				"version": s.serverVer,
 			},
-			"instructions": s.instructions + s.activeMemorySection(conn),
+			"instructions": instr,
 		},
 	}
 }
@@ -156,7 +161,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	dirs := s.reg.DirectoriesForConnector(conn)
 	var sb strings.Builder
-	sb.WriteString("\n\n---\n\n## Active Memory\n\n")
+	sb.WriteString("# Active Memory\n\n")
 	if len(dirs) == 0 {
 		sb.WriteString("_No directories are accessible through this connector._\n")
 		return sb.String()
