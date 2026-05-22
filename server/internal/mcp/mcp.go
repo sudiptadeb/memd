@@ -146,9 +146,13 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 }
 
 // activeMemorySection composes a snapshot of the connector's accessible
-// directories — descriptions plus the current contents of each index.md —
-// appended to the static doctrine on every initialize. Goal: the agent never
-// has to call memory_directories or memory_read("index.md") on connect.
+// directories — the file list plus the current contents of the chosen entry
+// page — appended to the static doctrine on every initialize. Goal: the agent
+// never has to call memory_directories or memory_read on the entry page just
+// to discover what's there.
+//
+// Entry-page priority: MEMORY.md → index.md. (MEMORY.md mirrors the Claude
+// auto-memory convention; index.md is the wiki-style fallback.)
 func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	dirs := s.reg.DirectoriesForConnector(conn)
 	var sb strings.Builder
@@ -165,20 +169,58 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		if d.Directory.Description != "" {
 			fmt.Fprintf(&sb, "- purpose: %s\n", d.Directory.Description)
 		}
-		sb.WriteString("\n**`index.md`:**\n\n")
-		idx, err := d.Backend.Read("index.md")
+		sb.WriteString("\n")
+
+		pages, err := d.Backend.List()
 		if err != nil {
-			fmt.Fprintf(&sb, "_(could not read: %v)_\n\n", err)
+			fmt.Fprintf(&sb, "_(could not list pages: %v)_\n\n", err)
 			continue
 		}
-		sb.WriteString("```markdown\n")
-		sb.Write(idx)
-		if len(idx) == 0 || idx[len(idx)-1] != '\n' {
+		entry := chooseEntryPage(pages)
+		if len(pages) > 0 {
+			sb.WriteString("**Pages in this directory:**\n\n")
+			for _, p := range pages {
+				if p == entry {
+					fmt.Fprintf(&sb, "- `%s` (loaded below)\n", p)
+				} else {
+					fmt.Fprintf(&sb, "- `%s`\n", p)
+				}
+			}
+			sb.WriteString("\n")
+		}
+		if entry == "" {
+			sb.WriteString("_(no entry page found)_\n\n")
+			continue
+		}
+		body, err := d.Backend.Read(entry)
+		if err != nil {
+			fmt.Fprintf(&sb, "_(could not read %s: %v)_\n\n", entry, err)
+			continue
+		}
+		fmt.Fprintf(&sb, "**`%s`:**\n\n```markdown\n", entry)
+		sb.Write(body)
+		if len(body) == 0 || body[len(body)-1] != '\n' {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("```\n\n")
 	}
 	return sb.String()
+}
+
+// chooseEntryPage picks the directory's entry-point page from a flat list.
+// Priority: MEMORY.md (auto-memory convention) → index.md (wiki).
+func chooseEntryPage(pages []string) string {
+	for _, p := range pages {
+		if p == "MEMORY.md" {
+			return p
+		}
+	}
+	for _, p := range pages {
+		if p == "index.md" {
+			return p
+		}
+	}
+	return ""
 }
 
 // --- Tool catalog ---
