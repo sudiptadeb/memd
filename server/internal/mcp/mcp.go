@@ -245,9 +245,13 @@ func writeTopology(sb *strings.Builder, b storage.Backend, root []storage.DirEnt
 // --- Tool catalog ---
 
 var toolsCatalog = []map[string]any{
+	// Storage tools — agent-internal primitives. The agent calls these to
+	// read and write memory while executing user requests or workflows.
+	// Users should invoke the memd_* workflow tools (or the equivalent
+	// slash-command prompts), not these.
 	{
 		"name":        "memory_load",
-		"description": "MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, page listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
+		"description": "[Agent-internal storage primitive.] MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, page listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -255,7 +259,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_directories",
-		"description": "List the memory directories this connector can access (no content). Rarely needed — memory_load returns more.",
+		"description": "[Agent-internal storage primitive.] List the memory directories this connector can access (no content). Rarely needed — memory_load returns more.",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -263,7 +267,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_search",
-		"description": "Search memory pages for a query. Returns matching lines with file paths.",
+		"description": "[Agent-internal storage primitive.] Search memory pages for a query. Returns matching lines with file paths.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -276,7 +280,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_read",
-		"description": "Read one memory page in full.",
+		"description": "[Agent-internal storage primitive.] Read one memory page in full. Bumps the page's last_read_at and access_count in its memd: front matter.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -288,7 +292,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_list",
-		"description": "List the direct children of a path inside a memory directory. Use to dive into a folder the Active Memory topology shows by name. Pass an empty path (or omit it) to list the directory root.",
+		"description": "[Agent-internal storage primitive.] List the direct children of a path inside a memory directory. Use to dive into a folder the Active Memory topology shows by name. Pass an empty path (or omit it) to list the directory root.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -300,7 +304,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_write",
-		"description": "Create or update a memory page. For git-backed directories the server commits and pushes.",
+		"description": "[Agent-internal storage primitive.] Create or update a memory page. For git-backed directories the server debounces commit + push. Any memd: front-matter block in the content is discarded; the server owns that subtree.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -314,7 +318,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_status",
-		"description": "Report backend status for each visible directory (last sync, last error).",
+		"description": "[Agent-internal storage primitive.] Report backend status for each visible directory (last sync, last error).",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -323,9 +327,10 @@ var toolsCatalog = []map[string]any{
 	// Workflow tools — equivalent to the MCP prompts of the same root name.
 	// MCP prompts only surface as slash commands in some clients (Claude
 	// Code yes; Codex CLI no). Exposing the same workflows as tools means
-	// every client can invoke them.
+	// every client can invoke them. Distinct namespace (`memd_`) keeps
+	// them visually separate from the storage tools (`memory_`).
 	{
-		"name":        "memory_reorganise",
+		"name":        "memd_reorganise",
 		"description": "Workflow: rearrange the shelves — restructure existing memory, group root pages into folders, rewrite MEMORY.md as a curated sectioned index. Returns the workflow body; follow its steps. Same as the /<connector>:reorganise prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -335,7 +340,7 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
-		"name":        "memory_harvest",
+		"name":        "memd_harvest",
 		"description": "Workflow: bring in the crop — gather knowledge from sources OUTSIDE memd (Claude auto-memory, Cursor rules, raw notes, another memd directory) and integrate via ADD/UPDATE/DELETE/NONE. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:harvest prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -345,7 +350,7 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
-		"name":        "memory_dream",
+		"name":        "memd_dream",
 		"description": "Workflow: sleep consolidation — forget unused / contradicted pages, cement what was referenced this session. Uses per-page memd: stats. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:dream prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -355,7 +360,7 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
-		"name":        "memory_recall",
+		"name":        "memd_recall",
 		"description": "Workflow: reminisce on a topic — search, walk linked pages, synthesise an answer. Returns the workflow body; follow its steps. Same as the /<connector>:recall prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -367,7 +372,7 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
-		"name":        "memory_housekeep",
+		"name":        "memd_housekeep",
 		"description": "Workflow: daily tidying — fix dangling links, orphan pages, missing front matter, stale last_reorganised. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:housekeep prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -421,7 +426,7 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		text, isErr = s.toolWrite(conn, params.Arguments)
 	case "memory_status":
 		text = s.toolStatus(conn)
-	case "memory_reorganise", "memory_harvest", "memory_dream", "memory_recall", "memory_housekeep":
+	case "memd_reorganise", "memd_harvest", "memd_dream", "memd_recall", "memd_housekeep":
 		text, isErr = s.toolWorkflow(params.Name, params.Arguments)
 	default:
 		return &rpcResp{
@@ -836,8 +841,8 @@ func housekeepText(args map[string]string) string {
 // --- Tool implementations ---
 
 // toolWorkflow returns the body of a workflow (reorganise / harvest /
-// dream / recall / housekeep) as a tool result. Equivalent to invoking the
-// MCP prompt of the matching name. Tool name is "memory_<workflow>".
+// dream / recall / housekeep) as a tool result. Equivalent to invoking
+// the MCP prompt of the matching name. Tool name is "memd_<workflow>".
 func (s *Server) toolWorkflow(toolName string, rawArgs json.RawMessage) (string, bool) {
 	var a map[string]string
 	if len(rawArgs) > 0 {
@@ -846,7 +851,7 @@ func (s *Server) toolWorkflow(toolName string, rawArgs json.RawMessage) (string,
 	if a == nil {
 		a = map[string]string{}
 	}
-	workflow := strings.TrimPrefix(toolName, "memory_")
+	workflow := strings.TrimPrefix(toolName, "memd_")
 	body, _, ok := workflowBody(workflow, a)
 	if !ok {
 		return "unknown workflow: " + workflow, true
