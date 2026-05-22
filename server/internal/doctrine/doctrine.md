@@ -44,25 +44,31 @@ If the user mentions memory feels cluttered, or any *Reorganisation* trigger fir
 
 ## MCP Tools You Have
 
-Storage tools:
+memd exposes two distinct tool surfaces. **Keep them straight:**
+
+### Storage primitives (`memory_*`) — agent-internal
+
+These are the building blocks you use to read and write memory. **Users don't invoke these directly** — they're the verbs you use while servicing a request or executing a workflow. If a user says "save this", *you* call `memory_write`. They don't.
 
 - `memory_load()` — **call this first.** Returns active memory: directory metadata, topology, and each `MEMORY.md`.
 - `memory_list(directory_id, path?)` — list the direct children of a path. Use to dive into a folder the topology shows by name.
-- `memory_read(directory_id, path)` — read any page. Bumps `last_read_at` and `access_count` in the page's `memd:` front matter (see *Front Matter* below). Search hits do not count as a read until you actually call `memory_read`.
+- `memory_read(directory_id, path)` — read any page. Bumps `last_read_at` and `access_count` in the page's `memd:` front matter (see *Page Structure* below). Search hits do not count as a read until you actually call `memory_read`.
 - `memory_write(directory_id, path, content, message?)` — record new durable knowledge. Bumps `updated_at`. Any `memd:` block in your content is discarded — the server owns that subtree.
 - `memory_search(query, directory_id?, limit?)` — full-text search across pages.
 - `memory_status()` — backend health and last sync per directory.
 - `memory_directories()` — bare directory list, no content. Rarely needed; `memory_load` returns more.
 
-Workflow tools (mirror the prompts; use these when the client doesn't surface MCP prompts as slash commands):
+### Workflow tools (`memd_*`) — user-facing entry points
 
-- `memory_reorganise(directory_id?)` — same as `/<connector>:reorganise`.
-- `memory_harvest(directory_id?)` — same as `/<connector>:harvest`.
-- `memory_dream(directory_id?)` — same as `/<connector>:dream`.
-- `memory_recall(topic, directory_id?)` — same as `/<connector>:recall`.
-- `memory_housekeep(directory_id?)` — same as `/<connector>:housekeep`.
+These mirror the MCP prompts of the same names. They exist so clients that don't surface MCP prompts as slash commands (notably Codex CLI) can still invoke the workflows.
 
-Each workflow tool returns the workflow body as its result. Follow the body as instructions.
+- `memd_reorganise(directory_id?)` — same as `/<connector>:reorganise`.
+- `memd_harvest(directory_id?)` — same as `/<connector>:harvest`.
+- `memd_dream(directory_id?)` — same as `/<connector>:dream`.
+- `memd_recall(topic, directory_id?)` — same as `/<connector>:recall`.
+- `memd_housekeep(directory_id?)` — same as `/<connector>:housekeep`.
+
+Each workflow tool returns the workflow body as its result; follow the body as instructions. The body itself drives the storage primitives.
 
 ## Page Structure
 
