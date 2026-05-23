@@ -210,17 +210,30 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/api/connectors/"):]
-	if r.Method != http.MethodDelete {
+	tail := r.URL.Path[len("/api/connectors/"):]
+	id, action, _ := strings.Cut(tail, "/")
+	switch {
+	case action == "" && r.Method == http.MethodDelete:
+		if err := h.reg.DeleteConnector(id); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("deleted connector id=%s", id)
+		w.WriteHeader(http.StatusNoContent)
+	case action == "rotate" && r.Method == http.MethodPost:
+		c, err := h.reg.RotateConnector(id)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("rotated connector %q (id=%s)", c.Name, id)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"id":  c.ID,
+			"url": fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+		})
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
 	}
-	if err := h.reg.DeleteConnector(id); err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
-	}
-	logs.Info("deleted connector id=%s", id)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Filesystem browse + logs API ---

@@ -11,7 +11,7 @@ What works today:
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), per-page stats.
 - Localhost-only binding. No admin auth, no remote-access story, no public hosting.
 
-What's planned (not yet implemented): connector token rotation, skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
+What's planned (not yet implemented): skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
 
 ## Two Modes
 
@@ -111,7 +111,7 @@ workdirs/
 - **Stored** inside `config.json` on each connector's `token` field. The whole file is written atomically with mode `0600`.
 - **Shown once** in the web UI at creation time, embedded in the MCP URL. memd does not redisplay it later — paste it straight into your agent.
 - **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from `config.json` and any future request bearing it returns 401.
-- **Rotation** is not implemented in v1. To rotate, delete the connector and create a new one, then update the agent's MCP config with the new URL.
+- **Rotated** with the "Rotate token" button in the web UI (`POST /api/connectors/{id}/rotate`). The connector keeps its ID, name, directory access, and write flag; only the token changes. The previous URL stops authenticating immediately — paste the new one into the agent.
 
 ## Git Directory Behavior
 

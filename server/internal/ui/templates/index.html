@@ -206,7 +206,10 @@
                       <code class="url">{{.URL}}</code>
                       <button type="button" onclick="navigator.clipboard.writeText('{{.URL}}'); this.textContent='Copied'; setTimeout(()=>this.textContent='Copy', 1200)">Copy</button>
                     </div>
-                    <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                    <div class="row">
+                      <button type="button" onclick="if(confirm('Rotate token for {{.Name}}? The current URL stops working immediately and you will need to paste the new one into the agent.')){fetch('/api/connectors/{{.ID}}/rotate',{method:'POST'}).then(r=>r.ok?location.reload():r.json().then(j=>alert(j.error||'rotate failed')))}">Rotate token</button>
+                      <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                    </div>
                   </li>
                 {{end}}
               </ul>

@@ -241,6 +241,35 @@ func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 	return c, nil
 }
 
+// RotateConnector replaces the connector's token with a fresh one. The
+// previous token stops authenticating immediately (any agent using it
+// will need the new URL). Returns the updated connector.
+func (r *Registry) RotateConnector(id string) (config.Connector, error) {
+	tok, err := token.New()
+	if err != nil {
+		return config.Connector{}, err
+	}
+	r.mu.Lock()
+	idx := -1
+	for i, c := range r.cfg.Connectors {
+		if c.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Connector{}, errors.New("connector not found")
+	}
+	r.cfg.Connectors[idx].Token = tok
+	updated := r.cfg.Connectors[idx]
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		return config.Connector{}, err
+	}
+	return updated, nil
+}
+
 func (r *Registry) DeleteConnector(id string) error {
 	r.mu.Lock()
 	idx := -1
