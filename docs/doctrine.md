@@ -54,6 +54,9 @@ These are the building blocks you use to read and write memory. **Users don't in
 - `memory_list(directory_id, path?)` — list the direct children of a path. Use to dive into a folder the topology shows by name.
 - `memory_read(directory_id, path)` — read any page. Bumps `last_read_at` and `access_count` in the page's `memd:` front matter (see *Page Structure* below). Search hits do not count as a read until you actually call `memory_read`.
 - `memory_write(directory_id, path, content, message?)` — record new durable knowledge. Bumps `updated_at`. Any `memd:` block in your content is discarded — the server owns that subtree.
+- `memory_move(directory_id, src, dst, message?)` — rename or move a page. Use this for reorganising (not write-then-delete); git tracks it as a rename so history follows the file. Refuses to overwrite an existing dst. Cannot move `MEMORY.md` at root.
+- `memory_delete(directory_id, path, message?)` — delete a single page. Prefer `memory_move` into `_archive/` when the content might matter historically. Cannot delete `MEMORY.md` at root.
+- `memory_delete_folder(directory_id, path, message?)` — recursively delete a folder. Heavy; reserve for actual cleanup. Cannot delete the directory root.
 - `memory_search(query, directory_id?, limit?)` — full-text search across pages.
 - `memory_status()` — backend health and last sync per directory.
 - `memory_directories()` — bare directory list, no content. Rarely needed; `memory_load` returns more.
