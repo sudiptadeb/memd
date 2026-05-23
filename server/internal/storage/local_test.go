@@ -173,7 +173,7 @@ func TestLocal_RejectsSymlinkToOutsideFile(t *testing.T) {
 	}
 }
 
-func TestLocal_RejectsSymlinkedParentDir(t *testing.T) {
+func TestLocal_RejectsSymlinkedParentDirToOutside(t *testing.T) {
 	outside := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(outside, "victim"), 0o755); err != nil {
 		t.Fatal(err)
@@ -185,32 +185,66 @@ func TestLocal_RejectsSymlinkedParentDir(t *testing.T) {
 	l, _ := NewLocal(dir)
 
 	if err := l.Write("sub/page.md", []byte("x"), ""); err == nil {
-		t.Fatalf("Write under a symlinked parent should fail")
+		t.Fatalf("Write under a symlinked parent pointing outside should fail")
 	}
 }
 
-func TestLocal_ListSkipsSymlinks(t *testing.T) {
-	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "outside.md"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestLocal_AllowsSymlinkToInsideFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("x"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "memory"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(outside, "outside.md"), filepath.Join(dir, "linked.md")); err != nil {
+	target := filepath.Join(dir, "memory", "topic-a.md")
+	if err := os.WriteFile(target, []byte("---\nmemd:\n  access_count: 0\n---\n# A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "alias.md")); err != nil {
 		t.Skipf("symlink not supported on this fs: %v", err)
 	}
 	l, _ := NewLocal(dir)
 
-	paths, err := l.List()
-	if err != nil {
-		t.Fatalf("List: %v", err)
+	if _, err := l.Read("alias.md"); err != nil {
+		t.Fatalf("Read through symlink-to-inside should succeed: %v", err)
 	}
-	for _, p := range paths {
-		if p == "linked.md" {
-			t.Fatalf("List should not include symlinked entries: %v", paths)
-		}
+}
+
+func TestLocal_AllowsSymlinkedParentDirToInside(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "memory"), filepath.Join(dir, "shortcut")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, _ := NewLocal(dir)
+
+	if err := l.Write("shortcut/page.md", []byte("# x\n"), ""); err != nil {
+		t.Fatalf("Write under a symlinked parent pointing inside should succeed: %v", err)
+	}
+	// And it should be reachable at the canonical path.
+	if _, err := os.Stat(filepath.Join(dir, "memory", "page.md")); err != nil {
+		t.Fatalf("expected file at canonical path: %v", err)
+	}
+}
+
+func TestLocal_RejectsChainedSymlinkEscape(t *testing.T) {
+	// inside-symlink -> inside-dir -> ... but the inside-dir itself is a
+	// symlink to outside. EvalSymlinks must follow the full chain.
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.md"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "hop")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "hop", "secret.md"), filepath.Join(dir, "leak.md")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, _ := NewLocal(dir)
+
+	if _, err := l.Read("leak.md"); err == nil {
+		t.Fatalf("Read through a chained symlink that ends outside should fail")
 	}
 }
 

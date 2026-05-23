@@ -61,10 +61,6 @@ func (l *Local) List() ([]string, error) {
 			}
 			return nil
 		}
-		// Skip symlinks — resolve() would reject them on read anyway.
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
@@ -220,46 +216,57 @@ func (l *Local) Flush() error { return nil }
 
 func (l *Local) Close() error { return nil }
 
-// resolve maps a directory-relative path to an absolute path. Rejects:
-//   - empty paths,
-//   - lexical traversal that escapes the root,
-//   - any path whose existing components include a symlink (the directory
-//     is symlink-free by design; a planted symlink could otherwise let an
-//     agent read or overwrite arbitrary files via the kernel's normal
-//     symlink-following).
+// resolve maps a directory-relative path to an absolute path that's safe
+// to open. Each Local is the reader for one directory; the only invariant
+// it enforces is that every path it returns lives under rootEval — even
+// after symlink evaluation. Symlinks within the directory are fine;
+// symlinks that escape (directly or transitively) are not.
 //
-// Non-existent trailing components are fine — that's how new pages get
-// created. We only walk what already exists.
+// Non-existent trailing components are allowed — that's how new pages
+// get created. We resolve the deepest existing ancestor and re-append
+// the missing suffix.
 func (l *Local) resolve(rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("empty path")
 	}
-	clean := filepath.Clean(filepath.Join(l.rootEval, filepath.FromSlash(rel)))
-	if clean != l.rootEval && !strings.HasPrefix(clean, l.rootEval+string(filepath.Separator)) {
+	target := filepath.Clean(filepath.Join(l.rootEval, filepath.FromSlash(rel)))
+	if !pathInside(l.rootEval, target) {
 		return "", errors.New("path escapes directory")
 	}
-	relFromRoot, err := filepath.Rel(l.rootEval, clean)
+	real, err := evalSymlinksAllowMissing(target)
 	if err != nil {
 		return "", err
 	}
-	cur := l.rootEval
-	for _, part := range strings.Split(filepath.ToSlash(relFromRoot), "/") {
-		if part == "" || part == "." {
-			continue
-		}
-		cur = filepath.Join(cur, part)
-		info, lerr := os.Lstat(cur)
-		if errors.Is(lerr, fs.ErrNotExist) {
-			break
-		}
-		if lerr != nil {
-			return "", lerr
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", errors.New("symlink not allowed inside memory directory")
-		}
+	if !pathInside(l.rootEval, real) {
+		return "", errors.New("path escapes directory through a symlink")
 	}
-	return clean, nil
+	return real, nil
+}
+
+// pathInside reports whether p is root or lives beneath it.
+func pathInside(root, p string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// evalSymlinksAllowMissing is filepath.EvalSymlinks that tolerates a
+// non-existent leaf (or chain of non-existent ancestors), so callers can
+// resolve "the path a new file will live at". The deepest existing
+// ancestor is resolved with EvalSymlinks; the missing tail is appended.
+func evalSymlinksAllowMissing(p string) (string, error) {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return "", fmt.Errorf("cannot resolve %s", p)
+	}
+	parentReal, err := evalSymlinksAllowMissing(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parentReal, filepath.Base(p)), nil
 }
 
 // EnsureIndex creates a starter MEMORY.md only when the directory has no
@@ -339,10 +346,6 @@ func (l *Local) ListPath(rel string) ([]DirEntry, error) {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		// Skip symlinks — resolve() would reject them anyway.
-		if e.Type()&fs.ModeSymlink != 0 {
 			continue
 		}
 		p := name
