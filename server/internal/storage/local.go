@@ -303,17 +303,21 @@ func (l *Local) EnsureIndex(description string) error {
 // The page carries both the server-managed memd: subtree (created via the
 // Page renderer for consistency) and the agent-managed last_reorganised /
 // entries / limit fields the reorganise prompt expects.
+//
+// The stub is intentionally neutral about folder shape — the layout is
+// decided by the agent during the first `harvest` pass once it sees what
+// the content actually clusters into.
 func starterMemoryMD(description string, now time.Time) string {
 	date := now.Format("2006-01-02")
 	agentFM := fmt.Sprintf("last_reorganised: %s\nentries: 0\nlimit: 30\n", date)
 	body := fmt.Sprintf(`
 # %s
 
-Curated index. Pages live under `+"`memory/`"+`; this file is the map.
+This is the curated index. Detailed pages live in top-level folders below — the shape is up to the agent (single `+"`memory/`"+` for general directories; multiple folders like `+"`notes/`, `projects/`, `preferences/`"+` when content splits naturally).
 
-Group entries under thematic H2 sections (e.g. `+"`## Rules & Conventions`, `## Architecture Notes`, `## Lessons / Feedback`"+`). Each entry is one line: a link to a page plus a concrete one-line description of what the page contains. Curate, don't just list files.
+Group entries under thematic H2 sections. Each entry is one line: a link to the page plus a concrete one-line description of what's in it. Curate, don't just list files.
 
-_(no memory yet — populate as durable knowledge accrues)_
+_(no memory yet — run a `+"`harvest`"+` pass to seed this from your existing sources, or write directly as durable knowledge accrues)_
 `, description)
 	stats := MemdStats{
 		CreatedAt:  now,

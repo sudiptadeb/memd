@@ -193,7 +193,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 			fmt.Fprintf(&sb, "_(could not list directory: %v)_\n\n", err)
 			continue
 		}
-		sb.WriteString("**Topology (root + first layer of `memory/`):**\n\n```\n")
+		sb.WriteString("**Topology (root + first layer of each top-level folder):**\n\n```\n")
 		writeTopology(&sb, d.Backend, root)
 		sb.WriteString("```\n\n")
 
@@ -212,9 +212,14 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	return sb.String()
 }
 
-// writeTopology renders root entries. For a folder named "memory" we expand
-// one level deeper (its direct children); for any other folder we just show
-// the name with a child count.
+// writeTopology renders the root entries plus the first layer of every
+// top-level folder. Files at root print as-is. Folders print their name
+// followed by their direct children indented one level; nested folders
+// are summarised with a child count rather than walked further.
+//
+// This makes the active-memory snapshot useful regardless of the
+// directory's chosen layout (single `memory/` vs. multiple thematic
+// folders like `notes/` + `projects/` + `preferences/`).
 func writeTopology(sb *strings.Builder, b storage.Backend, root []storage.DirEntry) {
 	for _, e := range root {
 		if !e.IsDir {
@@ -226,18 +231,14 @@ func writeTopology(sb *strings.Builder, b storage.Backend, root []storage.DirEnt
 			fmt.Fprintf(sb, "%s/  (could not list)\n", e.Name)
 			continue
 		}
-		if e.Name == "memory" {
-			fmt.Fprintf(sb, "%s/\n", e.Name)
-			for _, c := range children {
-				if c.IsDir {
-					deep, _ := b.ListPath(c.Path)
-					fmt.Fprintf(sb, "  %s/  (%d items)\n", c.Name, len(deep))
-				} else {
-					fmt.Fprintf(sb, "  %s\n", c.Name)
-				}
+		fmt.Fprintf(sb, "%s/\n", e.Name)
+		for _, c := range children {
+			if c.IsDir {
+				deep, _ := b.ListPath(c.Path)
+				fmt.Fprintf(sb, "  %s/  (%d items)\n", c.Name, len(deep))
+			} else {
+				fmt.Fprintf(sb, "  %s\n", c.Name)
 			}
-		} else {
-			fmt.Fprintf(sb, "%s/  (%d items)\n", e.Name, len(children))
 		}
 	}
 }
@@ -750,22 +751,29 @@ If no background-agent capability is available, run inline using the same autono
 func harvestText(args map[string]string) string {
 	return fmt.Sprintf(backgroundPreamble+"Run a `harvest` pass on memd memory — bring in the crop.\n\n"+
 		"Goal: gather durable knowledge from sources OUTSIDE memd (your other memory systems — Claude's auto-memory, Cursor rules, paste-in notes, another memd directory, prior session context) and integrate it INTO memd.\n\n"+
-		"1. Call `memory_load()` so you see the current state of memd memory.\n"+
+		"### Phase 1 — Survey\n\n"+
+		"1. Call `memory_load()` to see the current state of memd memory.\n"+
 		"2. %s\n"+
-		"3. List the external sources you can see right now. Examples:\n"+
+		"3. **Gather candidates first — do not write yet.** List every external source you can see and pull the durable facts out of each. Examples of sources:\n"+
 		"   - Claude Code's `CLAUDE.md` / `AGENTS.md` auto-memory.\n"+
 		"   - Cursor's `.cursorrules` or rules pages.\n"+
 		"   - Notes the user has pasted into this conversation.\n"+
 		"   - Facts inferred from prior session context.\n"+
-		"4. For each candidate fact:\n"+
-		"   - `memory_search` for related existing pages.\n"+
-		"   - Decide **ADD / UPDATE / DELETE / NONE**.\n"+
-		"   - ADD → write a new page under `memory/` and add a one-line MEMORY.md entry.\n"+
+		"   - Another memd directory the user wants to merge in.\n\n"+
+		"### Phase 2 — Structure (only on fresh / sparse directories)\n\n"+
+		"If the target directory is empty or has only a stub `MEMORY.md`, this harvest is also setting the directory's shape. memd does not prescribe a single canonical layout — `memory/*.md` is one option, but for directories whose content naturally splits across categories, multiple top-level folders work better (e.g. `notes/`, `projects/`, `preferences/`, `runbooks/`).\n\n"+
+		"4. Cluster your candidates into 3–7 themes. Inspect them — does the content want one general `memory/` bucket, or distinct top-level folders?\n"+
+		"5. **Propose the layout to the user before writing:** the top-level folders you'd create, what goes in each, and the section headings the new MEMORY.md will use to group them. Wait for approval. (This is the one phase where harvest pauses — picking the wrong shape early is expensive to fix.)\n\n"+
+		"If the directory already has an established shape (more than a couple of pages, an existing folder layout), skip Phase 2 and reuse the existing folders. Don't restructure during harvest — that's `reorganise`'s job.\n\n"+
+		"### Phase 3 — Integrate\n\n"+
+		"6. For each candidate fact, decide **ADD / UPDATE / DELETE / NONE** (search existing pages first):\n"+
+		"   - ADD → write a new page under the appropriate folder and add a one-line MEMORY.md entry under the right section.\n"+
 		"   - UPDATE → edit the existing page in place.\n"+
-		"   - DELETE → only when the new info clearly invalidates the old. Archive (move to `memory/_archive/`) instead of deleting wherever possible; add a one-line supersession note.\n"+
+		"   - DELETE → only when the new info clearly invalidates the old. Archive (move to `_archive/`) instead of deleting wherever possible; add a one-line supersession note.\n"+
 		"   - NONE → skip.\n"+
-		"5. Do the writes as you go — don't stop for approval ceremonies. Drastic actions (per the preamble) still wait.\n"+
-		"6. Report a summary at the end: ADD count, UPDATE count, ARCHIVE/DELETE count, with one-line descriptions of each significant change. List anything you skipped or flagged.", dirHint(args))
+		"7. Do the writes as you go — don't stop for approval ceremonies. Drastic actions (per the preamble) still wait.\n\n"+
+		"### Phase 4 — Report\n\n"+
+		"8. Report a summary: ADD count, UPDATE count, ARCHIVE/DELETE count, with one-line descriptions of each significant addition. List anything you skipped or flagged. If you created the layout in Phase 2, recap the folder structure.", dirHint(args))
 }
 
 func dreamText(args map[string]string) string {
