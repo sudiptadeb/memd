@@ -9,11 +9,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Local is a memory backend backed by a plain folder of Markdown files.
+// All operations that touch disk serialize through mu: one write at a time
+// per directory. Reads also take mu because the read path bumps the
+// per-page stats (last_read_at, access_count) in-place.
 type Local struct {
+	mu   sync.Mutex
 	root string
 }
 
@@ -67,6 +72,8 @@ func (l *Local) List() ([]string, error) {
 // disk, and returns the rendered bytes (so the agent sees the current
 // stats). Non-Markdown files pass through untouched.
 func (l *Local) Read(path string) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	abs, err := l.resolve(path)
 	if err != nil {
 		return nil, err
@@ -104,7 +111,7 @@ func (l *Local) Read(path string) ([]byte, error) {
 		HasFM:   true,
 		Body:    p.Body,
 	}.Render()
-	_ = os.WriteFile(abs, out, 0o644)
+	_ = atomicWriteFile(abs, out, 0o644)
 	return out, nil
 }
 
@@ -113,6 +120,8 @@ func (l *Local) Read(path string) ([]byte, error) {
 // whatever existed on disk. created_at is set on first write; updated_at is
 // bumped every write; last_read_at and access_count are preserved.
 func (l *Local) Write(path string, content []byte, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	abs, err := l.resolve(path)
 	if err != nil {
 		return err
@@ -121,7 +130,7 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 		return err
 	}
 	if !isMarkdownPath(path) {
-		return os.WriteFile(abs, content, 0o644)
+		return atomicWriteFile(abs, content, 0o644)
 	}
 
 	var existing MemdStats
@@ -146,7 +155,7 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 		HasFM:   true,
 		Body:    incoming.Body,
 	}.Render()
-	return os.WriteFile(abs, out, 0o644)
+	return atomicWriteFile(abs, out, 0o644)
 }
 
 func isMarkdownPath(p string) bool {
@@ -217,6 +226,8 @@ func (l *Local) resolve(rel string) (string, error) {
 // expects (last_reorganised, entries, limit) so future agents start from a
 // well-formed index.
 func (l *Local) EnsureIndex(description string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	entries, err := os.ReadDir(l.root)
 	if err != nil {
 		return err
@@ -233,7 +244,7 @@ func (l *Local) EnsureIndex(description string) error {
 		description = "Memory"
 	}
 	body := starterMemoryMD(description, time.Now())
-	return os.WriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
+	return atomicWriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
 }
 
 // starterMemoryMD returns the body for an empty-directory MEMORY.md stub.

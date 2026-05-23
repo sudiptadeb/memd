@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -93,6 +94,47 @@ func TestLocal_WritePreservesStatsAcrossUpdates(t *testing.T) {
 	}
 	if !strings.Contains(string(p.Body), "v2") {
 		t.Fatalf("body not updated: %q", p.Body)
+	}
+}
+
+func TestLocal_ConcurrentReadsNoLostUpdates(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	if err := l.Write("page.md", []byte("# body\n"), ""); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	const N = 50
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := l.Read("page.md"); err != nil {
+				t.Errorf("Read: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	out, _ := os.ReadFile(filepath.Join(dir, "page.md"))
+	p := ParsePage(out)
+	if p.Stats.AccessCount != N {
+		t.Fatalf("AccessCount after %d concurrent reads = %d, want %d", N, p.Stats.AccessCount, N)
+	}
+}
+
+func TestLocal_AtomicWriteLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	if err := l.Write("page.md", []byte("# body\n"), ""); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") && strings.Contains(e.Name(), ".tmp-") {
+			t.Fatalf("leftover temp file: %s", e.Name())
+		}
 	}
 }
 
