@@ -9,12 +9,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Local is a memory backend backed by a plain folder of Markdown files.
+// All operations that touch disk serialize through mu: one write at a time
+// per directory. Reads also take mu because the read path bumps the
+// per-page stats (last_read_at, access_count) in-place.
 type Local struct {
-	root string
+	mu sync.Mutex
+	// root is the absolute path as supplied. rootEval is root after symlink
+	// evaluation. All containment checks compare against rootEval so a root
+	// reached via a symlink (e.g. /tmp → /private/tmp on macOS) still works.
+	root     string
+	rootEval string
 }
 
 func NewLocal(root string) (*Local, error) {
@@ -29,7 +38,11 @@ func NewLocal(root string) (*Local, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("not a directory: %s", abs)
 	}
-	return &Local{root: abs}, nil
+	eval, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	return &Local{root: abs, rootEval: eval}, nil
 }
 
 // Root returns the absolute root path.
@@ -37,13 +50,13 @@ func (l *Local) Root() string { return l.root }
 
 func (l *Local) List() ([]string, error) {
 	var out []string
-	err := filepath.WalkDir(l.root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(l.rootEval, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if path != l.root && strings.HasPrefix(name, ".") {
+			if path != l.rootEval && strings.HasPrefix(name, ".") {
 				return fs.SkipDir
 			}
 			return nil
@@ -51,7 +64,7 @@ func (l *Local) List() ([]string, error) {
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
-		rel, err := filepath.Rel(l.root, path)
+		rel, err := filepath.Rel(l.rootEval, path)
 		if err != nil {
 			return err
 		}
@@ -67,6 +80,8 @@ func (l *Local) List() ([]string, error) {
 // disk, and returns the rendered bytes (so the agent sees the current
 // stats). Non-Markdown files pass through untouched.
 func (l *Local) Read(path string) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	abs, err := l.resolve(path)
 	if err != nil {
 		return nil, err
@@ -104,7 +119,7 @@ func (l *Local) Read(path string) ([]byte, error) {
 		HasFM:   true,
 		Body:    p.Body,
 	}.Render()
-	_ = os.WriteFile(abs, out, 0o644)
+	_ = atomicWriteFile(abs, out, 0o644)
 	return out, nil
 }
 
@@ -113,6 +128,8 @@ func (l *Local) Read(path string) ([]byte, error) {
 // whatever existed on disk. created_at is set on first write; updated_at is
 // bumped every write; last_read_at and access_count are preserved.
 func (l *Local) Write(path string, content []byte, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	abs, err := l.resolve(path)
 	if err != nil {
 		return err
@@ -121,7 +138,7 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 		return err
 	}
 	if !isMarkdownPath(path) {
-		return os.WriteFile(abs, content, 0o644)
+		return atomicWriteFile(abs, content, 0o644)
 	}
 
 	var existing MemdStats
@@ -146,7 +163,7 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 		HasFM:   true,
 		Body:    incoming.Body,
 	}.Render()
-	return os.WriteFile(abs, out, 0o644)
+	return atomicWriteFile(abs, out, 0o644)
 }
 
 func isMarkdownPath(p string) bool {
@@ -167,7 +184,7 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	q := strings.ToLower(query)
 	var hits []Hit
 	for _, p := range paths {
-		abs := filepath.Join(l.root, filepath.FromSlash(p))
+		abs := filepath.Join(l.rootEval, filepath.FromSlash(p))
 		f, err := os.Open(abs)
 		if err != nil {
 			continue
@@ -199,17 +216,61 @@ func (l *Local) Flush() error { return nil }
 
 func (l *Local) Close() error { return nil }
 
-// resolve maps a directory-relative path to an absolute path and rejects traversal.
+// resolve maps a directory-relative path to an absolute path that's safe
+// to open. Each Local is the reader for one directory; its sole
+// invariant is that every path it returns lives under rootEval after
+// full resolution.
+//
+// One algorithm covers every form of escape (`../..`, an absolute
+// `/etc/passwd`, a symlink to outside, a chain of symlinks):
+//
+//  1. Build the candidate absolute path. filepath.Clean folds `.` and
+//     `..` lexically and Join discards a leading slash on rel.
+//  2. Resolve symlinks. For non-existent leaves (new pages) we recurse
+//     to the deepest existing ancestor and re-append the missing tail.
+//  3. Check the fully-resolved path is under rootEval.
+//
+// All I/O happens against the resolved path, so we never re-traverse
+// the symlinks we already checked.
 func (l *Local) resolve(rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("empty path")
 	}
-	clean := filepath.Clean(filepath.Join(l.root, filepath.FromSlash(rel)))
-	rootClean := filepath.Clean(l.root)
-	if clean != rootClean && !strings.HasPrefix(clean, rootClean+string(filepath.Separator)) {
+	target := filepath.Clean(filepath.Join(l.rootEval, filepath.FromSlash(rel)))
+	real, err := evalSymlinksAllowMissing(target)
+	if err != nil {
+		return "", err
+	}
+	if !pathInside(l.rootEval, real) {
 		return "", errors.New("path escapes directory")
 	}
-	return clean, nil
+	return real, nil
+}
+
+// pathInside reports whether p is root or lives beneath it.
+func pathInside(root, p string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// evalSymlinksAllowMissing is filepath.EvalSymlinks that tolerates a
+// non-existent leaf (or chain of non-existent ancestors), so callers can
+// resolve "the path a new file will live at". The deepest existing
+// ancestor is resolved with EvalSymlinks; the missing tail is appended.
+func evalSymlinksAllowMissing(p string) (string, error) {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return "", fmt.Errorf("cannot resolve %s", p)
+	}
+	parentReal, err := evalSymlinksAllowMissing(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parentReal, filepath.Base(p)), nil
 }
 
 // EnsureIndex creates a starter MEMORY.md only when the directory has no
@@ -217,7 +278,9 @@ func (l *Local) resolve(rel string) (string, error) {
 // expects (last_reorganised, entries, limit) so future agents start from a
 // well-formed index.
 func (l *Local) EnsureIndex(description string) error {
-	entries, err := os.ReadDir(l.root)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entries, err := os.ReadDir(l.rootEval)
 	if err != nil {
 		return err
 	}
@@ -233,7 +296,7 @@ func (l *Local) EnsureIndex(description string) error {
 		description = "Memory"
 	}
 	body := starterMemoryMD(description, time.Now())
-	return os.WriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
+	return atomicWriteFile(filepath.Join(l.rootEval, "MEMORY.md"), []byte(body), 0o644)
 }
 
 // starterMemoryMD returns the body for an empty-directory MEMORY.md stub.
@@ -264,7 +327,7 @@ _(no memory yet — populate as durable knowledge accrues)_
 // Hidden entries (dotfiles, .git, etc.) are skipped. An empty path or "." means
 // the directory root. Folders sort before files; both sort case-insensitively.
 func (l *Local) ListPath(rel string) ([]DirEntry, error) {
-	abs := l.root
+	abs := l.rootEval
 	if rel != "" && rel != "." {
 		clean, err := l.resolve(rel)
 		if err != nil {

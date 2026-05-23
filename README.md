@@ -42,13 +42,49 @@ bash build/build.sh host
 # → http://127.0.0.1:7878
 ```
 
-Wire an agent (Claude Code):
+## Wire It Up
+
+The URL is the credential — paste it once per agent. Examples below use `memd` as the server name; pick whatever you like.
+
+### Coding agents
+
+**Claude Code**
 
 ```bash
-claude mcp add work_memory --transport http http://127.0.0.1:7878/mcp/<token>
+claude mcp add memd --transport http "http://127.0.0.1:7878/mcp/<token>"
 ```
 
-Or any MCP client that supports Streamable HTTP — same URL.
+**Codex CLI** — in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.memd]
+url = "http://127.0.0.1:7878/mcp/<token>"
+transport = "http"
+```
+
+**Cursor** — in `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "memd": {
+      "url": "http://127.0.0.1:7878/mcp/<token>"
+    }
+  }
+}
+```
+
+### Web chats
+
+Web chats run server-side and can't reach `127.0.0.1`. Expose memd via a tunnel (`cloudflared tunnel`, `ngrok http 7878`, `tailscale funnel`) and paste the public HTTPS URL instead.
+
+**Claude.ai** — Settings → Connectors → *Add custom connector* → paste `https://<your-tunnel>/mcp/<token>`.
+
+**ChatGPT** — Settings → Connectors → *Add MCP server* → paste the same URL. Available on Plus / Pro / Enterprise.
+
+**Mistral Le Chat** — Settings → MCP Connectors → *Add server* → paste the URL.
+
+Any MCP client that speaks Streamable HTTP works the same way.
 
 ## The Mental Model
 

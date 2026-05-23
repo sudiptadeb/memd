@@ -57,11 +57,13 @@ type directoryView struct {
 }
 
 type connectorView struct {
-	ID             string
-	Name           string
-	URL            string
-	Write          bool
-	DirectoryNames string
+	ID               string
+	Name             string
+	NameJSON         string // JSON-encoded so the Alpine form can seed itself
+	URL              string
+	Write            bool
+	DirectoryIDsJSON string // JSON-encoded array of directory ids
+	DirectoryNames   string
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -109,12 +111,20 @@ func (h *Handler) pageData() pageData {
 		if names == "" {
 			names = "(none)"
 		}
+		nameJSON, _ := json.Marshal(c.Name)
+		ids := c.DirectoryIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		idsJSON, _ := json.Marshal(ids)
 		cViews = append(cViews, connectorView{
-			ID:             c.ID,
-			Name:           c.Name,
-			URL:            fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
-			Write:          c.Write,
-			DirectoryNames: names,
+			ID:               c.ID,
+			Name:             c.Name,
+			NameJSON:         string(nameJSON),
+			URL:              fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+			Write:            c.Write,
+			DirectoryIDsJSON: string(idsJSON),
+			DirectoryNames:   names,
 		})
 	}
 	return pageData{Directories: dirViews, Connectors: cViews}
@@ -210,17 +220,47 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/api/connectors/"):]
-	if r.Method != http.MethodDelete {
+	tail := r.URL.Path[len("/api/connectors/"):]
+	id, action, _ := strings.Cut(tail, "/")
+	switch {
+	case action == "" && r.Method == http.MethodDelete:
+		if err := h.reg.DeleteConnector(id); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("deleted connector id=%s", id)
+		w.WriteHeader(http.StatusNoContent)
+	case action == "" && r.Method == http.MethodPut:
+		var body struct {
+			Name         string   `json:"name"`
+			DirectoryIDs []string `json:"directory_ids"`
+			Write        bool     `json:"write"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		c, err := h.reg.UpdateConnector(id, body.Name, body.DirectoryIDs, body.Write)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("updated connector %q (id=%s, %d directories, write=%v)", c.Name, id, len(c.DirectoryIDs), c.Write)
+		writeJSON(w, http.StatusOK, map[string]string{"id": c.ID})
+	case action == "rotate" && r.Method == http.MethodPost:
+		c, err := h.reg.RotateConnector(id)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("rotated connector %q (id=%s)", c.Name, id)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"id":  c.ID,
+			"url": fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+		})
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
 	}
-	if err := h.reg.DeleteConnector(id); err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
-	}
-	logs.Info("deleted connector id=%s", id)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Filesystem browse + logs API ---
