@@ -49,3 +49,59 @@ func TestRotateConnector_UnknownID(t *testing.T) {
 		t.Fatalf("rotating an unknown id should fail")
 	}
 }
+
+func TestUpdateConnector_ChangesNameDirsWrite_PreservesTokenAndID(t *testing.T) {
+	r := NewEphemeral()
+	r.cfg.Directories = []config.Directory{
+		{ID: "d1", Name: "one"},
+		{ID: "d2", Name: "two"},
+	}
+	c, _ := r.AddConnector(config.Connector{Name: "claude", DirectoryIDs: []string{"d1"}, Write: false})
+	oldToken := c.Token
+	oldID := c.ID
+
+	updated, err := r.UpdateConnector(c.ID, "claude-code", []string{"d1", "d2"}, true)
+	if err != nil {
+		t.Fatalf("UpdateConnector: %v", err)
+	}
+	if updated.Name != "claude-code" {
+		t.Fatalf("Name = %q, want claude-code", updated.Name)
+	}
+	if len(updated.DirectoryIDs) != 2 || updated.DirectoryIDs[0] != "d1" || updated.DirectoryIDs[1] != "d2" {
+		t.Fatalf("DirectoryIDs = %v, want [d1 d2]", updated.DirectoryIDs)
+	}
+	if !updated.Write {
+		t.Fatalf("Write should be true")
+	}
+	if updated.Token != oldToken {
+		t.Fatalf("Token mutated: old=%q new=%q", oldToken, updated.Token)
+	}
+	if updated.ID != oldID {
+		t.Fatalf("ID mutated: old=%q new=%q", oldID, updated.ID)
+	}
+}
+
+func TestUpdateConnector_RejectsBadInput(t *testing.T) {
+	r := NewEphemeral()
+	r.cfg.Directories = []config.Directory{{ID: "d1", Name: "one"}}
+	c, _ := r.AddConnector(config.Connector{Name: "claude", DirectoryIDs: []string{"d1"}})
+
+	cases := []struct {
+		name string
+		id   string
+		nm   string
+		dirs []string
+	}{
+		{"unknown id", "does-not-exist", "x", []string{"d1"}},
+		{"empty name", c.ID, "", []string{"d1"}},
+		{"empty dirs", c.ID, "x", nil},
+		{"unknown directory id", c.ID, "x", []string{"d-nope"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := r.UpdateConnector(tc.id, tc.nm, tc.dirs, true); err == nil {
+				t.Fatalf("UpdateConnector(%q, %q, %v) should fail", tc.id, tc.nm, tc.dirs)
+			}
+		})
+	}
+}

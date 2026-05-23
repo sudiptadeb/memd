@@ -241,6 +241,52 @@ func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 	return c, nil
 }
 
+// UpdateConnector edits a connector's name, directory access, and
+// write flag. The token, ID, and creation time are preserved.
+// Returns the updated connector.
+func (r *Registry) UpdateConnector(id, name string, directoryIDs []string, write bool) (config.Connector, error) {
+	if name == "" {
+		return config.Connector{}, errors.New("name is required")
+	}
+	if len(directoryIDs) == 0 {
+		return config.Connector{}, errors.New("at least one directory is required")
+	}
+	r.mu.Lock()
+	idx := -1
+	for i, c := range r.cfg.Connectors {
+		if c.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Connector{}, errors.New("connector not found")
+	}
+	for _, did := range directoryIDs {
+		found := false
+		for _, d := range r.cfg.Directories {
+			if d.ID == did {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.mu.Unlock()
+			return config.Connector{}, fmt.Errorf("unknown directory: %s", did)
+		}
+	}
+	r.cfg.Connectors[idx].Name = name
+	r.cfg.Connectors[idx].DirectoryIDs = append([]string(nil), directoryIDs...)
+	r.cfg.Connectors[idx].Write = write
+	updated := r.cfg.Connectors[idx]
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		return config.Connector{}, err
+	}
+	return updated, nil
+}
+
 // RotateConnector replaces the connector's token with a fresh one. The
 // previous token stops authenticating immediately (any agent using it
 // will need the new URL). Returns the updated connector.
