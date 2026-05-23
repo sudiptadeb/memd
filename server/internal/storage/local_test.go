@@ -138,6 +138,103 @@ func TestLocal_AtomicWriteLeavesNoTempFile(t *testing.T) {
 	}
 }
 
+func TestLocal_RejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	if _, err := l.Read("../escape.md"); err == nil {
+		t.Fatalf("Read of ../escape.md should fail")
+	}
+	if err := l.Write("../escape.md", []byte("x"), ""); err == nil {
+		t.Fatalf("Write to ../escape.md should fail")
+	}
+}
+
+func TestLocal_RejectsSymlinkToOutsideFile(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.md"), []byte("top secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(dir, "leak.md")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, _ := NewLocal(dir)
+
+	if _, err := l.Read("leak.md"); err == nil {
+		t.Fatalf("Read through a symlink-to-outside should fail")
+	}
+	if err := l.Write("leak.md", []byte("pwned"), ""); err == nil {
+		t.Fatalf("Write through a symlink-to-outside should fail")
+	}
+	// And the outside file must be untouched.
+	got, _ := os.ReadFile(filepath.Join(outside, "secret.md"))
+	if string(got) != "top secret" {
+		t.Fatalf("outside file was modified: %q", got)
+	}
+}
+
+func TestLocal_RejectsSymlinkedParentDir(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "victim"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(outside, "victim"), filepath.Join(dir, "sub")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, _ := NewLocal(dir)
+
+	if err := l.Write("sub/page.md", []byte("x"), ""); err == nil {
+		t.Fatalf("Write under a symlinked parent should fail")
+	}
+}
+
+func TestLocal_ListSkipsSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "real.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "outside.md"), filepath.Join(dir, "linked.md")); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, _ := NewLocal(dir)
+
+	paths, err := l.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, p := range paths {
+		if p == "linked.md" {
+			t.Fatalf("List should not include symlinked entries: %v", paths)
+		}
+	}
+}
+
+func TestLocal_SymlinkedRootStillWorks(t *testing.T) {
+	// macOS's /tmp is a symlink to /private/tmp. Simulate by creating a
+	// symlinked root and verifying that ordinary reads/writes succeed.
+	real := t.TempDir()
+	parent := t.TempDir()
+	link := filepath.Join(parent, "root-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink not supported on this fs: %v", err)
+	}
+	l, err := NewLocal(link)
+	if err != nil {
+		t.Fatalf("NewLocal with symlinked root: %v", err)
+	}
+	if err := l.Write("page.md", []byte("# hi\n"), ""); err != nil {
+		t.Fatalf("Write under symlinked root: %v", err)
+	}
+	if _, err := l.Read("page.md"); err != nil {
+		t.Fatalf("Read under symlinked root: %v", err)
+	}
+}
+
 func TestLocal_NonMarkdownPassthrough(t *testing.T) {
 	dir := t.TempDir()
 	l, _ := NewLocal(dir)

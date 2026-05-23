@@ -18,8 +18,12 @@ import (
 // per directory. Reads also take mu because the read path bumps the
 // per-page stats (last_read_at, access_count) in-place.
 type Local struct {
-	mu   sync.Mutex
-	root string
+	mu sync.Mutex
+	// root is the absolute path as supplied. rootEval is root after symlink
+	// evaluation. All containment checks compare against rootEval so a root
+	// reached via a symlink (e.g. /tmp → /private/tmp on macOS) still works.
+	root     string
+	rootEval string
 }
 
 func NewLocal(root string) (*Local, error) {
@@ -34,7 +38,11 @@ func NewLocal(root string) (*Local, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("not a directory: %s", abs)
 	}
-	return &Local{root: abs}, nil
+	eval, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	return &Local{root: abs, rootEval: eval}, nil
 }
 
 // Root returns the absolute root path.
@@ -42,21 +50,25 @@ func (l *Local) Root() string { return l.root }
 
 func (l *Local) List() ([]string, error) {
 	var out []string
-	err := filepath.WalkDir(l.root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(l.rootEval, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if path != l.root && strings.HasPrefix(name, ".") {
+			if path != l.rootEval && strings.HasPrefix(name, ".") {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		// Skip symlinks — resolve() would reject them on read anyway.
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 			return nil
 		}
-		rel, err := filepath.Rel(l.root, path)
+		rel, err := filepath.Rel(l.rootEval, path)
 		if err != nil {
 			return err
 		}
@@ -176,7 +188,7 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	q := strings.ToLower(query)
 	var hits []Hit
 	for _, p := range paths {
-		abs := filepath.Join(l.root, filepath.FromSlash(p))
+		abs := filepath.Join(l.rootEval, filepath.FromSlash(p))
 		f, err := os.Open(abs)
 		if err != nil {
 			continue
@@ -208,15 +220,44 @@ func (l *Local) Flush() error { return nil }
 
 func (l *Local) Close() error { return nil }
 
-// resolve maps a directory-relative path to an absolute path and rejects traversal.
+// resolve maps a directory-relative path to an absolute path. Rejects:
+//   - empty paths,
+//   - lexical traversal that escapes the root,
+//   - any path whose existing components include a symlink (the directory
+//     is symlink-free by design; a planted symlink could otherwise let an
+//     agent read or overwrite arbitrary files via the kernel's normal
+//     symlink-following).
+//
+// Non-existent trailing components are fine — that's how new pages get
+// created. We only walk what already exists.
 func (l *Local) resolve(rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("empty path")
 	}
-	clean := filepath.Clean(filepath.Join(l.root, filepath.FromSlash(rel)))
-	rootClean := filepath.Clean(l.root)
-	if clean != rootClean && !strings.HasPrefix(clean, rootClean+string(filepath.Separator)) {
+	clean := filepath.Clean(filepath.Join(l.rootEval, filepath.FromSlash(rel)))
+	if clean != l.rootEval && !strings.HasPrefix(clean, l.rootEval+string(filepath.Separator)) {
 		return "", errors.New("path escapes directory")
+	}
+	relFromRoot, err := filepath.Rel(l.rootEval, clean)
+	if err != nil {
+		return "", err
+	}
+	cur := l.rootEval
+	for _, part := range strings.Split(filepath.ToSlash(relFromRoot), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, lerr := os.Lstat(cur)
+		if errors.Is(lerr, fs.ErrNotExist) {
+			break
+		}
+		if lerr != nil {
+			return "", lerr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("symlink not allowed inside memory directory")
+		}
 	}
 	return clean, nil
 }
@@ -228,7 +269,7 @@ func (l *Local) resolve(rel string) (string, error) {
 func (l *Local) EnsureIndex(description string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entries, err := os.ReadDir(l.root)
+	entries, err := os.ReadDir(l.rootEval)
 	if err != nil {
 		return err
 	}
@@ -244,7 +285,7 @@ func (l *Local) EnsureIndex(description string) error {
 		description = "Memory"
 	}
 	body := starterMemoryMD(description, time.Now())
-	return atomicWriteFile(filepath.Join(l.root, "MEMORY.md"), []byte(body), 0o644)
+	return atomicWriteFile(filepath.Join(l.rootEval, "MEMORY.md"), []byte(body), 0o644)
 }
 
 // starterMemoryMD returns the body for an empty-directory MEMORY.md stub.
@@ -275,7 +316,7 @@ _(no memory yet — populate as durable knowledge accrues)_
 // Hidden entries (dotfiles, .git, etc.) are skipped. An empty path or "." means
 // the directory root. Folders sort before files; both sort case-insensitively.
 func (l *Local) ListPath(rel string) ([]DirEntry, error) {
-	abs := l.root
+	abs := l.rootEval
 	if rel != "" && rel != "." {
 		clean, err := l.resolve(rel)
 		if err != nil {
@@ -298,6 +339,10 @@ func (l *Local) ListPath(rel string) ([]DirEntry, error) {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		// Skip symlinks — resolve() would reject them anyway.
+		if e.Type()&fs.ModeSymlink != 0 {
 			continue
 		}
 		p := name
