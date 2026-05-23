@@ -141,11 +141,24 @@ func TestLocal_AtomicWriteLeavesNoTempFile(t *testing.T) {
 func TestLocal_RejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
 	l, _ := NewLocal(dir)
-	if _, err := l.Read("../escape.md"); err == nil {
-		t.Fatalf("Read of ../escape.md should fail")
+
+	cases := []struct {
+		name, path string
+	}{
+		{"single dotdot", "../escape.md"},
+		{"deep dotdot to existing file", "../../../../etc/passwd"},
+		{"mixed traversal", "memory/../../escape.md"},
+		{"escape via non-existent target", "../../never-exists-xyz123.md"},
 	}
-	if err := l.Write("../escape.md", []byte("x"), ""); err == nil {
-		t.Fatalf("Write to ../escape.md should fail")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := l.Read(c.path); err == nil {
+				t.Fatalf("Read(%q) should fail", c.path)
+			}
+			if err := l.Write(c.path, []byte("x"), ""); err == nil {
+				t.Fatalf("Write(%q) should fail", c.path)
+			}
+		})
 	}
 }
 

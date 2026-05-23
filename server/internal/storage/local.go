@@ -217,28 +217,32 @@ func (l *Local) Flush() error { return nil }
 func (l *Local) Close() error { return nil }
 
 // resolve maps a directory-relative path to an absolute path that's safe
-// to open. Each Local is the reader for one directory; the only invariant
-// it enforces is that every path it returns lives under rootEval — even
-// after symlink evaluation. Symlinks within the directory are fine;
-// symlinks that escape (directly or transitively) are not.
+// to open. Each Local is the reader for one directory; its sole
+// invariant is that every path it returns lives under rootEval after
+// full resolution.
 //
-// Non-existent trailing components are allowed — that's how new pages
-// get created. We resolve the deepest existing ancestor and re-append
-// the missing suffix.
+// One algorithm covers every form of escape (`../..`, an absolute
+// `/etc/passwd`, a symlink to outside, a chain of symlinks):
+//
+//  1. Build the candidate absolute path. filepath.Clean folds `.` and
+//     `..` lexically and Join discards a leading slash on rel.
+//  2. Resolve symlinks. For non-existent leaves (new pages) we recurse
+//     to the deepest existing ancestor and re-append the missing tail.
+//  3. Check the fully-resolved path is under rootEval.
+//
+// All I/O happens against the resolved path, so we never re-traverse
+// the symlinks we already checked.
 func (l *Local) resolve(rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("empty path")
 	}
 	target := filepath.Clean(filepath.Join(l.rootEval, filepath.FromSlash(rel)))
-	if !pathInside(l.rootEval, target) {
-		return "", errors.New("path escapes directory")
-	}
 	real, err := evalSymlinksAllowMissing(target)
 	if err != nil {
 		return "", err
 	}
 	if !pathInside(l.rootEval, real) {
-		return "", errors.New("path escapes directory through a symlink")
+		return "", errors.New("path escapes directory")
 	}
 	return real, nil
 }
