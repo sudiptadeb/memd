@@ -178,11 +178,11 @@ Don't update for every small interaction.
 1. Identify the correct directory by description. Choose the narrowest one that fits.
 2. Search existing pages first.
 3. **Do not create new files unless necessary.** Prefer updating an existing page.
-4. When a new idea has durable independent meaning, put it under `memory/` (or under an existing subfolder if it fits) and add a **one-line** entry to `MEMORY.md` linking to it.
+4. When a new idea has durable independent meaning, put it under the appropriate top-level folder (see *Directory Layout* — `memory/`, `notes/`, `projects/`, whatever the directory uses) and add a **one-line** entry to `MEMORY.md` linking to it.
 5. **`MEMORY.md` is an index, not a body.** Each line: a link plus a one-line summary. Detail lives in the linked page. Never put a full topic inside `MEMORY.md` itself.
 6. Link related pages with normal Markdown links.
 7. Don't add empty template sections.
-8. Don't force a folder structure beyond `MEMORY.md` + `memory/*.md` — group into subfolders only when reorganising (below).
+8. **Reuse the directory's existing shape.** Don't invent new top-level folders during ordinary writes. The shape is decided during the first `harvest` (for fresh directories) or during `reorganise` (when an existing directory needs restructuring).
 
 ### Update decision
 
@@ -209,10 +209,12 @@ Each page should answer one question or describe one thing. If you find yourself
 
 ## Directory Layout
 
-The canonical shape:
+memd does not prescribe a single layout. The only invariant is `MEMORY.md` at the root — the curated, sectioned index. Pages below it live in whatever top-level folders fit the directory's content. The agent picks the shape during the directory's first `harvest`; afterwards, ordinary writes reuse the existing folders.
+
+**Common shape — fine for general-purpose directories:**
 
 ```
-MEMORY.md              # short index — preloaded into Active Memory
+MEMORY.md              # the index — preloaded into Active Memory
 memory/
   topic-a.md           # detailed page; reached by memory_read
   feedback/            # multi-word folder grouping related pages
@@ -220,6 +222,25 @@ memory/
     nftables-order.md
   project-ulaa.md
 ```
+
+**Multi-folder shape — when content naturally splits across categories:**
+
+```
+MEMORY.md
+notes/
+  reading-list.md
+  side-projects.md
+preferences/
+  editor.md
+  shell.md
+projects/
+  ulaa.md
+  memd.md
+runbooks/
+  deploy-app.md
+```
+
+Either shape is valid. `MEMORY.md` groups its one-line entries under H2 section headings that correspond to (but don't have to mirror) the folder structure — sections describe *categories*, folders describe *physical layout*.
 
 ### MEMORY.md is a curated, sectioned index
 
