@@ -196,17 +196,58 @@
             {{if .Connectors}}
               <ul class="cards">
                 {{range .Connectors}}
-                  <li>
+                  <li x-data="{
+                    editing: false,
+                    name: {{.NameJSON}},
+                    dirs: {{.DirectoryIDsJSON}},
+                    write: {{.Write}},
+                    err: '',
+                    submitting: false,
+                    save() {
+                      this.err = '';
+                      this.submitting = true;
+                      fetch('/api/connectors/{{.ID}}', {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: this.name, directory_ids: this.dirs, write: this.write})
+                      }).then(r => r.ok ? location.reload() : r.json().then(j => { this.err = j.error || 'update failed'; this.submitting = false; }));
+                    }
+                  }">
                     <div class="row">
-                      <strong>{{.Name}}</strong>
-                      {{if not .Write}}<span class="muted">(read-only)</span>{{end}}
+                      <strong x-show="!editing">{{.Name}}</strong>
+                      {{if not .Write}}<span x-show="!editing" class="muted">(read-only)</span>{{end}}
                     </div>
-                    <p class="muted">Directories: {{.DirectoryNames}}</p>
-                    <div class="url-row">
+                    <p x-show="!editing" class="muted">Directories: {{.DirectoryNames}}</p>
+                    <div x-show="!editing" class="url-row">
                       <code class="url">{{.URL}}</code>
                       <button type="button" onclick="navigator.clipboard.writeText('{{.URL}}'); this.textContent='Copied'; setTimeout(()=>this.textContent='Copy', 1200)">Copy</button>
                     </div>
-                    <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                    <div x-show="!editing" class="row">
+                      <button type="button" @click="editing = true">Edit</button>
+                      <button type="button" onclick="if(confirm('Rotate token for {{.Name}}? The current URL stops working immediately and you will need to paste the new one into the agent.')){fetch('/api/connectors/{{.ID}}/rotate',{method:'POST'}).then(r=>r.ok?location.reload():r.json().then(j=>alert(j.error||'rotate failed')))}">Rotate token</button>
+                      <button type="button" class="danger" onclick="if(confirm('Delete connector {{.Name}}?')){fetch('/api/connectors/{{.ID}}',{method:'DELETE'}).then(()=>location.reload())}">Delete</button>
+                    </div>
+
+                    <form x-show="editing" x-cloak class="form" @submit.prevent="save()">
+                      <label>Name <input x-model="name" required /></label>
+                      <fieldset>
+                        <legend>Directories this connector can see</legend>
+                        {{range $.Directories}}
+                          <label class="checkbox">
+                            <input type="checkbox" value="{{.ID}}"
+                                   :checked="dirs.includes('{{.ID}}')"
+                                   @change="$event.target.checked ? dirs.push('{{.ID}}') : dirs = dirs.filter(x => x !== '{{.ID}}')" />
+                            {{.Name}}
+                          </label>
+                        {{end}}
+                      </fieldset>
+                      <label class="checkbox"><input type="checkbox" x-model="write" /> Allow writes</label>
+                      <div class="row">
+                        <button type="submit" :disabled="submitting || !dirs.length || !name">Save</button>
+                        <button type="button" @click="editing = false; err = ''">Cancel</button>
+                        <span class="err" x-show="err" x-text="err"></span>
+                      </div>
+                    </form>
                   </li>
                 {{end}}
               </ul>
