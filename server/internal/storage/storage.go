@@ -15,6 +15,22 @@ type Backend interface {
 
 	Read(path string) ([]byte, error)
 	Write(path string, content []byte, message string) error
+
+	// Move renames src to dst inside the directory. Both paths are
+	// directory-relative; both are subject to traversal checks. Used by
+	// reorganise so it can move a page (preserving git rename detection)
+	// without leaving a duplicate behind. Returns an error if src does
+	// not exist, dst already exists, or either path escapes the directory.
+	Move(src, dst, message string) error
+
+	// Delete removes a single file. Refuses to delete MEMORY.md at the
+	// directory root. Path-traversal-safe.
+	Delete(path, message string) error
+
+	// DeleteFolder removes a folder and everything inside it (recursive).
+	// Refuses to delete the directory root itself. Path-traversal-safe.
+	DeleteFolder(path, message string) error
+
 	Search(query string, limit int) ([]Hit, error)
 	Status() Status
 

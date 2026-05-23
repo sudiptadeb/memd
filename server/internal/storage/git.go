@@ -169,20 +169,50 @@ func (g *Git) ListPath(path string) ([]DirEntry, error) { return g.local.ListPat
 func (g *Git) Read(path string) ([]byte, error)         { return g.local.Read(path) }
 func (g *Git) Search(q string, l int) ([]Hit, error)    { return g.local.Search(q, l) }
 
-// Write persists the page to the working copy and arms the debounce timer.
-// Returns as soon as the file is on disk; the commit+push happens after
-// `wait_for_writes` of write silence (or on the periodic safety flush, or
-// on Close).
-func (g *Git) Write(path string, content []byte, message string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if err := g.local.Write(path, content, ""); err != nil {
+// Move renames src to dst in the working copy and arms the debounce
+// timer. The eventual `git add -A` will track it as a rename via
+// similarity detection.
+func (g *Git) Move(src, dst, message string) error {
+	if err := g.local.Move(src, dst, message); err != nil {
 		return err
 	}
 	if message == "" {
-		message = fmt.Sprintf("memd: update %s", path)
+		message = fmt.Sprintf("memd: move %s -> %s", src, dst)
 	}
+	g.armDebounce(message)
+	return nil
+}
+
+// Delete removes a single file from the working copy and arms the
+// debounce timer.
+func (g *Git) Delete(path, message string) error {
+	if err := g.local.Delete(path, message); err != nil {
+		return err
+	}
+	if message == "" {
+		message = fmt.Sprintf("memd: delete %s", path)
+	}
+	g.armDebounce(message)
+	return nil
+}
+
+// DeleteFolder recursively removes a folder and arms the debounce timer.
+func (g *Git) DeleteFolder(path, message string) error {
+	if err := g.local.DeleteFolder(path, message); err != nil {
+		return err
+	}
+	if message == "" {
+		message = fmt.Sprintf("memd: delete folder %s", path)
+	}
+	g.armDebounce(message)
+	return nil
+}
+
+// armDebounce records a pending commit message and (re)arms the
+// wait_for_writes timer. Safe to call from any goroutine.
+func (g *Git) armDebounce(message string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.pendingHave = true
 	g.pendingMsg = message
 	if g.debounce == nil {
@@ -192,6 +222,20 @@ func (g *Git) Write(path string, content []byte, message string) error {
 	} else {
 		g.debounce.Reset(g.waitForWrites)
 	}
+}
+
+// Write persists the page to the working copy and arms the debounce timer.
+// Returns as soon as the file is on disk; the commit+push happens after
+// `wait_for_writes` of write silence (or on the periodic safety flush, or
+// on Close).
+func (g *Git) Write(path string, content []byte, message string) error {
+	if err := g.local.Write(path, content, ""); err != nil {
+		return err
+	}
+	if message == "" {
+		message = fmt.Sprintf("memd: update %s", path)
+	}
+	g.armDebounce(message)
 	return nil
 }
 
