@@ -170,6 +170,88 @@ func isMarkdownPath(p string) bool {
 	return strings.HasSuffix(strings.ToLower(p), ".md")
 }
 
+// Move renames src to dst. Refuses to overwrite an existing dst.
+// MEMORY.md at the root cannot be moved (it's the required index).
+func (l *Local) Move(src, dst, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if isRootMemoryIndex(src) {
+		return errors.New("cannot move MEMORY.md at the directory root")
+	}
+	srcAbs, err := l.resolve(src)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(srcAbs); err != nil {
+		return err
+	}
+	dstAbs, err := l.resolve(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(dstAbs); err == nil {
+		return fmt.Errorf("destination already exists: %s", dst)
+	}
+	if err := os.MkdirAll(filepath.Dir(dstAbs), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(srcAbs, dstAbs)
+}
+
+// Delete removes a single file. Refuses to delete MEMORY.md at the
+// directory root.
+func (l *Local) Delete(path, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if isRootMemoryIndex(path) {
+		return errors.New("cannot delete MEMORY.md at the directory root")
+	}
+	abs, err := l.resolve(path)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory; use DeleteFolder", path)
+	}
+	return os.Remove(abs)
+}
+
+// DeleteFolder removes a folder and everything inside it. Refuses to
+// delete the directory root itself.
+func (l *Local) DeleteFolder(path, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if path == "" || path == "." || path == "/" {
+		return errors.New("cannot delete the directory root")
+	}
+	abs, err := l.resolve(path)
+	if err != nil {
+		return err
+	}
+	if abs == l.rootEval {
+		return errors.New("cannot delete the directory root")
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is a file; use Delete", path)
+	}
+	return os.RemoveAll(abs)
+}
+
+// isRootMemoryIndex reports whether the path refers to MEMORY.md at
+// the directory root (the one path Delete/Move refuse to touch).
+func isRootMemoryIndex(p string) bool {
+	clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(p)), "./")
+	return clean == "MEMORY.md"
+}
+
 func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("empty query")

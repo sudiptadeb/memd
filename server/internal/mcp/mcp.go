@@ -318,6 +318,46 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
+		"name":        "memory_move",
+		"description": "[Agent-internal storage primitive.] Rename or move a page from src to dst inside the directory. Preferred over write-then-delete because git tracks it as a rename (history follows the file). Fails if dst already exists. Cannot move MEMORY.md at the root.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"src":          map[string]any{"type": "string", "description": "Current path of the file or folder."},
+				"dst":          map[string]any{"type": "string", "description": "New path."},
+				"message":      map[string]any{"type": "string", "description": "Optional commit message for git-backed directories."},
+			},
+			"required": []string{"directory_id", "src", "dst"},
+		},
+	},
+	{
+		"name":        "memory_delete",
+		"description": "[Agent-internal storage primitive.] Delete a single page. Use with care — prefer memory_move into _archive/ when the content might matter historically. Cannot delete MEMORY.md at the root. For folders, use memory_delete_folder.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"path":         map[string]any{"type": "string"},
+				"message":      map[string]any{"type": "string", "description": "Optional commit message for git-backed directories."},
+			},
+			"required": []string{"directory_id", "path"},
+		},
+	},
+	{
+		"name":        "memory_delete_folder",
+		"description": "[Agent-internal storage primitive.] Recursively delete a folder and everything inside it. Heavy operation — prefer memory_move into _archive/ for individual pages. Cannot delete the directory root.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"path":         map[string]any{"type": "string"},
+				"message":      map[string]any{"type": "string", "description": "Optional commit message for git-backed directories."},
+			},
+			"required": []string{"directory_id", "path"},
+		},
+	},
+	{
 		"name":        "memory_status",
 		"description": "[Agent-internal storage primitive.] Report backend status for each visible directory (last sync, last error).",
 		"inputSchema": map[string]any{
@@ -425,6 +465,12 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		text, isErr = s.toolRead(conn, params.Arguments)
 	case "memory_write":
 		text, isErr = s.toolWrite(conn, params.Arguments)
+	case "memory_move":
+		text, isErr = s.toolMove(conn, params.Arguments)
+	case "memory_delete":
+		text, isErr = s.toolDelete(conn, params.Arguments)
+	case "memory_delete_folder":
+		text, isErr = s.toolDeleteFolder(conn, params.Arguments)
 	case "memory_status":
 		text = s.toolStatus(conn)
 	case "memd_reorganise", "memd_harvest", "memd_dream", "memd_recall", "memd_housekeep":
@@ -550,6 +596,73 @@ func (s *Server) toolWrite(conn *registry.Connector, args json.RawMessage) (stri
 		return err.Error(), true
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path), false
+}
+
+func (s *Server) toolMove(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	if !conn.Write {
+		return "connector is read-only", true
+	}
+	var a struct {
+		DirectoryID string `json:"directory_id"`
+		Src         string `json:"src"`
+		Dst         string `json:"dst"`
+		Message     string `json:"message"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "invalid arguments: " + err.Error(), true
+	}
+	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
+	if d == nil {
+		return "directory not accessible: " + a.DirectoryID, true
+	}
+	if err := d.Backend.Move(a.Src, a.Dst, a.Message); err != nil {
+		return err.Error(), true
+	}
+	return fmt.Sprintf("moved %s → %s", a.Src, a.Dst), false
+}
+
+func (s *Server) toolDelete(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	if !conn.Write {
+		return "connector is read-only", true
+	}
+	var a struct {
+		DirectoryID string `json:"directory_id"`
+		Path        string `json:"path"`
+		Message     string `json:"message"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "invalid arguments: " + err.Error(), true
+	}
+	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
+	if d == nil {
+		return "directory not accessible: " + a.DirectoryID, true
+	}
+	if err := d.Backend.Delete(a.Path, a.Message); err != nil {
+		return err.Error(), true
+	}
+	return "deleted " + a.Path, false
+}
+
+func (s *Server) toolDeleteFolder(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	if !conn.Write {
+		return "connector is read-only", true
+	}
+	var a struct {
+		DirectoryID string `json:"directory_id"`
+		Path        string `json:"path"`
+		Message     string `json:"message"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "invalid arguments: " + err.Error(), true
+	}
+	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
+	if d == nil {
+		return "directory not accessible: " + a.DirectoryID, true
+	}
+	if err := d.Backend.DeleteFolder(a.Path, a.Message); err != nil {
+		return err.Error(), true
+	}
+	return "deleted folder " + a.Path, false
 }
 
 func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (string, bool) {
@@ -679,17 +792,24 @@ func reorganiseText(args map[string]string) string {
 1. If you have not already in this session, call %smemory_load()%s.
 2. %s
 3. Walk every page with %smemory_list%s and %smemory_read%s. For each, decide:
-   - duplicated or redundant → merge into the better page.
-   - stale or superseded → archive under %smemory/_archive/%s with a one-line historical note in MEMORY.md if it still matters.
-   - related to others → group under a descriptive multi-word folder.
-4. Perform the moves and rewrites with %smemory_write%s. (memd has no rename — write the new path; if the old path is no longer needed, write an empty body... actually leave the old in place and archive it instead.)
-5. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule.
-6. Update MEMORY.md's agent front matter: %slast_reorganised%s = today, %sentries%s = the final one-liner count.
-7. Report the diff: counts of pages added / moved / archived / merged; the new MEMORY.md section headers; anything skipped.
+   - **duplicated or redundant** → merge into the better page (%smemory_write%s the merged body to the canonical path; %smemory_delete%s the loser).
+   - **stale or superseded** → %smemory_move%s it under %smemory/_archive/<name>.md%s; keep a one-line historical note in MEMORY.md if it still matters.
+   - **related to others** → %smemory_move%s into a descriptive multi-word subfolder (e.g. %smemory/feedback/<name>.md%s).
+4. Use %smemory_move%s for renames and folder changes — not write-then-delete. Move preserves git rename detection so the file's history follows it.
+5. After the moves, walk the result and clean up: %smemory_delete_folder%s any leftover empty folders or stale subdirectories from prior incomplete passes.
+6. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule. Each entry is one line: a Markdown link plus a concrete description of what's in the page.
+7. Update MEMORY.md's agent front matter: %slast_reorganised%s = today, %sentries%s = the final one-liner count.
+8. Report the diff: counts of pages moved / archived / merged / deleted; the new MEMORY.md section headers; anything you flagged for user attention.
 
-Only stop for user input if the *Run in background* preamble's drastic-action triggers apply (e.g. you're about to delete prose the user wrote, or restructure more than a third of the directory in one go).`,
+Only stop for user input if the *Run in background* preamble's drastic-action triggers apply (e.g. you're about to delete prose the user wrote, restructure more than a third of the directory, or delete a folder you're not 100%% sure is obsolete).`,
 		"`", "`",
 		dirHint(args),
+		"`", "`",
+		"`", "`",
+		"`", "`",
+		"`", "`",
+		"`", "`",
+		"`", "`",
 		"`", "`",
 		"`", "`",
 		"`", "`",
