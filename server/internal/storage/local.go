@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sahilm/fuzzy"
 )
 
 // Local is a memory backend backed by a plain folder of Markdown files.
@@ -252,6 +254,19 @@ func isRootMemoryIndex(p string) bool {
 	return clean == "MEMORY.md"
 }
 
+// bodyHaystackBytes is how much of each page body feeds into the fuzzy
+// haystack. Path, title, and tags appear first so they outrank body-only
+// matches; the body cap keeps very long pages from blowing up the cost
+// of a single search call.
+const bodyHaystackBytes = 4096
+
+// Search returns one Hit per matched page, sorted by relevance (best
+// first). Matching is fuzzy — characters of the query must appear in
+// the page's searchable surface (path, title, tags, body prefix) in
+// order, but not contiguously. Scoring rewards matches near word
+// boundaries and earlier positions; since path/title/tags sit at the
+// start of the haystack, filename matches outrank body-only matches
+// for free.
 func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("empty query")
@@ -263,31 +278,112 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := strings.ToLower(query)
-	var hits []Hit
+
+	docs := make([]searchDoc, 0, len(paths))
 	for _, p := range paths {
 		abs := filepath.Join(l.rootEval, filepath.FromSlash(p))
-		f, err := os.Open(abs)
+		raw, err := os.ReadFile(abs)
 		if err != nil {
 			continue
 		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		lineNo := 0
-		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if strings.Contains(strings.ToLower(line), q) {
-				hits = append(hits, Hit{Path: p, Line: lineNo, Snippet: strings.TrimSpace(line)})
-				if len(hits) >= limit {
-					f.Close()
-					return hits, nil
-				}
-			}
+		page := ParsePage(raw)
+		body := page.Body
+		bodyPrefix := body
+		if len(bodyPrefix) > bodyHaystackBytes {
+			bodyPrefix = bodyPrefix[:bodyHaystackBytes]
 		}
-		f.Close()
+		title := firstHeading(body)
+		haystack := p + "\n" + title + "\n" + page.AgentFM + "\n" + string(bodyPrefix)
+		docs = append(docs, searchDoc{path: p, title: title, body: body, haystack: haystack})
+	}
+
+	matches := fuzzy.FindFrom(query, searchDocs(docs))
+	hits := make([]Hit, 0, len(matches))
+	for _, m := range matches {
+		if len(hits) >= limit {
+			break
+		}
+		d := docs[m.Index]
+		snippet, lineNo := bestBodyLine(d.body, query)
+		if snippet == "" {
+			snippet = d.title
+		}
+		if snippet == "" {
+			snippet = d.path
+		}
+		hits = append(hits, Hit{Path: d.path, Line: lineNo, Snippet: snippet, Score: m.Score})
 	}
 	return hits, nil
+}
+
+type searchDoc struct {
+	path     string
+	title    string
+	body     []byte
+	haystack string
+}
+
+// searchDocs adapts a []searchDoc to fuzzy.Source.
+type searchDocs []searchDoc
+
+func (s searchDocs) Len() int             { return len(s) }
+func (s searchDocs) String(i int) string  { return s[i].haystack }
+
+// firstHeading returns the first Markdown H1/H2 line in body (with the
+// leading #s stripped), or "" if none.
+func firstHeading(body []byte) string {
+	for _, raw := range bytes.Split(body, []byte("\n")) {
+		line := strings.TrimRight(string(raw), "\r")
+		trim := strings.TrimLeft(line, "#")
+		if len(trim) < len(line) && len(trim) > 0 && trim[0] == ' ' {
+			return strings.TrimSpace(trim)
+		}
+	}
+	return ""
+}
+
+// bestBodyLine picks a body line to display as the snippet for a hit.
+// Prefers a line that contains the query as a fuzzy subsequence (so the
+// snippet shows the user *why* it matched). Falls back to the first
+// non-empty body line. Returns 0 for line when no match was found.
+func bestBodyLine(body []byte, query string) (string, int) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	firstNonEmpty := ""
+	firstNonEmptyLine := 0
+	lineNo := 0
+	for _, raw := range bytes.Split(body, []byte("\n")) {
+		lineNo++
+		line := strings.TrimSpace(string(raw))
+		if line == "" {
+			continue
+		}
+		if firstNonEmpty == "" {
+			firstNonEmpty = line
+			firstNonEmptyLine = lineNo
+		}
+		if subsequenceFold(line, q) {
+			return line, lineNo
+		}
+	}
+	return firstNonEmpty, firstNonEmptyLine
+}
+
+// subsequenceFold reports whether every rune of needle appears in
+// haystack in order (case-insensitive).
+func subsequenceFold(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	hi := 0
+	hs := strings.ToLower(haystack)
+	for _, r := range needle {
+		idx := strings.IndexRune(hs[hi:], r)
+		if idx < 0 {
+			return false
+		}
+		hi += idx + 1
+	}
+	return true
 }
 
 func (l *Local) Status() Status {
