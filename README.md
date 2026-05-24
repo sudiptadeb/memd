@@ -4,15 +4,9 @@
 
 Your memory lives as Markdown on your disk — or in a private Git repo you control. memd is a tiny local server that exposes it over MCP, so every tool you use (Claude Code, Codex CLI, Cursor, ChatGPT, anything else that speaks MCP) sees the same memory.
 
-```
-   ┌─────────────────┐       ┌──────────┐       ┌──────────────────┐
-   │  Claude Code    │──┐    │          │       │  ~/work-memory/  │
-   ├─────────────────┤  ├───▶│   memd   │ ────▶ │   MEMORY.md      │
-   │  Codex CLI      │──┤    │   MCP    │       │   memory/*.md    │
-   ├─────────────────┤  │    │  server  │       │                  │
-   │  Cursor         │──┘    │          │       │  (or git remote) │
-   └─────────────────┘       └──────────┘       └──────────────────┘
-```
+<p align="center">
+  <img src="docs/assets/memd.svg" alt="memd — unified, file-first memory for AI agents" width="100%">
+</p>
 
 > **Status:** early. Local + Git backends, MCP Streamable HTTP, web UI, per-page stats, and the five consolidation workflows all work. Public hosting and skills/hooks injection are next.
 
