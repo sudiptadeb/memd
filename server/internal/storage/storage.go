@@ -51,11 +51,14 @@ type DirEntry struct {
 	IsDir bool   `json:"is_dir"`
 }
 
-// Hit is a single search result.
+// Hit is a single search result. One Hit per matched page (page-level
+// ranking, not line-level). Score is higher for better matches; the
+// magnitude is not stable across queries, only the relative ordering.
 type Hit struct {
 	Path    string `json:"path"`
 	Line    int    `json:"line"`
 	Snippet string `json:"snippet"`
+	Score   int    `json:"score"`
 }
 
 // Status describes backend health and last sync state.
