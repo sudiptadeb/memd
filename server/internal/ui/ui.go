@@ -4,7 +4,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,10 +16,8 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
-//go:embed templates/*.html assets/*
+//go:embed assets/*
 var fsys embed.FS
-
-var tmpl = template.Must(template.New("").ParseFS(fsys, "templates/*.html"))
 
 // Handler is the web UI handler.
 type Handler struct {
@@ -49,21 +46,21 @@ type pageData struct {
 }
 
 type directoryView struct {
-	ID          string
-	Name        string
-	Description string
-	Backend     string
-	Detail      string
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Backend     string `json:"backend"`
+	Detail      string `json:"detail"`
+	Error       string `json:"error,omitempty"`
 }
 
 type connectorView struct {
-	ID               string
-	Name             string
-	NameJSON         string // JSON-encoded so the Alpine form can seed itself
-	URL              string
-	Write            bool
-	DirectoryIDsJSON string // JSON-encoded array of directory ids
-	DirectoryNames   string
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	URL            string   `json:"url"`
+	Write          bool     `json:"write"`
+	DirectoryIDs   []string `json:"directory_ids"`
+	DirectoryNames string   `json:"directory_names"`
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -71,9 +68,13 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := tmpl.ExecuteTemplate(w, "index.html", h.pageData()); err != nil {
+	b, err := fsys.ReadFile("assets/index.html")
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
 }
 
 func (h *Handler) pageData() pageData {
@@ -83,8 +84,15 @@ func (h *Handler) pageData() pageData {
 	for _, d := range dirs {
 		dirNameByID[d.ID] = d.Name
 		detail := d.LocalPath
+		errMsg := ""
 		if d.Backend == "git" && d.Git != nil {
 			detail = fmt.Sprintf("%s @ %s : %s", d.Git.RemoteURL, d.Git.Branch, d.Git.BasePath)
+		} else if d.Backend == "local" {
+			if info, err := os.Stat(d.LocalPath); err != nil {
+				errMsg = err.Error()
+			} else if !info.IsDir() {
+				errMsg = "not a directory"
+			}
 		}
 		dirViews = append(dirViews, directoryView{
 			ID:          d.ID,
@@ -92,6 +100,7 @@ func (h *Handler) pageData() pageData {
 			Description: d.Description,
 			Backend:     d.Backend,
 			Detail:      detail,
+			Error:       errMsg,
 		})
 	}
 	cs := h.reg.Connectors()
@@ -111,20 +120,17 @@ func (h *Handler) pageData() pageData {
 		if names == "" {
 			names = "(none)"
 		}
-		nameJSON, _ := json.Marshal(c.Name)
 		ids := c.DirectoryIDs
 		if ids == nil {
 			ids = []string{}
 		}
-		idsJSON, _ := json.Marshal(ids)
 		cViews = append(cViews, connectorView{
-			ID:               c.ID,
-			Name:             c.Name,
-			NameJSON:         string(nameJSON),
-			URL:              fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
-			Write:            c.Write,
-			DirectoryIDsJSON: string(idsJSON),
-			DirectoryNames:   names,
+			ID:             c.ID,
+			Name:           c.Name,
+			URL:            fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+			Write:          c.Write,
+			DirectoryIDs:   ids,
+			DirectoryNames: names,
 		})
 	}
 	return pageData{Directories: dirViews, Connectors: cViews}
@@ -133,6 +139,10 @@ func (h *Handler) pageData() pageData {
 // --- Directory API ---
 
 func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{"directories": h.pageData().Directories})
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -185,6 +195,10 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 // --- Connector API ---
 
 func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{"connectors": h.pageData().Connectors})
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
