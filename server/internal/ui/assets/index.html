@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>memd</title>
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script defer src="/assets/script.js"></script>
+    <script defer src="/assets/alpine.min.js"></script>
+  </head>
+  <body x-data="memdApp()" x-init="init()" @keydown.escape.window="closeOverlays()">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="memd home">
+        <img class="logo logo-light" src="/assets/logo-light.png" alt="memd" />
+        <img class="logo logo-dark" src="/assets/logo-dark.png" alt="memd" />
+      </a>
+      <div class="brand-sub">Local memory server for AI agents</div>
+      <span class="spacer"></span>
+      <span class="bind">127.0.0.1</span>
+      <button class="top-icon" type="button" :class="infoMode ? 'on' : ''" @click="setInfo(!infoMode)" :title="infoMode ? 'Hide explainer' : 'Show explainer'">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/info.svg#icon"></use></svg>
+      </button>
+      <button class="top-icon" type="button" @click="toggleLayout()" :title="layoutMode === 'wide' ? 'Use centered layout' : 'Use full-width layout'">
+        <svg class="icon" aria-hidden="true" x-show="layoutMode === 'wide'"><use href="/assets/icons/minimize.svg#icon"></use></svg>
+        <svg class="icon" aria-hidden="true" x-show="layoutMode === 'centered'"><use href="/assets/icons/maximize.svg#icon"></use></svg>
+      </button>
+      <button class="top-icon" type="button" @click="toggleTheme()" :title="theme === 'light' ? 'Switch to dark' : 'Switch to light'">
+        <svg class="icon" aria-hidden="true" x-show="theme === 'light'"><use href="/assets/icons/moon.svg#icon"></use></svg>
+        <svg class="icon" aria-hidden="true" x-show="theme === 'dark'"><use href="/assets/icons/sun.svg#icon"></use></svg>
+      </button>
+    </header>
+
+    <div class="body" :class="logsHidden ? 'logs-hidden' : ''">
+      <main class="main">
+        <div class="intro" x-show="infoMode" x-cloak>
+          <div class="intro-text">
+            <span class="eyebrow">How memd works</span>
+            <p>Two things to set up. <b>Directories</b> are folders memd serves. <span class="arrow">-&gt;</span> <b>Connectors</b> are URLs you paste into agents to grant scoped access.</p>
+          </div>
+          <button class="dismiss" type="button" @click="setInfo(false)" title="Dismiss">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+          </button>
+        </div>
+
+        <div class="empty load-state" x-show="loading" x-cloak>
+          <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg></div>
+          <h4>Loading memd</h4>
+          <p>Reading configured directories and connectors from the local server.</p>
+        </div>
+
+        <div class="empty error-state" x-show="loadErr" x-cloak>
+          <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/triangle-alert.svg#icon"></use></svg></div>
+          <h4>Could not load UI data</h4>
+          <p x-text="loadErr"></p>
+          <button class="btn secondary" type="button" @click="load()">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+            Retry
+          </button>
+        </div>
+
+        <section x-show="!loading && !loadErr" x-cloak>
+          <div class="section-head">
+            <div class="titles">
+              <span class="step" x-show="infoMode" x-cloak>Step 1</span>
+              <h2>Directories <span class="count" x-text="directories.length"></span></h2>
+              <span class="desc" x-show="infoMode" x-cloak>Folders on this machine, or a git repo, that memd can serve to connected agents.</span>
+            </div>
+            <span class="spacer"></span>
+            <button class="btn secondary" type="button" @click="openSheet('dir')">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+              Add directory
+            </button>
+          </div>
+
+          <template x-if="directories.length">
+            <div class="cards">
+              <template x-for="directory in directories" :key="directory.id">
+                <article class="card" :class="directory.error ? 'error-card' : ''">
+                  <div class="card-head">
+                    <div class="card-name" x-text="directory.name"></div>
+                    <span class="dot" :class="directory.error ? 'danger' : 'success'" :title="directory.error || (directory.backend + ' reachable')" x-text="directory.backend"></span>
+                    <span class="spacer"></span>
+                    <button class="icon-btn danger" type="button" title="Delete directory" @click="deleteDirectory(directory)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/trash-2.svg#icon"></use></svg>
+                    </button>
+                  </div>
+                  <div class="card-desc" x-show="directory.description" x-text="directory.description"></div>
+                  <code class="card-path" x-text="directory.detail"></code>
+                  <div class="error-msg" x-show="directory.error">
+                    <svg class="icon" aria-hidden="true"><use href="/assets/icons/triangle-alert.svg#icon"></use></svg>
+                    <span x-text="directory.error"></span>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="!directories.length">
+            <div class="empty">
+              <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg></div>
+              <h4>No directories yet</h4>
+              <p>Add a local folder or git repo. memd will expose it to connectors you create.</p>
+              <button class="btn primary" type="button" @click="openSheet('dir')">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+                Add your first directory
+              </button>
+            </div>
+          </template>
+        </section>
+
+        <section x-show="!loading && !loadErr" x-cloak>
+          <div class="section-head">
+            <div class="titles">
+              <span class="step" x-show="infoMode" x-cloak>Step 2</span>
+              <h2>Connectors <span class="count" x-text="connectors.length"></span></h2>
+              <span class="desc" x-show="infoMode" x-cloak>Each connector is one MCP URL scoped to selected directories and optional write access.</span>
+            </div>
+            <span class="spacer"></span>
+            <button class="btn secondary" type="button" @click="openSheet('conn')" :disabled="!directories.length" :title="directories.length ? '' : 'Add a directory first'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+              Add connector
+            </button>
+          </div>
+
+          <template x-if="connectors.length">
+            <div class="cards">
+              <template x-for="connector in connectors" :key="connector.id">
+                <article class="card">
+                  <div class="card-head">
+                    <span class="card-name" x-text="connector.name"></span>
+                    <span class="dot" :class="connector.write ? 'accent' : ''" x-text="connector.write ? 'read/write' : 'read-only'"></span>
+                    <span class="spacer"></span>
+                  </div>
+                  <div class="card-meta">Access to <b x-text="connectorDirectoryNames(connector)"></b></div>
+                  <div class="url-row">
+                    <code :class="connector.revealed ? 'revealed' : ''" x-text="connector.revealed ? connector.url : truncate(connector.url)"></code>
+                    <div class="url-actions">
+                      <button type="button" @click="toggleConnectorReveal(connector)" :title="connector.revealed ? 'Hide URL' : 'Reveal URL'">
+                        <svg class="icon" aria-hidden="true" x-show="!connector.revealed"><use href="/assets/icons/eye.svg#icon"></use></svg>
+                        <svg class="icon" aria-hidden="true" x-show="connector.revealed"><use href="/assets/icons/eye-off.svg#icon"></use></svg>
+                        <span x-text="connector.revealed ? 'Hide' : 'Reveal'"></span>
+                      </button>
+                      <button type="button" @click="copy(connector.url)">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div class="card-foot">
+                    <span class="spacer"></span>
+                    <button class="btn ghost" type="button" @click="openEdit(connector)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/pencil.svg#icon"></use></svg>
+                      Edit
+                    </button>
+                    <button class="btn ghost" type="button" @click="rotateConnector(connector)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+                      Rotate
+                    </button>
+                    <button class="btn danger" type="button" @click="deleteConnector(connector)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/trash-2.svg#icon"></use></svg>
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="!connectors.length">
+            <div class="empty">
+              <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg></div>
+              <h4>No connectors yet</h4>
+              <p>A connector issues a URL an agent can use to reach memd. Each one is scoped to specific directories.</p>
+              <button class="btn primary" type="button" @click="openSheet('conn')" :disabled="!directories.length">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+                Add your first connector
+              </button>
+              <p class="empty-note" x-show="!directories.length">Add a directory first.</p>
+            </div>
+          </template>
+        </section>
+      </main>
+
+      <aside class="logs" x-show="!logsHidden" x-cloak>
+        <div class="resize-handle" @mousedown="startResize($event)" title="Drag to resize"></div>
+        <header class="logs-head">
+          <h2>Activity</h2>
+          <span class="live">live</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" type="button" title="Clear activity" @click="entries = []">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/eraser.svg#icon"></use></svg>
+          </button>
+          <button class="icon-btn" type="button" title="Collapse activity" @click="setLogsHidden(true)">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/panel-right-close.svg#icon"></use></svg>
+          </button>
+        </header>
+        <div class="logs-list" x-ref="logsScroll">
+          <template x-for="entry in entries" :key="entry.id">
+            <div class="log-line" :class="entry.level">
+              <span class="time" x-text="entry.timeLocal"></span>
+              <span class="message" x-text="entry.message"></span>
+            </div>
+          </template>
+          <div class="logs-empty" x-show="!entries.length">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+            <span>Waiting for activity...</span>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <button class="logs-reopen" type="button" x-show="logsHidden" x-cloak @click="setLogsHidden(false)" title="Show activity">
+      <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+      <span>Activity</span>
+    </button>
+
+    <div class="scrim" :class="sheet ? 'open' : ''" @click="closeSheets()"></div>
+
+    <aside class="sheet" :class="sheet === 'dir' ? 'open' : ''" :aria-hidden="sheet !== 'dir'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3>Add directory</h3>
+          <div class="sub">A folder memd will serve to agents.</div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <form class="sheet-body" id="add-dir-form" @submit.prevent="createDirectory()">
+        <div class="field">
+          <label class="field-label">Name<span class="req">*</span></label>
+          <input class="input" x-model="dirForm.name" required placeholder="work-notes" />
+          <div class="field-hint">Short identifier for this memory directory.</div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Description</label>
+          <input class="input" x-model="dirForm.description" placeholder="What this directory holds" />
+        </div>
+
+        <div class="field">
+          <label class="field-label">Backend</label>
+          <div class="seg-control">
+            <button type="button" :class="dirForm.backend === 'local' ? 'on' : ''" @click="dirForm.backend = 'local'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/hard-drive.svg#icon"></use></svg>
+              Local folder
+            </button>
+            <button type="button" :class="dirForm.backend === 'git' ? 'on' : ''" @click="dirForm.backend = 'git'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/git-branch.svg#icon"></use></svg>
+              Git repository
+            </button>
+          </div>
+        </div>
+
+        <template x-if="dirForm.backend === 'local'">
+          <div class="field">
+            <label class="field-label">Path<span class="req">*</span></label>
+            <div class="input-group">
+              <input class="input" x-model="dirForm.local_path" required placeholder="/Users/you/memory" />
+              <button type="button" @click="openPicker()">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-search.svg#icon"></use></svg>
+                Browse
+              </button>
+            </div>
+            <div class="field-hint">Must be readable by the memd process.</div>
+          </div>
+        </template>
+
+        <template x-if="dirForm.backend === 'git'">
+          <div class="git-fields">
+            <div class="field">
+              <label class="field-label">Remote URL<span class="req">*</span></label>
+              <input class="input" x-model="dirForm.remote_url" required placeholder="git@github.com:you/memory.git" />
+            </div>
+            <div class="field">
+              <label class="field-label">Branch</label>
+              <input class="input" x-model="dirForm.branch" placeholder="main" />
+            </div>
+            <div class="field">
+              <label class="field-label">Base path in repo</label>
+              <input class="input" x-model="dirForm.base_path" placeholder="repo root" />
+            </div>
+            <div class="field">
+              <label class="field-label">Author name</label>
+              <input class="input" x-model="dirForm.author_name" placeholder="memd" />
+            </div>
+            <div class="field">
+              <label class="field-label">Author email</label>
+              <input class="input" x-model="dirForm.author_email" placeholder="memd@localhost" />
+            </div>
+            <div class="field">
+              <label class="field-label">SSH key path</label>
+              <input class="input" x-model="dirForm.ssh_key_path" placeholder="~/.ssh/id_ed25519" />
+              <div class="field-hint">Optional. Defaults to your SSH agent.</div>
+            </div>
+          </div>
+        </template>
+
+        <span class="err" x-text="dirForm.err" x-show="dirForm.err"></span>
+      </form>
+
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
+        <button class="btn primary" type="submit" form="add-dir-form" :disabled="dirForm.submitting">Add directory</button>
+      </footer>
+    </aside>
+
+    <aside class="sheet" :class="sheet === 'conn' ? 'open' : ''" :aria-hidden="sheet !== 'conn'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3>Add connector</h3>
+          <div class="sub">A URL an agent can use to reach memd.</div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <form class="sheet-body" id="add-conn-form" @submit.prevent="createConnector()">
+        <div class="field">
+          <label class="field-label">Name<span class="req">*</span></label>
+          <input class="input" x-model="connForm.name" required placeholder="Claude Code" />
+          <div class="field-hint">Shown in the connector list and logs.</div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Directories<span class="req">*</span></label>
+          <div class="check-list">
+            <template x-for="directory in directories" :key="directory.id">
+              <label class="check-row" :class="connForm.selected.includes(directory.id) ? 'on' : ''">
+                <input type="checkbox" :value="directory.id" :checked="connForm.selected.includes(directory.id)" @change="toggleSelection(connForm.selected, directory.id, $event.target.checked)" />
+                <div>
+                  <div class="label" x-text="directory.name"></div>
+                  <span class="sub" x-text="directory.detail"></span>
+                </div>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="toggle-row" @click.prevent="connForm.write = !connForm.write">
+            <div class="label">
+              Allow writes
+              <div class="sub">Read-only connectors can only list and read files.</div>
+            </div>
+            <div class="toggle" :class="connForm.write ? 'on' : ''"></div>
+          </label>
+        </div>
+
+        <span class="err" x-text="connForm.err" x-show="connForm.err"></span>
+      </form>
+
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
+        <button class="btn primary" type="submit" form="add-conn-form" :disabled="connForm.submitting || !connForm.selected.length">Create connector</button>
+      </footer>
+    </aside>
+
+    <aside class="sheet" :class="sheet === 'edit' ? 'open' : ''" :aria-hidden="sheet !== 'edit'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3>Edit connector</h3>
+          <div class="sub" x-text="editForm.originalName"></div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <form class="sheet-body" id="edit-conn-form" @submit.prevent="updateConnector()">
+        <div class="field">
+          <label class="field-label">Name<span class="req">*</span></label>
+          <input class="input" x-model="editForm.name" required />
+        </div>
+
+        <div class="field">
+          <label class="field-label">Directories this connector can see</label>
+          <div class="check-list">
+            <template x-for="directory in directories" :key="directory.id">
+              <label class="check-row" :class="editForm.selected.includes(directory.id) ? 'on' : ''">
+                <input type="checkbox" :value="directory.id" :checked="editForm.selected.includes(directory.id)" @change="toggleSelection(editForm.selected, directory.id, $event.target.checked)" />
+                <div>
+                  <div class="label" x-text="directory.name"></div>
+                  <span class="sub" x-text="directory.detail"></span>
+                </div>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="toggle-row" @click.prevent="editForm.write = !editForm.write">
+            <div class="label">
+              Allow writes
+              <div class="sub">Read-only connectors can only list and read files.</div>
+            </div>
+            <div class="toggle" :class="editForm.write ? 'on' : ''"></div>
+          </label>
+        </div>
+
+        <span class="err" x-text="editForm.err" x-show="editForm.err"></span>
+      </form>
+
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
+        <button class="btn primary" type="submit" form="edit-conn-form" :disabled="editForm.submitting || !editForm.selected.length || !editForm.name">Save changes</button>
+      </footer>
+    </aside>
+
+    <div class="modal-scrim" :class="pickerOpen ? 'open' : ''" @click="pickerOpen = false">
+      <div class="modal" @click.stop>
+        <header class="modal-head">
+          <h3>Choose a folder</h3>
+          <div class="sub">Pick the directory memd should serve to agents.</div>
+        </header>
+        <div class="path-bar" x-text="pickerPath || '/'"></div>
+        <div class="dir-rows">
+          <div class="dir-row up" x-show="pickerParent" @click="browse(pickerParent)">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/corner-left-up.svg#icon"></use></svg>
+            .. (up)
+          </div>
+          <template x-for="entry in pickerEntries" :key="entry.name">
+            <div class="dir-row" @click="browse(joinPath(pickerPath, entry.name))">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder.svg#icon"></use></svg>
+              <span x-text="entry.name"></span>
+              <svg class="icon arrow" aria-hidden="true"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
+            </div>
+          </template>
+          <div class="picker-empty" x-show="!pickerEntries.length && !pickerParent">(no subdirectories)</div>
+          <div class="picker-error" x-show="pickerErr" x-text="pickerErr"></div>
+        </div>
+        <footer class="modal-foot">
+          <span class="selected" x-text="pickerPath"></span>
+          <button class="btn ghost" type="button" @click="pickerOpen = false">Cancel</button>
+          <button class="btn primary" type="button" @click="selectFolder()">Select</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="toast" :class="toast ? 'show' : ''" x-cloak>
+      <svg class="icon" aria-hidden="true"><use href="/assets/icons/check.svg#icon"></use></svg>
+      <span x-text="toast"></span>
+    </div>
+  </body>
+</html>
