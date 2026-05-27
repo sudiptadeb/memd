@@ -54,6 +54,23 @@
     }
   }
 
+  function currentOriginURL(rawURL) {
+    try {
+      const url = new URL(rawURL, window.location.origin);
+      return window.location.origin + url.pathname + url.search + url.hash;
+    } catch (_) {
+      return rawURL || "";
+    }
+  }
+
+  function connectorPath(connector) {
+    try {
+      return new URL(connector.url, window.location.origin).pathname;
+    } catch (_) {
+      return "";
+    }
+  }
+
   function defaultDirForm() {
     return {
       name: "",
@@ -74,6 +91,7 @@
   function defaultConnForm() {
     return {
       name: "",
+      kind: "mcp",
       selected: [],
       write: true,
       err: "",
@@ -86,6 +104,7 @@
       id: "",
       originalName: "",
       name: "",
+      kind: "mcp",
       selected: [],
       write: true,
       err: "",
@@ -117,6 +136,7 @@
       toastTimer: null,
       entries: [],
       lastID: -1,
+      logsPolling: false,
       logsTimer: null,
 
       init() {
@@ -139,6 +159,8 @@
           this.directories = results[0].directories || [];
           this.connectors = (results[1].connectors || []).map(function (connector) {
             connector.revealed = false;
+            connector.kind = connector.kind || "mcp";
+            connector.url = currentOriginURL(connector.url);
             return connector;
           });
         } catch (error) {
@@ -218,6 +240,7 @@
           id: connector.id,
           originalName: connector.name,
           name: connector.name,
+          kind: connector.kind || "mcp",
           selected: (connector.directory_ids || []).slice(),
           write: Boolean(connector.write),
           err: "",
@@ -243,8 +266,29 @@
         }, 1800);
       },
 
-      copy(text) {
-        copyText(text).then(() => this.showToast("URL copied"));
+      copy(text, label) {
+        copyText(text).then(() => this.showToast(label || "Copied"));
+      },
+
+      copyURL(connector) {
+        this.copy(connector.url, "URL copied");
+      },
+
+      async copySkill(connector) {
+        try {
+          const path = connectorPath(connector);
+          if (!path) {
+            throw new Error("missing connector path");
+          }
+          const response = await fetch(path, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(response.statusText || "request failed");
+          }
+          await copyText(await response.text());
+          this.showToast("Skill copied");
+        } catch (_) {
+          this.showToast("Copy failed");
+        }
       },
 
       truncate(url) {
@@ -328,6 +372,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               name: this.connForm.name,
+              kind: this.connForm.kind,
               directory_ids: this.connForm.selected,
               write: this.connForm.write
             })
@@ -350,6 +395,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               name: this.editForm.name,
+              kind: this.editForm.kind,
               directory_ids: this.editForm.selected,
               write: this.editForm.write
             })
@@ -415,8 +461,12 @@
       },
 
       async pollLogs() {
+        if (this.logsPolling) {
+          return;
+        }
+        this.logsPolling = true;
         try {
-          const data = await api("/api/logs?since=" + this.lastID);
+          const data = await api("/api/logs?since=" + encodeURIComponent(String(this.lastID)), { cache: "no-store" });
           const fresh = data.entries || [];
           if (!fresh.length) return;
           fresh.forEach(function (entry) {
@@ -430,7 +480,10 @@
               el.scrollTop = el.scrollHeight;
             }
           });
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          this.logsPolling = false;
+        }
       }
     };
   };

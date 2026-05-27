@@ -57,6 +57,7 @@ type directoryView struct {
 type connectorView struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
+	Kind           string   `json:"kind"`
 	URL            string   `json:"url"`
 	Write          bool     `json:"write"`
 	DirectoryIDs   []string `json:"directory_ids"`
@@ -124,10 +125,13 @@ func (h *Handler) pageData() pageData {
 		if ids == nil {
 			ids = []string{}
 		}
+		kind := c.EffectiveKind()
+		url := h.connectorURL(c)
 		cViews = append(cViews, connectorView{
 			ID:             c.ID,
 			Name:           c.Name,
-			URL:            fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+			Kind:           kind,
+			URL:            url,
 			Write:          c.Write,
 			DirectoryIDs:   ids,
 			DirectoryNames: names,
@@ -205,6 +209,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name         string   `json:"name"`
+		Kind         string   `json:"kind"`
 		DirectoryIDs []string `json:"directory_ids"`
 		Write        bool     `json:"write"`
 	}
@@ -218,6 +223,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := h.reg.AddConnector(config.Connector{
 		Name:         body.Name,
+		Kind:         body.Kind,
 		DirectoryIDs: body.DirectoryIDs,
 		Write:        body.Write,
 	})
@@ -226,10 +232,10 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	logs.Info("added connector %q (id=%s, %d directories, write=%v)", body.Name, c.ID, len(body.DirectoryIDs), body.Write)
+	logs.Info("added connector %q (id=%s, kind=%s, %d directories, write=%v)", body.Name, c.ID, c.EffectiveKind(), len(body.DirectoryIDs), body.Write)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"id":  c.ID,
-		"url": fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+		"url": h.connectorURL(c),
 	})
 }
 
@@ -247,6 +253,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 	case action == "" && r.Method == http.MethodPut:
 		var body struct {
 			Name         string   `json:"name"`
+			Kind         string   `json:"kind"`
 			DirectoryIDs []string `json:"directory_ids"`
 			Write        bool     `json:"write"`
 		}
@@ -254,12 +261,12 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		c, err := h.reg.UpdateConnector(id, body.Name, body.DirectoryIDs, body.Write)
+		c, err := h.reg.UpdateConnector(id, body.Name, body.Kind, body.DirectoryIDs, body.Write)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		logs.Info("updated connector %q (id=%s, %d directories, write=%v)", c.Name, id, len(c.DirectoryIDs), c.Write)
+		logs.Info("updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)
 		writeJSON(w, http.StatusOK, map[string]string{"id": c.ID})
 	case action == "rotate" && r.Method == http.MethodPost:
 		c, err := h.reg.RotateConnector(id)
@@ -270,10 +277,19 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		logs.Info("rotated connector %q (id=%s)", c.Name, id)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"id":  c.ID,
-			"url": fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token),
+			"url": h.connectorURL(c),
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) connectorURL(c config.Connector) string {
+	switch c.EffectiveKind() {
+	case config.ConnectorKindHTTP:
+		return fmt.Sprintf("%s/http/%s", h.baseURL, c.Token)
+	default:
+		return fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token)
 	}
 }
 
@@ -343,6 +359,8 @@ func (h *Handler) logsAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	since := int64(-1)
 	if s := r.URL.Query().Get("since"); s != "" {
 		if v, err := strconv.ParseInt(s, 10, 64); err == nil {

@@ -7,8 +7,9 @@ memd is a Go server you run locally. It exposes file-based memory directories to
 What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
-- Web UI for managing directories and connectors. Each connector gets a token-in-URL credential.
+- Web UI for managing directories and MCP/HTTP connectors. Each connector gets a token-in-URL credential.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
+- Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
 - Localhost-only binding. No admin auth, no remote-access story, no public hosting.
 
 What's planned (not yet implemented): skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
@@ -46,8 +47,8 @@ The server starts, opens the web UI in your browser (default `http://127.0.0.1:7
 In the UI:
 
 1. **Add directories.** Pick local folder or Git repo. For Git: paste the URL, branch, base path inside the repo, and pick an SSH key path or PAT env var. memd clones into a working copy under the config dir.
-2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick which directories the connector can see and whether write is allowed. memd generates a unique MCP URL and shows it to you once.
-3. **Wire up agents.** Paste each URL into the matching agent's MCP config — see below.
+2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick MCP or HTTP, which directories the connector can see, and whether write is allowed. memd generates a unique URL and shows it to you once.
+3. **Wire up agents.** Paste MCP URLs into MCP configs, or use **Copy skill** for HTTP connectors.
 
 ## CLI
 
@@ -59,15 +60,17 @@ memd version
 
 Both modes bind to `127.0.0.1`. There is no way to expose the server publicly in v1.
 
-## MCP URL Shape
+## Connector URL Shapes
 
 ```
 http://127.0.0.1:<port>/mcp/<token>
+http://127.0.0.1:<port>/http/<token>
 ```
 
 - Token is 32 random characters.
 - The URL **is the credential**. Treat it like a password.
-- Quick mode: a fresh token per run.
+- MCP connectors use `/mcp/`; HTTP connectors use `/http/`.
+- Quick mode: a fresh MCP token per run.
 - Configured mode: persists per connector until you delete it. See [Connector Tokens](#connector-tokens) below.
 
 ## Wiring Up Agents
@@ -90,6 +93,10 @@ transport = "http"
 
 Any agent supporting MCP Streamable HTTP with a bearer-in-URL endpoint works the same way.
 
+### HTTP connector for non-MCP agents
+
+Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP connector in the web UI and use **Copy skill** on the connector card. The copied instructions include the secret URL base and endpoints for `memory_load`, `memory_list`, `memory_read`, `memory_search`, status, and workflows. Write-enabled HTTP connectors expose write operations through POST only. If you are using a tunnel, open the web UI through the tunnel URL before copying so the pasted skill uses the reachable host.
+
 ## Where Config Lives
 
 | Platform | Path |
@@ -109,8 +116,8 @@ workdirs/
 ## Connector Tokens
 
 - **Stored** inside `config.json` on each connector's `token` field. The whole file is written atomically with mode `0600`.
-- **Shown once** in the web UI at creation time, embedded in the MCP URL. memd does not redisplay it later — paste it straight into your agent.
-- **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from `config.json` and any future request bearing it returns 401.
+- **Shown in the web UI** embedded in the connector URL. Treat it as secret and paste it only into the intended agent.
+- **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from `config.json` and any future request bearing it returns 404.
 - **Rotated** with the "Rotate token" button in the web UI (`POST /api/connectors/{id}/rotate`). The connector keeps its ID, name, directory access, and write flag; only the token changes. The previous URL stops authenticating immediately — paste the new one into the agent.
 
 ## Git Directory Behavior

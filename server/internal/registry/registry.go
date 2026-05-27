@@ -219,6 +219,10 @@ func (r *Registry) DeleteDirectory(id string) error {
 }
 
 func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
+	c.Kind = config.NormalizeConnectorKind(c.Kind)
+	if c.Kind != config.ConnectorKindMCP && c.Kind != config.ConnectorKindHTTP {
+		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", c.Kind)
+	}
 	if c.ID == "" {
 		c.ID = newID()
 	}
@@ -241,15 +245,19 @@ func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 	return c, nil
 }
 
-// UpdateConnector edits a connector's name, directory access, and
+// UpdateConnector edits a connector's name, kind, directory access, and
 // write flag. The token, ID, and creation time are preserved.
 // Returns the updated connector.
-func (r *Registry) UpdateConnector(id, name string, directoryIDs []string, write bool) (config.Connector, error) {
+func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string, write bool) (config.Connector, error) {
 	if name == "" {
 		return config.Connector{}, errors.New("name is required")
 	}
 	if len(directoryIDs) == 0 {
 		return config.Connector{}, errors.New("at least one directory is required")
+	}
+	kind = config.NormalizeConnectorKind(kind)
+	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
+		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", kind)
 	}
 	r.mu.Lock()
 	idx := -1
@@ -277,6 +285,7 @@ func (r *Registry) UpdateConnector(id, name string, directoryIDs []string, write
 		}
 	}
 	r.cfg.Connectors[idx].Name = name
+	r.cfg.Connectors[idx].Kind = kind
 	r.cfg.Connectors[idx].DirectoryIDs = append([]string(nil), directoryIDs...)
 	r.cfg.Connectors[idx].Write = write
 	updated := r.cfg.Connectors[idx]

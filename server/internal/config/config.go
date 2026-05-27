@@ -77,14 +77,35 @@ type Git struct {
 	SaveEvery string `json:"save_every,omitempty"`
 }
 
-// Connector grants an MCP client access to one or more directories.
+// Connector grants an agent access to one or more directories.
 type Connector struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	Kind         string    `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
 	Token        string    `json:"token"`
 	DirectoryIDs []string  `json:"directory_ids"`
 	Write        bool      `json:"write"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+const (
+	ConnectorKindMCP  = "mcp"
+	ConnectorKindHTTP = "http"
+)
+
+func NormalizeConnectorKind(kind string) string {
+	switch kind {
+	case "", ConnectorKindMCP:
+		return ConnectorKindMCP
+	case ConnectorKindHTTP:
+		return ConnectorKindHTTP
+	default:
+		return kind
+	}
+}
+
+func (c Connector) EffectiveKind() string {
+	return NormalizeConnectorKind(c.Kind)
 }
 
 // Load reads config.json. Returns an empty Config if the file does not exist.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/storage"
@@ -40,6 +41,12 @@ func (s *Server) Mount(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix, s.handle)
 }
 
+// MountHTTP registers simple token-authenticated HTTP endpoints for agents
+// that can fetch URLs but cannot speak MCP.
+func (s *Server) MountHTTP(mux *http.ServeMux, prefix string) {
+	mux.HandleFunc(prefix, s.handleHTTP)
+}
+
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimPrefix(r.URL.Path, "/mcp/")
 	tok = strings.Trim(tok, "/")
@@ -49,6 +56,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	conn := s.reg.ConnectorByToken(tok)
 	if conn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if conn.EffectiveKind() != config.ConnectorKindMCP {
 		http.NotFound(w, r)
 		return
 	}

@@ -114,7 +114,7 @@
             <div class="titles">
               <span class="step" x-show="infoMode" x-cloak>Step 2</span>
               <h2>Connectors <span class="count" x-text="connectors.length"></span></h2>
-              <span class="desc" x-show="infoMode" x-cloak>Each connector is one MCP URL scoped to selected directories and optional write access.</span>
+              <span class="desc" x-show="infoMode" x-cloak>Each connector is one URL scoped to selected directories and optional write access.</span>
             </div>
             <span class="spacer"></span>
             <button class="btn secondary" type="button" @click="openSheet('conn')" :disabled="!directories.length" :title="directories.length ? '' : 'Add a directory first'">
@@ -129,6 +129,7 @@
                 <article class="card">
                   <div class="card-head">
                     <span class="card-name" x-text="connector.name"></span>
+                    <span class="dot" x-text="connector.kind === 'http' ? 'http' : 'mcp'"></span>
                     <span class="dot" :class="connector.write ? 'accent' : ''" x-text="connector.write ? 'read/write' : 'read-only'"></span>
                     <span class="spacer"></span>
                   </div>
@@ -141,9 +142,13 @@
                         <svg class="icon" aria-hidden="true" x-show="connector.revealed"><use href="/assets/icons/eye-off.svg#icon"></use></svg>
                         <span x-text="connector.revealed ? 'Hide' : 'Reveal'"></span>
                       </button>
-                      <button type="button" @click="copy(connector.url)">
+                      <button type="button" @click="copyURL(connector)">
                         <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
                         Copy
+                      </button>
+                      <button type="button" x-show="connector.kind === 'http'" @click="copySkill(connector)">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                        Copy skill
                       </button>
                     </div>
                   </div>
@@ -329,6 +334,21 @@
         </div>
 
         <div class="field">
+          <label class="field-label">Type</label>
+          <div class="seg-control">
+            <button type="button" :class="connForm.kind === 'mcp' ? 'on' : ''" @click="connForm.kind = 'mcp'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
+              MCP
+            </button>
+            <button type="button" :class="connForm.kind === 'http' ? 'on' : ''" @click="connForm.kind = 'http'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+              HTTP
+            </button>
+          </div>
+          <div class="field-hint">Use HTTP for agents that can fetch URLs but cannot connect to MCP.</div>
+        </div>
+
+        <div class="field">
           <label class="field-label">Directories<span class="req">*</span></label>
           <div class="check-list">
             <template x-for="directory in directories" :key="directory.id">
@@ -379,6 +399,20 @@
         <div class="field">
           <label class="field-label">Name<span class="req">*</span></label>
           <input class="input" x-model="editForm.name" required />
+        </div>
+
+        <div class="field">
+          <label class="field-label">Type</label>
+          <div class="seg-control">
+            <button type="button" :class="editForm.kind === 'mcp' ? 'on' : ''" @click="editForm.kind = 'mcp'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
+              MCP
+            </button>
+            <button type="button" :class="editForm.kind === 'http' ? 'on' : ''" @click="editForm.kind = 'http'">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+              HTTP
+            </button>
+          </div>
         </div>
 
         <div class="field">
