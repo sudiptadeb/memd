@@ -1,6 +1,6 @@
 # Running memd
 
-memd is a Go server you run locally. It exposes Markdown memory directories to AI agents over MCP.
+memd is a Go server you run locally. It exposes file-based memory directories to AI agents over MCP. Markdown is the default for prose, but HTML, CSV, JSON, and other text files can be stored as memory artifacts too.
 
 ## Current v1 Behavior
 
@@ -8,7 +8,7 @@ What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
 - Web UI for managing directories and connectors. Each connector gets a token-in-URL credential.
-- MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), per-page stats.
+- MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Localhost-only binding. No admin auth, no remote-access story, no public hosting.
 
 What's planned (not yet implemented): skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
@@ -33,7 +33,7 @@ Press Ctrl-C to stop.
 
 Each run gets a fresh URL. The server dies when you stop it; nothing persists outside the directory itself.
 
-If the directory is empty (no Markdown at the root), memd writes a starter `MEMORY.md` on first connect. memd never modifies a directory that already has Markdown at its root.
+If the directory is empty or has no Markdown at the root, memd writes a starter `MEMORY.md` on first connect. Existing HTML/CSV/JSON/text files are left untouched.
 
 ### Configured Mode — multiple directories, multiple agents
 

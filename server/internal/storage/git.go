@@ -224,7 +224,7 @@ func (g *Git) armDebounce(message string) {
 	}
 }
 
-// Write persists the page to the working copy and arms the debounce timer.
+// Write persists the file to the working copy and arms the debounce timer.
 // Returns as soon as the file is on disk; the commit+push happens after
 // `wait_for_writes` of write silence (or on the periodic safety flush, or
 // on Close).

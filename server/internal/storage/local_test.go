@@ -296,3 +296,162 @@ func TestLocal_NonMarkdownPassthrough(t *testing.T) {
 		t.Fatalf("non-markdown should pass through, got %q", out)
 	}
 }
+
+func TestLocal_WriteUnmanagedNonMarkdownDoesNotInjectFrontMatter(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	csv := "name,value\nalpha,1\n"
+	if err := l.Write("memory/data.csv", []byte(csv), ""); err != nil {
+		t.Fatalf("Write csv: %v", err)
+	}
+	out, err := l.Read("memory/data.csv")
+	if err != nil {
+		t.Fatalf("Read csv: %v", err)
+	}
+	if string(out) != csv {
+		t.Fatalf("csv should be preserved exactly, got %q", out)
+	}
+}
+
+func TestLocal_HTMLFrontMatterLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	html := "<!doctype html><title>Mock UI</title>\n"
+	if err := l.Write("memory/mock-ui.html", []byte(html), ""); err != nil {
+		t.Fatalf("Write html: %v", err)
+	}
+
+	out, err := l.Read("memory/mock-ui.html")
+	if err != nil {
+		t.Fatalf("Read html: %v", err)
+	}
+	if !strings.HasPrefix(string(out), "<!--\n---\nmemd:\n") {
+		t.Fatalf("html should start with comment front matter, got:\n%s", out)
+	}
+	p := ParseHTMLPage(out)
+	if !p.HasFM {
+		t.Fatalf("html metadata was not parsed: %s", out)
+	}
+	if p.Stats.AccessCount != 1 {
+		t.Fatalf("AccessCount = %d, want 1", p.Stats.AccessCount)
+	}
+	if string(p.Body) != html {
+		t.Fatalf("html body changed: got %q want %q", p.Body, html)
+	}
+
+	out2, _ := l.Read("memory/mock-ui.html")
+	p2 := ParseHTMLPage(out2)
+	if p2.Stats.AccessCount != 2 {
+		t.Fatalf("AccessCount after 2nd read = %d, want 2", p2.Stats.AccessCount)
+	}
+}
+
+func TestLocal_WriteHTMLStripsAgentMemdSubtree(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	payload := []byte(`<!--
+---
+memd:
+  created_at: 1999-01-01
+  access_count: 9999
+topic: mock-ui
+---
+-->
+<!doctype html><title>Mock UI</title>
+`)
+	if err := l.Write("memory/mock-ui.html", payload, ""); err != nil {
+		t.Fatalf("Write html: %v", err)
+	}
+	onDisk, _ := os.ReadFile(filepath.Join(dir, "memory", "mock-ui.html"))
+	p := ParseHTMLPage(onDisk)
+	if p.Stats.AccessCount != 0 {
+		t.Fatalf("server should have overwritten access_count, got %d", p.Stats.AccessCount)
+	}
+	if p.Stats.CreatedAt.Format("2006") == "1999" {
+		t.Fatalf("server should have overwritten created_at, got %v", p.Stats.CreatedAt)
+	}
+	if !strings.Contains(p.AgentFM, "topic: mock-ui") {
+		t.Fatalf("agent FM lost: %q", p.AgentFM)
+	}
+}
+
+func TestLocal_ListIncludesNonMarkdownFiles(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	_ = l.Write("memory/topic.md", []byte("# Topic\n"), "")
+	_ = l.Write("memory/diagram.html", []byte("<html>diagram</html>\n"), "")
+	_ = l.Write("memory/data.csv", []byte("name,value\nalpha,1\n"), "")
+
+	paths, err := l.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := strings.Join(paths, "\n")
+	for _, want := range []string{"memory/data.csv", "memory/diagram.html", "memory/topic.md"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("List missing %s; got:\n%s", want, got)
+		}
+	}
+}
+
+func TestLocal_ListSkipsHiddenFiles(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	if err := os.WriteFile(filepath.Join(dir, ".secret.txt"), []byte("hidden"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Write("visible.txt", []byte("visible"), "")
+
+	paths, err := l.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := strings.Join(paths, "\n")
+	if strings.Contains(got, ".secret.txt") {
+		t.Fatalf("List should skip hidden files, got:\n%s", got)
+	}
+	if !strings.Contains(got, "visible.txt") {
+		t.Fatalf("List missing visible file, got:\n%s", got)
+	}
+}
+
+func TestLocal_SearchFindsNonMarkdownTextFiles(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	_ = l.Write("memory/diagram.html", []byte("<html><body>trust diagram</body></html>\n"), "")
+	_ = l.Write("memory/table.csv", []byte("name,value\ntrust,42\n"), "")
+
+	hits, err := l.Search("trust", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	got := strings.Join(hitPaths(hits), "\n")
+	for _, want := range []string{"memory/diagram.html", "memory/table.csv"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Search missing %s; got:\n%s", want, got)
+		}
+	}
+}
+
+func TestLocal_SearchSkipsBinaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := NewLocal(dir)
+	if err := os.WriteFile(filepath.Join(dir, "blob.bin"), []byte("needle\x00inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := l.Search("needle", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("binary file should not be searched, got hits: %+v", hits)
+	}
+}
+
+func hitPaths(hits []Hit) []string {
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.Path)
+	}
+	return out
+}

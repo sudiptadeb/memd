@@ -4,8 +4,8 @@ import "time"
 
 // Backend is a memory directory backend.
 type Backend interface {
-	// List returns every Markdown file path inside the directory, recursive.
-	// Used by search; not used for showing topology.
+	// List returns every non-hidden regular file path inside the directory,
+	// recursive. Used by search; not used for showing topology.
 	List() ([]string, error)
 
 	// ListPath returns the direct children at the given relative path. An empty
@@ -18,7 +18,7 @@ type Backend interface {
 
 	// Move renames src to dst inside the directory. Both paths are
 	// directory-relative; both are subject to traversal checks. Used by
-	// reorganise so it can move a page (preserving git rename detection)
+	// reorganise so it can move a file (preserving git rename detection)
 	// without leaving a duplicate behind. Returns an error if src does
 	// not exist, dst already exists, or either path escapes the directory.
 	Move(src, dst, message string) error
