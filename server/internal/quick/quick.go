@@ -59,6 +59,7 @@ func Run(dir string) error {
 	mcpSrv := mcp.New(reg, doctrine.Text, "memd", version.Value)
 	mux := http.NewServeMux()
 	mcpSrv.Mount(mux, "/mcp/")
+	mcpSrv.MountHTTP(mux, "/http/")
 
 	fmt.Printf("memd serving %s\n\n  http://127.0.0.1:%d/mcp/%s\n\nPress Ctrl-C to stop.\n",
 		abs, port, conn.Token)

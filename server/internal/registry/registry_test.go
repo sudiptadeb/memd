@@ -60,7 +60,7 @@ func TestUpdateConnector_ChangesNameDirsWrite_PreservesTokenAndID(t *testing.T) 
 	oldToken := c.Token
 	oldID := c.ID
 
-	updated, err := r.UpdateConnector(c.ID, "claude-code", []string{"d1", "d2"}, true)
+	updated, err := r.UpdateConnector(c.ID, "claude-code", config.ConnectorKindHTTP, []string{"d1", "d2"}, true)
 	if err != nil {
 		t.Fatalf("UpdateConnector: %v", err)
 	}
@@ -72,6 +72,9 @@ func TestUpdateConnector_ChangesNameDirsWrite_PreservesTokenAndID(t *testing.T) 
 	}
 	if !updated.Write {
 		t.Fatalf("Write should be true")
+	}
+	if updated.EffectiveKind() != config.ConnectorKindHTTP {
+		t.Fatalf("Kind = %q, want http", updated.EffectiveKind())
 	}
 	if updated.Token != oldToken {
 		t.Fatalf("Token mutated: old=%q new=%q", oldToken, updated.Token)
@@ -90,18 +93,31 @@ func TestUpdateConnector_RejectsBadInput(t *testing.T) {
 		name string
 		id   string
 		nm   string
+		kind string
 		dirs []string
 	}{
-		{"unknown id", "does-not-exist", "x", []string{"d1"}},
-		{"empty name", c.ID, "", []string{"d1"}},
-		{"empty dirs", c.ID, "x", nil},
-		{"unknown directory id", c.ID, "x", []string{"d-nope"}},
+		{"unknown id", "does-not-exist", "x", "mcp", []string{"d1"}},
+		{"empty name", c.ID, "", "mcp", []string{"d1"}},
+		{"empty dirs", c.ID, "x", "mcp", nil},
+		{"unknown directory id", c.ID, "x", "mcp", []string{"d-nope"}},
+		{"unknown kind", c.ID, "x", "smtp", []string{"d1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := r.UpdateConnector(tc.id, tc.nm, tc.dirs, true); err == nil {
-				t.Fatalf("UpdateConnector(%q, %q, %v) should fail", tc.id, tc.nm, tc.dirs)
+			if _, err := r.UpdateConnector(tc.id, tc.nm, tc.kind, tc.dirs, true); err == nil {
+				t.Fatalf("UpdateConnector(%q, %q, %q, %v) should fail", tc.id, tc.nm, tc.kind, tc.dirs)
 			}
 		})
+	}
+}
+
+func TestAddConnector_DefaultsKindToMCP(t *testing.T) {
+	r := NewEphemeral()
+	c, err := r.AddConnector(config.Connector{Name: "legacy", DirectoryIDs: []string{"x"}})
+	if err != nil {
+		t.Fatalf("AddConnector: %v", err)
+	}
+	if c.Kind != config.ConnectorKindMCP || c.EffectiveKind() != config.ConnectorKindMCP {
+		t.Fatalf("kind = %q effective=%q, want mcp", c.Kind, c.EffectiveKind())
 	}
 }

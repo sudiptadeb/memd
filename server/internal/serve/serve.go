@@ -33,6 +33,7 @@ func Run(port int) error {
 	mux := http.NewServeMux()
 	mcpSrv := mcp.New(reg, doctrine.Text, "memd", version.Value)
 	mcpSrv.Mount(mux, "/mcp/")
+	mcpSrv.MountHTTP(mux, "/http/")
 	ui.New(reg, baseURL).Mount(mux)
 
 	fmt.Printf("memd web UI:  %s\n", baseURL)
