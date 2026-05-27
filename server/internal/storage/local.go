@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,10 +14,10 @@ import (
 	"time"
 )
 
-// Local is a memory backend backed by a plain folder of Markdown files.
+// Local is a memory backend backed by a plain folder of files.
 // All operations that touch disk serialize through mu: one write at a time
 // per directory. Reads also take mu because the read path bumps the
-// per-page stats (last_read_at, access_count) in-place.
+// managed file stats (last_read_at, access_count) in-place.
 type Local struct {
 	mu sync.Mutex
 	// root is the absolute path as supplied. rootEval is root after symlink
@@ -61,7 +62,14 @@ func (l *Local) List() ([]string, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(l.rootEval, path)
@@ -74,11 +82,11 @@ func (l *Local) List() ([]string, error) {
 	return out, err
 }
 
-// Read returns the page bytes after bumping its server-managed stats. For
-// Markdown pages the server parses the `memd:` front matter subtree, updates
-// last_read_at and access_count, writes the updated page back through to
-// disk, and returns the rendered bytes (so the agent sees the current
-// stats). Non-Markdown files pass through untouched.
+// Read returns the file bytes. For managed metadata formats the server
+// parses the `memd:` front matter subtree, updates last_read_at and
+// access_count, writes the updated file back through to disk, and returns
+// the rendered bytes (so the agent sees the current stats). Other files
+// pass through untouched.
 func (l *Local) Read(path string) ([]byte, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -90,12 +98,12 @@ func (l *Local) Read(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !isMarkdownPath(path) {
+	p, managed := parseManagedPage(path, data)
+	if !managed {
 		return data, nil
 	}
-	p := ParsePage(data)
 	now := today()
-	// For legacy pages (no memd: block yet), seed timestamps from the file's
+	// For legacy files (no memd: block yet), seed timestamps from the file's
 	// mtime so the migration is roughly accurate. Today is the fallback if
 	// stat fails.
 	if p.Stats.CreatedAt.IsZero() || p.Stats.UpdatedAt.IsZero() {
@@ -118,15 +126,16 @@ func (l *Local) Read(path string) ([]byte, error) {
 		AgentFM: p.AgentFM,
 		HasFM:   true,
 		Body:    p.Body,
-	}.Render()
+	}.renderForPath(path)
 	_ = atomicWriteFile(abs, out, 0o644)
 	return out, nil
 }
 
-// Write persists the page. The agent's `memd:` subtree (if any) in the
-// payload is discarded; the server merges its own authoritative stats with
-// whatever existed on disk. created_at is set on first write; updated_at is
-// bumped every write; last_read_at and access_count are preserved.
+// Write persists the file. For managed metadata formats, the agent's `memd:`
+// subtree (if any) in the payload is discarded; the server merges its own
+// authoritative stats with whatever existed on disk. created_at is set on
+// first write; updated_at is bumped every write; last_read_at and
+// access_count are preserved. Unmanaged files are stored verbatim.
 func (l *Local) Write(path string, content []byte, _ string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -137,22 +146,22 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
 	}
-	if !isMarkdownPath(path) {
+	if !hasManagedMetadataPath(path) {
 		return atomicWriteFile(abs, content, 0o644)
 	}
 
-	var existing MemdStats
+	var existing Page
 	if old, err := os.ReadFile(abs); err == nil {
-		existing = ParsePage(old).Stats
+		existing, _ = parseManagedPage(path, old)
 	}
 
-	incoming := ParsePage(content)
+	incoming, _ := parseManagedPage(path, content)
 	now := today()
 	stats := MemdStats{
-		CreatedAt:   existing.CreatedAt,
+		CreatedAt:   existing.Stats.CreatedAt,
 		UpdatedAt:   now,
-		LastReadAt:  existing.LastReadAt,
-		AccessCount: existing.AccessCount,
+		LastReadAt:  existing.Stats.LastReadAt,
+		AccessCount: existing.Stats.AccessCount,
 	}
 	if stats.CreatedAt.IsZero() {
 		stats.CreatedAt = now
@@ -162,12 +171,39 @@ func (l *Local) Write(path string, content []byte, _ string) error {
 		AgentFM: incoming.AgentFM,
 		HasFM:   true,
 		Body:    incoming.Body,
-	}.Render()
+	}.renderForPath(path)
 	return atomicWriteFile(abs, out, 0o644)
 }
 
 func isMarkdownPath(p string) bool {
 	return strings.HasSuffix(strings.ToLower(p), ".md")
+}
+
+func isHTMLPath(p string) bool {
+	lower := strings.ToLower(p)
+	return strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm")
+}
+
+func hasManagedMetadataPath(p string) bool {
+	return isMarkdownPath(p) || isHTMLPath(p)
+}
+
+func parseManagedPage(path string, data []byte) (Page, bool) {
+	switch {
+	case isMarkdownPath(path):
+		return ParsePage(data), true
+	case isHTMLPath(path):
+		return ParseHTMLPage(data), true
+	default:
+		return Page{}, false
+	}
+}
+
+func (p Page) renderForPath(path string) []byte {
+	if isHTMLPath(path) {
+		return p.RenderHTML()
+	}
+	return p.Render()
 }
 
 // Move renames src to dst. Refuses to overwrite an existing dst.
@@ -267,6 +303,10 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	var hits []Hit
 	for _, p := range paths {
 		abs := filepath.Join(l.rootEval, filepath.FromSlash(p))
+		searchable, err := isSearchableTextFile(abs)
+		if err != nil || !searchable {
+			continue
+		}
 		f, err := os.Open(abs)
 		if err != nil {
 			continue
@@ -288,6 +328,26 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 		f.Close()
 	}
 	return hits, nil
+}
+
+func isSearchableTextFile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 8192)
+	n, err := f.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	for _, b := range buf[:n] {
+		if b == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (l *Local) Status() Status {
@@ -356,9 +416,9 @@ func evalSymlinksAllowMissing(p string) (string, error) {
 }
 
 // EnsureIndex creates a starter MEMORY.md only when the directory has no
-// Markdown content at its root. The stub carries the front matter the doctrine
-// expects (last_reorganised, entries, limit) so future agents start from a
-// well-formed index.
+// Markdown content at its root. The stub carries the front matter the
+// doctrine expects (last_reorganised, entries, limit) so future agents
+// start from a well-formed index.
 func (l *Local) EnsureIndex(description string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -382,7 +442,7 @@ func (l *Local) EnsureIndex(description string) error {
 }
 
 // starterMemoryMD returns the body for an empty-directory MEMORY.md stub.
-// The page carries both the server-managed memd: subtree (created via the
+// The file carries both the server-managed memd: subtree (created via the
 // Page renderer for consistency) and the agent-managed last_reorganised /
 // entries / limit fields the reorganise prompt expects.
 //
@@ -395,9 +455,9 @@ func starterMemoryMD(description string, now time.Time) string {
 	body := fmt.Sprintf(`
 # %s
 
-This is the curated index. Detailed pages live in top-level folders below — the shape is up to the agent (single `+"`memory/`"+` for general directories; multiple folders like `+"`notes/`, `projects/`, `preferences/`"+` when content splits naturally).
+This is the curated index. Detailed files live in top-level folders below — Markdown pages, standalone HTML mockups, CSV tables, JSON examples, and other text artifacts are all valid. The shape is up to the agent (single `+"`memory/`"+` for general directories; multiple folders like `+"`notes/`, `projects/`, `preferences/`, `mockups/`, `data/`"+` when content splits naturally).
 
-Group entries under thematic H2 sections. Each entry is one line: a link to the page plus a concrete one-line description of what's in it. Curate, don't just list files.
+Group entries under thematic H2 sections. Each entry is one line: a link to the file plus a concrete one-line description of what's in it. Curate, don't just list files.
 
 _(no memory yet — run a `+"`harvest`"+` pass to seed this from your existing sources, or write directly as durable knowledge accrues)_
 `, description)

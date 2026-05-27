@@ -167,7 +167,7 @@ func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
 //   - a shallow topology — root entries plus the direct children of memory/
 //     if present — so the agent can see where things live without paying for
 //     a recursive listing,
-//   - the full contents of MEMORY.md (the canonical entry page).
+//   - the full contents of MEMORY.md (the canonical entry file).
 //
 // For deeper navigation the agent uses memory_list / memory_read.
 func (s *Server) activeMemorySection(conn *registry.Connector) string {
@@ -178,7 +178,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		sb.WriteString("_No directories are accessible through this connector._\n")
 		return sb.String()
 	}
-	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know. For deeper navigation, call `memory_list` on a folder or `memory_read` on a specific page.\n\n")
+	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know. For deeper navigation, call `memory_list` on a folder or `memory_read` on a specific file.\n\n")
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
 		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
@@ -252,7 +252,7 @@ var toolsCatalog = []map[string]any{
 	// slash-command prompts), not these.
 	{
 		"name":        "memory_load",
-		"description": "[Agent-internal storage primitive.] MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, page listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
+		"description": "[Agent-internal storage primitive.] MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, file listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -268,7 +268,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_search",
-		"description": "[Agent-internal storage primitive.] Search memory pages for a query. Returns matching lines with file paths.",
+		"description": "[Agent-internal storage primitive.] Search text memory files for a query. Returns matching lines with file paths. Binary files are skipped.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -281,12 +281,12 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_read",
-		"description": "[Agent-internal storage primitive.] Read one memory page in full. Bumps the page's last_read_at and access_count in its memd: front matter.",
+		"description": "[Agent-internal storage primitive.] Read one memory file in full. Markdown and HTML files get last_read_at/access_count updates in memd: front matter (HTML uses a leading comment); other files are returned unchanged.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"directory_id": map[string]any{"type": "string"},
-				"path":         map[string]any{"type": "string", "description": "Page path relative to the directory root (e.g. 'MEMORY.md' or 'memory/feedback/foo.md')."},
+				"path":         map[string]any{"type": "string", "description": "File path relative to the directory root (e.g. 'MEMORY.md', 'memory/feedback/foo.md', or 'memory/mock-ui.html')."},
 			},
 			"required": []string{"directory_id", "path"},
 		},
@@ -305,7 +305,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_write",
-		"description": "[Agent-internal storage primitive.] Create or update a memory page. For git-backed directories the server debounces commit + push. Any memd: front-matter block in the content is discarded; the server owns that subtree.",
+		"description": "[Agent-internal storage primitive.] Create or update a memory file. For Markdown and HTML files, any memd: front-matter block in the content is discarded; the server owns that subtree. HTML metadata is stored in a leading comment. Other file types are stored verbatim. For git-backed directories the server debounces commit + push.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -319,7 +319,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_move",
-		"description": "[Agent-internal storage primitive.] Rename or move a page from src to dst inside the directory. Preferred over write-then-delete because git tracks it as a rename (history follows the file). Fails if dst already exists. Cannot move MEMORY.md at the root.",
+		"description": "[Agent-internal storage primitive.] Rename or move a file or folder from src to dst inside the directory. Preferred over write-then-delete because git tracks it as a rename (history follows the file). Fails if dst already exists. Cannot move MEMORY.md at the root.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -333,7 +333,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_delete",
-		"description": "[Agent-internal storage primitive.] Delete a single page. Use with care — prefer memory_move into _archive/ when the content might matter historically. Cannot delete MEMORY.md at the root. For folders, use memory_delete_folder.",
+		"description": "[Agent-internal storage primitive.] Delete a single file. Use with care — prefer memory_move into _archive/ when the content might matter historically. Cannot delete MEMORY.md at the root. For folders, use memory_delete_folder.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -346,7 +346,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memory_delete_folder",
-		"description": "[Agent-internal storage primitive.] Recursively delete a folder and everything inside it. Heavy operation — prefer memory_move into _archive/ for individual pages. Cannot delete the directory root.",
+		"description": "[Agent-internal storage primitive.] Recursively delete a folder and everything inside it. Heavy operation — prefer memory_move into _archive/ for individual files. Cannot delete the directory root.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -372,7 +372,7 @@ var toolsCatalog = []map[string]any{
 	// them visually separate from the storage tools (`memory_`).
 	{
 		"name":        "memd_reorganise",
-		"description": "Workflow: rearrange the shelves — restructure existing memory, group root pages into folders, rewrite MEMORY.md as a curated sectioned index. Returns the workflow body; follow its steps. Same as the /<connector>:reorganise prompt.",
+		"description": "Workflow: rearrange the shelves — restructure existing memory, group root files into folders, rewrite MEMORY.md as a curated sectioned index. Returns the workflow body; follow its steps. Same as the /<connector>:reorganise prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -392,7 +392,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memd_dream",
-		"description": "Workflow: sleep consolidation — forget unused / contradicted pages, cement what was referenced this session. Uses per-page memd: stats. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:dream prompt.",
+		"description": "Workflow: sleep consolidation — forget unused / contradicted files, cement what was referenced this session. Uses managed memd: stats for Markdown/HTML where available. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:dream prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -414,7 +414,7 @@ var toolsCatalog = []map[string]any{
 	},
 	{
 		"name":        "memd_housekeep",
-		"description": "Workflow: daily tidying — fix dangling links, orphan pages, missing front matter, stale last_reorganised. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:housekeep prompt.",
+		"description": "Workflow: daily tidying — fix dangling links, orphan files, missing Markdown front matter, stale last_reorganised. Dispatches to background agent when available. Returns the workflow body; follow its steps. Same as the /<connector>:housekeep prompt.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -707,7 +707,7 @@ func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (s
 var promptsCatalog = []map[string]any{
 	{
 		"name":        "reorganise",
-		"description": "Rearrange the shelves: restructure existing memory, group root pages into folders, rewrite MEMORY.md as a clean curated index, bump last_reorganised.",
+		"description": "Rearrange the shelves: restructure existing memory, group root files into folders, rewrite MEMORY.md as a clean curated index, bump last_reorganised.",
 	},
 	{
 		"name":        "harvest",
@@ -715,7 +715,7 @@ var promptsCatalog = []map[string]any{
 	},
 	{
 		"name":        "dream",
-		"description": "Sleep consolidation: forget unused / contradicted pages, cement what was referenced this session. Uses the per-page memd: stats (last_read_at, access_count) to decide.",
+		"description": "Sleep consolidation: forget unused / contradicted files, cement what was referenced this session. Uses managed memd: stats (last_read_at, access_count) for Markdown/HTML where available.",
 	},
 	{
 		"name":        "recall",
@@ -723,7 +723,7 @@ var promptsCatalog = []map[string]any{
 	},
 	{
 		"name":        "housekeep",
-		"description": "Daily tidying: find structural drift — dangling links, orphan pages, missing front matter, stale last_reorganised. Fix in place autonomously.",
+		"description": "Daily tidying: find structural drift — dangling links, orphan files, missing Markdown front matter, stale last_reorganised. Fix in place autonomously.",
 	},
 }
 
@@ -791,19 +791,21 @@ func reorganiseText(args map[string]string) string {
 
 1. If you have not already in this session, call %smemory_load()%s.
 2. %s
-3. Walk every page with %smemory_list%s and %smemory_read%s. For each, decide:
-   - **duplicated or redundant** → merge into the better page (%smemory_write%s the merged body to the canonical path; %smemory_delete%s the loser).
-   - **stale or superseded** → %smemory_move%s it under %smemory/_archive/<name>.md%s; keep a one-line historical note in MEMORY.md if it still matters.
-   - **related to others** → %smemory_move%s into a descriptive multi-word subfolder (e.g. %smemory/feedback/<name>.md%s).
+3. Walk every memory file with %smemory_list%s and %smemory_read%s. For each, decide:
+   - **duplicated or redundant** → merge into the better file (%smemory_write%s the merged body to the canonical path; %smemory_delete%s the loser).
+   - **stale or superseded** → %smemory_move%s it under %smemory/_archive/<same-name>%s; keep a one-line historical note in MEMORY.md if it still matters.
+   - **related to others** → %smemory_move%s into a descriptive multi-word subfolder (e.g. %smemory/feedback/<name>.md%s, %smemory/mockups/<name>.html%s, or %smemory/data/<name>.csv%s).
 4. Use %smemory_move%s for renames and folder changes — not write-then-delete. Move preserves git rename detection so the file's history follows it.
 5. After the moves, walk the result and clean up: %smemory_delete_folder%s any leftover empty folders or stale subdirectories from prior incomplete passes.
-6. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule. Each entry is one line: a Markdown link plus a concrete description of what's in the page.
+6. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule. Each entry is one line: a Markdown link plus a concrete description of what's in the linked file.
 7. Update MEMORY.md's agent front matter: %slast_reorganised%s = today, %sentries%s = the final one-liner count.
-8. Report the diff: counts of pages moved / archived / merged / deleted; the new MEMORY.md section headers; anything you flagged for user attention.
+8. Report the diff: counts of files moved / archived / merged / deleted; the new MEMORY.md section headers; anything you flagged for user attention.
 
-Only stop for user input if the *Run in background* preamble's drastic-action triggers apply (e.g. you're about to delete prose the user wrote, restructure more than a third of the directory, or delete a folder you're not 100%% sure is obsolete).`,
+Only stop for user input if the *Run in background* preamble's drastic-action triggers apply (e.g. you're about to delete content the user wrote, restructure more than a third of the directory, or delete a folder you're not 100%% sure is obsolete).`,
 		"`", "`",
 		dirHint(args),
+		"`", "`",
+		"`", "`",
 		"`", "`",
 		"`", "`",
 		"`", "`",
@@ -850,12 +852,12 @@ If your environment has a Task / subagent / background-agent capability (Claude 
 
 **Only ask the user BEFORE writing when the change is *drastic*:**
 
-- **Deleting a page** (prefer archiving — move to ` + "`memory/_archive/`" + ` — over deleting, since archives preserve content).
-- **Removing prose the user themselves wrote**, or large prose blocks (more than a paragraph) from any page.
-- **Overwriting a page tagged ` + "`priority: load-bearing`" + `** when your new content contradicts it.
+- **Deleting a file** (prefer archiving — move to ` + "`memory/_archive/`" + ` — over deleting, since archives preserve content).
+- **Removing prose or authored artifact content the user themselves wrote**, or large prose blocks (more than a paragraph) from any file.
+- **Overwriting a managed file tagged ` + "`priority: load-bearing`" + `** when your new content contradicts it.
 - **Restructuring more than a third of the directory in one pass** (mass moves and large folder reshuffles deserve a heads-up).
 
-For everything else — adding new pages, archiving stale ones, fixing links, rewriting MEMORY.md, promoting/demoting between sections, adding cross-links — proceed without asking.
+For everything else — adding new files, archiving stale ones, fixing links, rewriting MEMORY.md, promoting/demoting between sections, adding cross-links — proceed without asking.
 
 When you finish, report:
 - What you did (counts plus a one-line summary of each significant change).
@@ -881,14 +883,14 @@ func harvestText(args map[string]string) string {
 		"   - Facts inferred from prior session context.\n"+
 		"   - Another memd directory the user wants to merge in.\n\n"+
 		"### Phase 2 — Structure (only on fresh / sparse directories)\n\n"+
-		"If the target directory is empty or has only a stub `MEMORY.md`, this harvest is also setting the directory's shape. memd does not prescribe a single canonical layout — `memory/*.md` is one option, but for directories whose content naturally splits across categories, multiple top-level folders work better (e.g. `notes/`, `projects/`, `preferences/`, `runbooks/`).\n\n"+
+		"If the target directory is empty or has only a stub `MEMORY.md`, this harvest is also setting the directory's shape. memd does not prescribe a single canonical layout — Markdown pages under `memory/` are one option, but standalone HTML mockups, CSV tables, JSON examples, and other text artifacts are also valid memory files. HTML files can carry front matter in a leading comment. For directories whose content naturally splits across categories, multiple top-level folders work better (e.g. `notes/`, `projects/`, `preferences/`, `mockups/`, `data/`, `runbooks/`).\n\n"+
 		"4. Cluster your candidates into 3–7 themes. Inspect them — does the content want one general `memory/` bucket, or distinct top-level folders?\n"+
 		"5. **Propose the layout to the user before writing:** the top-level folders you'd create, what goes in each, and the section headings the new MEMORY.md will use to group them. Wait for approval. (This is the one phase where harvest pauses — picking the wrong shape early is expensive to fix.)\n\n"+
-		"If the directory already has an established shape (more than a couple of pages, an existing folder layout), skip Phase 2 and reuse the existing folders. Don't restructure during harvest — that's `reorganise`'s job.\n\n"+
+		"If the directory already has an established shape (more than a couple of files, an existing folder layout), skip Phase 2 and reuse the existing folders. Don't restructure during harvest — that's `reorganise`'s job.\n\n"+
 		"### Phase 3 — Integrate\n\n"+
-		"6. For each candidate fact, decide **ADD / UPDATE / DELETE / NONE** (search existing pages first):\n"+
-		"   - ADD → write a new page under the appropriate folder and add a one-line MEMORY.md entry under the right section.\n"+
-		"   - UPDATE → edit the existing page in place.\n"+
+		"6. For each candidate fact, decide **ADD / UPDATE / DELETE / NONE** (search existing files first):\n"+
+		"   - ADD → write a new file under the appropriate folder and add a one-line MEMORY.md entry under the right section.\n"+
+		"   - UPDATE → edit the existing file in place.\n"+
 		"   - DELETE → only when the new info clearly invalidates the old. Archive (move to `_archive/`) instead of deleting wherever possible; add a one-line supersession note.\n"+
 		"   - NONE → skip.\n"+
 		"7. Do the writes as you go — don't stop for approval ceremonies. Drastic actions (per the preamble) still wait.\n\n"+
@@ -898,20 +900,20 @@ func harvestText(args map[string]string) string {
 
 func dreamText(args map[string]string) string {
 	return fmt.Sprintf(backgroundPreamble+"Run a `dream` pass on memd memory — sleep consolidation.\n\n"+
-		"Goal: for this session, **cement** (load-bearing, recently-used) and **fade** (unused, contradicted, superseded). Use each page's `memd:` front matter as signal.\n\n"+
+		"Goal: for this session, **cement** (load-bearing, recently-used) and **fade** (unused, contradicted, superseded). Use managed files' `memd:` front matter as signal (Markdown front matter or HTML comment front matter); use MEMORY.md links, filenames, and content for unmanaged files.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
-		"3. For every page, `memory_read` it and inspect the `memd:` block:\n"+
+		"3. For every file, `memory_read` it. For Markdown/HTML managed files, inspect the `memd:` block:\n"+
 		"   - `last_read_at` — when was this last accessed?\n"+
 		"   - `access_count` — how often is it used?\n"+
 		"   - `updated_at` — when did its body last change?\n"+
 		"4. Act:\n"+
-		"   - **Cement** — high `access_count`, recent `last_read_at`, or referenced this session. Pull into MEMORY.md's top sections; add cross-links from related pages. Do it.\n"+
-		"   - **Fade** — `last_read_at` > 90 days, `access_count` 0–1, not linked from MEMORY.md. Archive (move under `memory/_archive/`) with a one-line supersession note in MEMORY.md if it still matters historically. Do it.\n"+
-		"   - **Resolve contradictions** — if two pages disagree and the recent session confirmed one, supersede the other in place.\n"+
-		"   - Drastic actions (deleting prose the user wrote, removing >1 paragraph, overwriting a `priority: load-bearing` page) — ask first per the preamble.\n"+
-		"5. Report the diff: counts of pages cemented / faded / merged; pages skipped because the signal was ambiguous.\n\n"+
-		"Stats are signal, not gospel. A rarely-read page can still be load-bearing (e.g. a once-a-year procedure). Use judgement; if a page's `priority` field says `load-bearing` or `reference`, treat low access_count as expected and leave it alone.", dirHint(args))
+		"   - **Cement** — high `access_count`, recent `last_read_at`, referenced this session, or an important non-Markdown artifact. Pull into MEMORY.md's top sections; add cross-links from related files where the format supports links. Do it.\n"+
+		"   - **Fade** — for managed files, `last_read_at` > 90 days, `access_count` 0–1, and not linked from MEMORY.md; for unmanaged files, clearly stale content or no index link. Archive (move under `memory/_archive/`) with a one-line supersession note in MEMORY.md if it still matters historically. Do it.\n"+
+		"   - **Resolve contradictions** — if two files disagree and the recent session confirmed one, supersede the other in place.\n"+
+		"   - Drastic actions (deleting content the user wrote, removing >1 paragraph, overwriting a `priority: load-bearing` managed file) — ask first per the preamble.\n"+
+		"5. Report the diff: counts of files cemented / faded / merged; files skipped because the signal was ambiguous.\n\n"+
+		"Stats are signal, not gospel. A rarely-read file can still be load-bearing (e.g. a once-a-year procedure), and unmanaged artifacts do not carry `memd:` stats. Use judgement; if a managed file's `priority` field says `load-bearing` or `reference`, treat low access_count as expected and leave it alone.", dirHint(args))
 }
 
 func recallText(args map[string]string) string {
@@ -925,8 +927,8 @@ func recallText(args map[string]string) string {
 		"2. %s\n"+
 		"3. Run `memory_search` for the topic and adjacent terms.\n"+
 		"4. `memory_read` each promising hit.\n"+
-		"5. Walk the in-page links — read related pages too.\n"+
-		"6. Synthesise an answer for the user: what memd actually says about the topic, with page links. Cite the pages you used.\n\n"+
+		"5. Walk links inside readable files — read related files too.\n"+
+		"6. Synthesise an answer for the user: what memd actually says about the topic, with file links. Cite the files you used.\n\n"+
 		"Don't dump raw search hits. Walk the wiki and present what you found.", topic, dirHint(args))
 }
 
@@ -935,10 +937,10 @@ func housekeepText(args map[string]string) string {
 		"Goal: find and fix **structural drift** without restructuring content. Housekeep is the most autonomous of the workflows — almost everything it does is reversible.\n\n"+
 		"1. Call `memory_load()` to see the current state.\n"+
 		"2. %s\n"+
-		"3. Walk every page with `memory_read`. For each issue you find, fix it directly:\n"+
-		"   - **Dangling links** — `MEMORY.md` references a missing page. Remove the entry (or add a redirect note if you can guess the new path).\n"+
-		"   - **Orphan pages** — pages under `memory/` not linked from `MEMORY.md`. Add a one-line entry in the right section.\n"+
-		"   - **Missing agent front matter** — add `topic` / `tags` / `related` where the page's subject makes them obvious.\n"+
+		"3. Walk every file with `memory_read`. For each issue you find, fix it directly:\n"+
+		"   - **Dangling links** — `MEMORY.md` references a missing file. Remove the entry (or add a redirect note if you can guess the new path).\n"+
+		"   - **Orphan files** — memory files not linked from `MEMORY.md`. Add a one-line entry in the right section.\n"+
+		"   - **Missing agent front matter** — for Markdown pages only, add `topic` / `tags` / `related` where the page's subject makes them obvious.\n"+
 		"   - **Stale `last_reorganised`** — flag in the report. Don't bump it yourself; that's `reorganise`'s job.\n"+
 		"   - **Empty template sections** — delete the empty heading.\n"+
 		"4. Report what you fixed and what you flagged (with reasoning).\n\n"+

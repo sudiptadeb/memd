@@ -64,6 +64,50 @@ func ParsePage(raw []byte) Page {
 	return Page{Stats: stats, AgentFM: agentFM, HasFM: true, Body: body}
 }
 
+// ParseHTMLPage extracts YAML front matter from a leading HTML comment:
+//
+//	<!--
+//	---
+//	memd:
+//	  ...
+//	---
+//	-->
+//
+// If the file has no such leading comment, or the comment does not contain
+// normal YAML front matter markers, the entire file is treated as body.
+func ParseHTMLPage(raw []byte) Page {
+	s := string(raw)
+	var rest string
+	switch {
+	case strings.HasPrefix(s, "<!--\n"):
+		rest = s[len("<!--\n"):]
+	case strings.HasPrefix(s, "<!--\r\n"):
+		rest = s[len("<!--\r\n"):]
+	default:
+		return Page{Body: raw}
+	}
+	closeIdx := strings.Index(rest, "-->")
+	if closeIdx < 0 {
+		return Page{Body: raw}
+	}
+	meta := ParsePage([]byte(rest[:closeIdx]))
+	if !meta.HasFM {
+		return Page{Body: raw}
+	}
+	body := rest[closeIdx+len("-->"):]
+	if strings.HasPrefix(body, "\r\n") {
+		body = body[2:]
+	} else if strings.HasPrefix(body, "\n") {
+		body = body[1:]
+	}
+	return Page{
+		Stats:   meta.Stats,
+		AgentFM: meta.AgentFM,
+		HasFM:   true,
+		Body:    []byte(body),
+	}
+}
+
 // findClosingMarker scans `rest` for a line that is exactly "---" (with
 // optional trailing \r). Returns the byte index where that line starts and
 // where the next line begins, plus ok=true if found.
@@ -205,6 +249,34 @@ func parseMemdBlock(block string) MemdStats {
 // newline a single \n is inserted between the closing --- and the body.
 func (p Page) Render() []byte {
 	var buf bytes.Buffer
+	p.writeFrontMatter(&buf)
+	body := p.Body
+	if len(body) > 0 && body[0] != '\n' {
+		buf.WriteByte('\n')
+	}
+	buf.Write(body)
+	return buf.Bytes()
+}
+
+func (p Page) renderFrontMatter() []byte {
+	var buf bytes.Buffer
+	p.writeFrontMatter(&buf)
+	return buf.Bytes()
+}
+
+// RenderHTML serialises the page metadata as a leading HTML comment. The
+// body follows immediately after one newline, so the comment stays invisible
+// to browsers while the metadata remains editable in the file.
+func (p Page) RenderHTML() []byte {
+	var buf bytes.Buffer
+	buf.WriteString("<!--\n")
+	buf.Write(p.renderFrontMatter())
+	buf.WriteString("-->\n")
+	buf.Write(p.Body)
+	return buf.Bytes()
+}
+
+func (p Page) writeFrontMatter(buf *bytes.Buffer) {
 	buf.WriteString("---\n")
 	buf.WriteString("memd:\n")
 	buf.WriteString("  created_at: ")
@@ -227,12 +299,6 @@ func (p Page) Render() []byte {
 		buf.WriteString(agent)
 	}
 	buf.WriteString("---\n")
-	body := p.Body
-	if len(body) > 0 && body[0] != '\n' {
-		buf.WriteByte('\n')
-	}
-	buf.Write(body)
-	return buf.Bytes()
 }
 
 // today returns today's date (UTC) with hours/minutes/seconds zeroed.

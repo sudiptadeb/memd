@@ -2,7 +2,7 @@
 
 **Unified, file-first memory for AI agents.**
 
-Your memory lives as Markdown on your disk — or in a private Git repo you control. memd is a tiny local server that exposes it over MCP, so every tool you use (Claude Code, Codex CLI, Cursor, ChatGPT, anything else that speaks MCP) sees the same memory.
+Your memory lives as ordinary files on your disk — or in a private Git repo you control. Markdown is the default for prose, but standalone HTML, CSV, JSON, and other text artifacts are valid too. memd is a tiny local server that exposes those files over MCP, so every tool you use (Claude Code, Codex CLI, Cursor, ChatGPT, anything else that speaks MCP) sees the same memory.
 
 <p align="center">
   <img src="docs/assets/memd.gif" alt="memd — unified, file-first memory for AI agents" width="100%">
@@ -12,7 +12,7 @@ Your memory lives as Markdown on your disk — or in a private Git repo you cont
   <sub><a href="docs/assets/memd.svg">vector source (SVG)</a></sub>
 </p>
 
-> **Status:** early. Local + Git backends, MCP Streamable HTTP, web UI, per-page stats, and the five consolidation workflows all work. Public hosting and skills/hooks injection are next.
+> **Status:** early. Local + Git backends, MCP Streamable HTTP, web UI, managed file stats, and the five consolidation workflows all work. Public hosting and skills/hooks injection are next.
 
 ## Why
 
@@ -20,7 +20,7 @@ LLM tools each invented their own memory: ChatGPT memories, Claude's memory tool
 
 memd takes the opposite stance: **memory is yours, lives in your files, and follows you.**
 
-- One directory = one self-organising Markdown wiki.
+- One directory = one self-organising file memory rooted at `MEMORY.md`.
 - One MCP URL per agent.
 - The agent decides what to write, where, and when to split.
 - Backend is your choice — a plain folder or a private Git repo (memd debounces commits so a session of edits becomes one clean commit).
@@ -88,10 +88,10 @@ Any MCP client that speaks Streamable HTTP works the same way.
 
 | Term         | What it is                                                                       |
 |--------------|----------------------------------------------------------------------------------|
-| **Directory**| A self-organising Markdown wiki — a folder on disk or a Git repo.                |
+| **Directory**| A self-organising file memory — a folder on disk or a Git repo.                  |
 | **Connector**| A token-in-URL grant — one per agent (Claude Code, Codex, Cursor, …).            |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
-| **memory/**  | Detailed pages, reached via `memory_read`.                                       |
+| **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
 
 ## Self-Organising Memory
 
@@ -99,19 +99,19 @@ memd doesn't just store — it manages. Five workflows, each named after a real-
 
 | Workflow      | Activity              | What it does                                              |
 |---------------|-----------------------|-----------------------------------------------------------|
-| `reorganise`  | Rearranging shelves   | Restructure: group pages into folders, rewrite the index. |
+| `reorganise`  | Rearranging shelves   | Restructure: group files into folders, rewrite the index. |
 | `harvest`     | Bringing in the crop  | Import knowledge from external sources (Claude / Cursor / notes). |
 | `dream`       | Sleep consolidation   | Cement what was used this session; fade what wasn't.      |
 | `recall`      | Reminiscing           | Focused retrieval: search → walk links → synthesise.      |
-| `housekeep`   | Daily tidying         | Fix drift: dangling links, orphan pages, missing FM.      |
+| `housekeep`   | Daily tidying         | Fix drift: dangling links, orphan files, missing Markdown FM. |
 
 Long-running passes auto-dispatch to a background agent when the client supports it (Claude Code's Task tool, Codex's worker, Cursor's background agent), so the main conversation stays responsive.
 
-Workflows act autonomously and report afterwards — they only stop to ask the user before genuinely drastic actions (deleting prose the user wrote, removing more than a paragraph, overwriting a `priority: load-bearing` page). Everything is in Git; the user can review or revert.
+Workflows act autonomously and report afterwards — they only stop to ask the user before genuinely drastic actions (deleting authored content, removing more than a paragraph, overwriting a managed file tagged `priority: load-bearing`). Everything is in Git; the user can review or revert.
 
-## Page Structure
+## File Structure
 
-Every Markdown page carries YAML front matter with two ownership zones:
+Markdown pages carry YAML front matter with two ownership zones:
 
 ```yaml
 ---
@@ -129,7 +129,9 @@ related: [feedback-nftables-rule-order]
 # Page body...
 ```
 
-The `memd:` subtree powers `dream` — pages with high `access_count` and recent `last_read_at` get cemented into MEMORY.md's top sections; pages that haven't been read in 90 days drift to archive. Agents add `topic`, `tags`, `priority`, `superseded_by`, `related`, or anything else useful for the directory's domain.
+The `memd:` subtree powers `dream` for managed files — files with high `access_count` and recent `last_read_at` get cemented into MEMORY.md's top sections; managed files that haven't been read in 90 days can drift to archive. Agents add `topic`, `tags`, `priority`, `superseded_by`, `related`, or anything else useful for the directory's domain.
+
+HTML files carry the same YAML front matter inside a leading `<!-- ... -->` comment, so diagrams and mock UIs can have stats without changing browser rendering. Other text files are stored verbatim. Use them when the artifact is naturally not prose: CSV for tables, JSON/YAML/TOML for structured examples, and plain text for logs or snippets.
 
 ## Storage Backends
 
@@ -147,7 +149,7 @@ For Git directories, memd decouples disk write from sync:
 
 ## Read More
 
-- [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, page structure, drastic-action policy.
+- [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, file structure, drastic-action policy.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
 - [docs/plans/2026-05-23-memory-weight-decay-design.md](docs/plans/2026-05-23-memory-weight-decay-design.md) — design of the weight/decay layer.
 

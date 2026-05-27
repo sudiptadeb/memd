@@ -102,6 +102,34 @@ func TestRender_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestRenderHTML_Roundtrip(t *testing.T) {
+	p := Page{
+		Stats: MemdStats{
+			CreatedAt:   mustDate(t, "2026-04-10"),
+			UpdatedAt:   mustDate(t, "2026-05-22"),
+			LastReadAt:  mustDate(t, "2026-05-23"),
+			AccessCount: 17,
+		},
+		AgentFM: "topic: mock-ui\n",
+		HasFM:   true,
+		Body:    []byte("<!doctype html><title>Mock</title>\n"),
+	}
+	out := p.RenderHTML()
+	if !strings.HasPrefix(string(out), "<!--\n---\nmemd:\n") {
+		t.Fatalf("html render missing leading comment front matter:\n%s", out)
+	}
+	p2 := ParseHTMLPage(out)
+	if p2.Stats != p.Stats {
+		t.Fatalf("stats roundtrip lost: got %+v want %+v", p2.Stats, p.Stats)
+	}
+	if !strings.Contains(p2.AgentFM, "topic: mock-ui") {
+		t.Fatalf("agent FM lost: %q", p2.AgentFM)
+	}
+	if string(p2.Body) != string(p.Body) {
+		t.Fatalf("body roundtrip lost: got %q want %q", p2.Body, p.Body)
+	}
+}
+
 func TestStripAgentMemdSubtree(t *testing.T) {
 	raw := []byte(`---
 memd:
