@@ -126,46 +126,63 @@
           <template x-if="connectors.length">
             <div class="cards">
               <template x-for="connector in connectors" :key="connector.id">
-                <article class="card">
+                <article class="card connector-card" :class="connector.expanded ? 'expanded' : ''" @click="toggleConnectorExpand(connector)" @keydown.enter.prevent="toggleConnectorExpand(connector)" @keydown.space.prevent="toggleConnectorExpand(connector)" tabindex="0">
                   <div class="card-head">
                     <span class="card-name" x-text="connector.name"></span>
                     <span class="dot" x-text="connector.kind === 'http' ? 'http' : 'mcp'"></span>
                     <span class="dot" :class="connector.write ? 'accent' : ''" x-text="connector.write ? 'read/write' : 'read-only'"></span>
                     <span class="spacer"></span>
+                    <svg class="icon expand-icon" aria-hidden="true"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
                   </div>
                   <div class="card-meta">Access to <b x-text="connectorDirectoryNames(connector)"></b></div>
-                  <div class="url-row">
-                    <code :class="connector.revealed ? 'revealed' : ''" x-text="connector.revealed ? connector.url : truncate(connector.url)"></code>
-                    <div class="url-actions">
-                      <button type="button" @click="toggleConnectorReveal(connector)" :title="connector.revealed ? 'Hide URL' : 'Reveal URL'">
-                        <svg class="icon" aria-hidden="true" x-show="!connector.revealed"><use href="/assets/icons/eye.svg#icon"></use></svg>
-                        <svg class="icon" aria-hidden="true" x-show="connector.revealed"><use href="/assets/icons/eye-off.svg#icon"></use></svg>
-                        <span x-text="connector.revealed ? 'Hide' : 'Reveal'"></span>
+                  <div class="connector-fold" x-show="connector.expanded" @click.stop>
+                    <div class="connector-instructions">
+                      <div class="instruction-line" x-text="connector.kind === 'http' ? 'Use these for HTTP-capable agents that cannot speak MCP.' : 'Use these for MCP clients that support request headers.'"></div>
+                      <div class="instruction-grid">
+                        <span>URL</span>
+                        <code x-text="connectorInstructionURL(connector)"></code>
+                        <span>Header</span>
+                        <code x-text="connector.auth_header"></code>
+                      </div>
+                      <div class="instruction-line muted" x-text="connector.kind === 'http' ? 'Start with GET /memory_load using the Authorization header.' : 'Configure Streamable HTTP with the URL and Authorization header.'"></div>
+                    </div>
+                    <div class="url-row">
+                      <code :class="connector.revealed ? 'revealed' : ''" x-text="connector.revealed ? connector.url : truncate(connector.url)"></code>
+                      <div class="url-actions">
+                        <button type="button" @click="toggleConnectorReveal(connector)" :title="connector.revealed ? 'Hide URL' : 'Reveal URL'">
+                          <svg class="icon" aria-hidden="true" x-show="!connector.revealed"><use href="/assets/icons/eye.svg#icon"></use></svg>
+                          <svg class="icon" aria-hidden="true" x-show="connector.revealed"><use href="/assets/icons/eye-off.svg#icon"></use></svg>
+                          <span x-text="connector.revealed ? 'Hide' : 'Reveal'"></span>
+                        </button>
+                        <button type="button" @click="copyURL(connector)">
+                          <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                          Copy
+                        </button>
+                        <button type="button" @click="copyAuth(connector)">
+                          <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                          Copy auth
+                        </button>
+                        <button type="button" x-show="connector.kind === 'http'" @click="copySkill(connector)">
+                          <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                          Copy skill
+                        </button>
+                      </div>
+                    </div>
+                    <div class="card-foot">
+                      <span class="spacer"></span>
+                      <button class="btn ghost" type="button" @click="openEdit(connector)">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/pencil.svg#icon"></use></svg>
+                        Edit
                       </button>
-                      <button type="button" @click="copyURL(connector)">
-                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
-                        Copy
+                      <button class="btn ghost" type="button" @click="rotateConnector(connector)">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+                        Rotate
                       </button>
-                      <button type="button" x-show="connector.kind === 'http'" @click="copySkill(connector)">
-                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
-                        Copy skill
+                      <button class="btn danger" type="button" @click="deleteConnector(connector)">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/trash-2.svg#icon"></use></svg>
+                        Delete
                       </button>
                     </div>
-                  </div>
-                  <div class="card-foot">
-                    <span class="spacer"></span>
-                    <button class="btn ghost" type="button" @click="openEdit(connector)">
-                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/pencil.svg#icon"></use></svg>
-                      Edit
-                    </button>
-                    <button class="btn ghost" type="button" @click="rotateConnector(connector)">
-                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
-                      Rotate
-                    </button>
-                    <button class="btn danger" type="button" @click="deleteConnector(connector)">
-                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/trash-2.svg#icon"></use></svg>
-                      Delete
-                    </button>
                   </div>
                 </article>
               </template>

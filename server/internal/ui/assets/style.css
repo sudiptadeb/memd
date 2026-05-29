@@ -463,6 +463,19 @@ section {
   border-color: var(--border-strong);
 }
 
+.connector-card {
+  cursor: pointer;
+}
+
+.connector-card:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.connector-card.expanded {
+  border-color: var(--border-strong);
+}
+
 .card-head,
 .card-foot {
   display: flex;
@@ -486,6 +499,18 @@ section {
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.expand-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-3);
+  transition: transform var(--dur-fast);
+}
+
+.connector-card.expanded .expand-icon {
+  transform: rotate(90deg);
 }
 
 .card-desc,
@@ -644,6 +669,58 @@ section {
 .url-actions .icon {
   width: 12px;
   height: 12px;
+}
+
+.connector-fold {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: default;
+}
+
+.connector-instructions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.instruction-line {
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.instruction-line.muted {
+  color: var(--fg-3);
+}
+
+.instruction-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.instruction-grid span {
+  color: var(--fg-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.instruction-grid code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty {

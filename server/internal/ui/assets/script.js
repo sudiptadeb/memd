@@ -54,21 +54,47 @@
     }
   }
 
-  function currentOriginURL(rawURL) {
+  function currentBaseURL() {
+    return window.location.origin;
+  }
+
+  function publicURL(rawURL) {
     try {
-      const url = new URL(rawURL, window.location.origin);
-      return window.location.origin + url.pathname + url.search + url.hash;
+      const url = new URL(rawURL, currentBaseURL());
+      return currentBaseURL() + url.pathname + url.search + url.hash;
     } catch (_) {
       return rawURL || "";
     }
   }
 
-  function connectorPath(connector) {
+  function publicPath(rawURL) {
     try {
-      return new URL(connector.url, window.location.origin).pathname;
+      return new URL(rawURL, currentBaseURL()).pathname;
     } catch (_) {
       return "";
     }
+  }
+
+  function appendPath(baseURL, path) {
+    return publicURL(baseURL).replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
+  }
+
+  function tokenlessConnectorURL(connector) {
+    if (connector.auth_url) {
+      return publicURL(connector.auth_url);
+    }
+    try {
+      const url = new URL(connector.url, currentBaseURL());
+      const segments = url.pathname.split("/").filter(Boolean);
+      if (segments[0] === "mcp" || segments[0] === "http") {
+        return currentBaseURL() + "/" + segments[0];
+      }
+    } catch (_) {}
+    return publicURL(connector.url);
+  }
+
+  function connectorPath(connector) {
+    return publicPath(connector.url);
   }
 
   function defaultDirForm() {
@@ -159,8 +185,10 @@
           this.directories = results[0].directories || [];
           this.connectors = (results[1].connectors || []).map(function (connector) {
             connector.revealed = false;
+            connector.expanded = false;
             connector.kind = connector.kind || "mcp";
-            connector.url = currentOriginURL(connector.url);
+            connector.url = publicURL(connector.url);
+            connector.auth_url = tokenlessConnectorURL(connector);
             return connector;
           });
         } catch (error) {
@@ -271,7 +299,11 @@
       },
 
       copyURL(connector) {
-        this.copy(connector.url, "URL copied");
+        this.copy(publicURL(connector.url), "URL copied");
+      },
+
+      copyAuth(connector) {
+        this.copy("URL: " + tokenlessConnectorURL(connector) + "\n" + connector.auth_header, "Auth copied");
       },
 
       async copySkill(connector) {
@@ -298,6 +330,15 @@
 
       toggleConnectorReveal(connector) {
         connector.revealed = !connector.revealed;
+      },
+
+      toggleConnectorExpand(connector) {
+        connector.expanded = !connector.expanded;
+      },
+
+      connectorInstructionURL(connector) {
+        const base = tokenlessConnectorURL(connector);
+        return connector.kind === "http" ? appendPath(base, "memory_load") : base;
       },
 
       connectorDirectoryNames(connector) {
