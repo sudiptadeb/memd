@@ -42,7 +42,7 @@ bash build/build.sh host
 
 ## Wire It Up
 
-The URL is the credential — paste it once per agent. Examples below use `memd` as the server name; pick whatever you like.
+For local use, the token can live in the URL. For production or tunneled use, prefer the tokenless URL plus `Authorization: Bearer <token>`. The connector card can copy both forms.
 
 ### Coding agents
 
@@ -84,16 +84,23 @@ Web chats run server-side and can't reach `127.0.0.1`. Expose memd via a tunnel 
 
 Any MCP client that speaks Streamable HTTP works the same way.
 
+If the client supports custom headers, use the production form:
+
+```text
+URL: https://<your-host>/mcp
+Authorization: Bearer <token>
+```
+
 ### Agents without MCP
 
-Create an **HTTP connector** in the web UI for agents that can fetch URLs but cannot speak MCP. The connector card has **Copy skill**, which copies a complete instruction block with tokenized HTTP endpoints such as `/memory_load`, `/memory_search`, and `/memory_read`. If you are using a tunnel, open the web UI through the tunnel URL before copying.
+Create an **HTTP connector** in the web UI for agents that can fetch URLs but cannot speak MCP. The connector card has **Copy skill**, which copies a complete instruction block with tokenless HTTP endpoints such as `/memory_load`, `/memory_search`, and `/memory_read`, plus the bearer auth header. If you are using a tunnel, open the web UI through the tunnel URL before copying.
 
 ## The Mental Model
 
 | Term         | What it is                                                                       |
 |--------------|----------------------------------------------------------------------------------|
 | **Directory**| A self-organising file memory — a folder on disk or a Git repo.                  |
-| **Connector**| A token-in-URL grant — MCP or HTTP, one per agent (Claude Code, Codex, Cursor, …). |
+| **Connector**| A token-scoped grant — MCP or HTTP, one per agent (Claude Code, Codex, Cursor, …). |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
 | **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
 

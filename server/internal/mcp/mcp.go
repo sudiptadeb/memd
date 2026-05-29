@@ -35,31 +35,25 @@ func New(reg *registry.Registry, instructions, name, version string) *Server {
 	}
 }
 
-// Mount registers the MCP handler under prefix. Each request must come in at
-// prefix + "<token>" where token resolves to a connector.
+// Mount registers the MCP handler under prefix. Tokens may be supplied either
+// as prefix + "/<token>" or as Authorization: Bearer <token>.
 func (s *Server) Mount(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc(prefix, s.handle)
+	prefix = mountPrefix(prefix)
+	mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, prefix) })
+	mux.HandleFunc(prefix+"/", func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, prefix) })
 }
 
 // MountHTTP registers simple token-authenticated HTTP endpoints for agents
 // that can fetch URLs but cannot speak MCP.
 func (s *Server) MountHTTP(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc(prefix, s.handleHTTP)
+	prefix = mountPrefix(prefix)
+	mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) { s.handleHTTP(w, r, prefix) })
+	mux.HandleFunc(prefix+"/", func(w http.ResponseWriter, r *http.Request) { s.handleHTTP(w, r, prefix) })
 }
 
-func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
-	tok := strings.TrimPrefix(r.URL.Path, "/mcp/")
-	tok = strings.Trim(tok, "/")
-	if tok == "" || strings.Contains(tok, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	conn := s.reg.ConnectorByToken(tok)
-	if conn == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if conn.EffectiveKind() != config.ConnectorKindMCP {
+func (s *Server) handle(w http.ResponseWriter, r *http.Request, prefix string) {
+	conn, tail, ok := s.connectorFromRequest(r, prefix, config.ConnectorKindMCP)
+	if !ok || tail != "" {
 		http.NotFound(w, r)
 		return
 	}

@@ -59,6 +59,8 @@ type connectorView struct {
 	Name           string   `json:"name"`
 	Kind           string   `json:"kind"`
 	URL            string   `json:"url"`
+	AuthURL        string   `json:"auth_url"`
+	AuthHeader     string   `json:"auth_header"`
 	Write          bool     `json:"write"`
 	DirectoryIDs   []string `json:"directory_ids"`
 	DirectoryNames string   `json:"directory_names"`
@@ -127,11 +129,14 @@ func (h *Handler) pageData() pageData {
 		}
 		kind := c.EffectiveKind()
 		url := h.connectorURL(c)
+		authURL := h.connectorAuthURL(c)
 		cViews = append(cViews, connectorView{
 			ID:             c.ID,
 			Name:           c.Name,
 			Kind:           kind,
 			URL:            url,
+			AuthURL:        authURL,
+			AuthHeader:     "Authorization: Bearer " + c.Token,
 			Write:          c.Write,
 			DirectoryIDs:   ids,
 			DirectoryNames: names,
@@ -234,8 +239,10 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	logs.Info("added connector %q (id=%s, kind=%s, %d directories, write=%v)", body.Name, c.ID, c.EffectiveKind(), len(body.DirectoryIDs), body.Write)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"id":  c.ID,
-		"url": h.connectorURL(c),
+		"id":        c.ID,
+		"url":       h.connectorURL(c),
+		"auth_url":  h.connectorAuthURL(c),
+		"auth_type": "bearer",
 	})
 }
 
@@ -276,8 +283,10 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		logs.Info("rotated connector %q (id=%s)", c.Name, id)
 		writeJSON(w, http.StatusOK, map[string]string{
-			"id":  c.ID,
-			"url": h.connectorURL(c),
+			"id":        c.ID,
+			"url":       h.connectorURL(c),
+			"auth_url":  h.connectorAuthURL(c),
+			"auth_type": "bearer",
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -290,6 +299,15 @@ func (h *Handler) connectorURL(c config.Connector) string {
 		return fmt.Sprintf("%s/http/%s", h.baseURL, c.Token)
 	default:
 		return fmt.Sprintf("%s/mcp/%s", h.baseURL, c.Token)
+	}
+}
+
+func (h *Handler) connectorAuthURL(c config.Connector) string {
+	switch c.EffectiveKind() {
+	case config.ConnectorKindHTTP:
+		return h.baseURL + "/http"
+	default:
+		return h.baseURL + "/mcp"
 	}
 }
 

@@ -7,7 +7,7 @@ memd is a Go server you run locally. It exposes file-based memory directories to
 What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
-- Web UI for managing directories and MCP/HTTP connectors. Each connector gets a token-in-URL credential.
+- Web UI for managing directories and MCP/HTTP connectors. Each connector gets a bearer token credential; token-in-URL remains supported for local/legacy use.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
 - Localhost-only binding. No admin auth, no remote-access story, no public hosting.
@@ -47,8 +47,8 @@ The server starts, opens the web UI in your browser (default `http://127.0.0.1:7
 In the UI:
 
 1. **Add directories.** Pick local folder or Git repo. For Git: paste the URL, branch, base path inside the repo, and pick an SSH key path or PAT env var. memd clones into a working copy under the config dir.
-2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick MCP or HTTP, which directories the connector can see, and whether write is allowed. memd generates a unique URL and shows it to you once.
-3. **Wire up agents.** Paste MCP URLs into MCP configs, or use **Copy skill** for HTTP connectors.
+2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick MCP or HTTP, which directories the connector can see, and whether write is allowed. memd generates a unique token and shows token-in-URL plus header-auth forms.
+3. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when the client supports headers, or use **Copy skill** for HTTP connectors.
 
 ## CLI
 
@@ -62,14 +62,25 @@ Both modes bind to `127.0.0.1`. There is no way to expose the server publicly in
 
 ## Connector URL Shapes
 
+Production/header-auth forms:
+
+```
+http://127.0.0.1:<port>/mcp
+http://127.0.0.1:<port>/http/<endpoint>
+Authorization: Bearer <token>
+```
+
+Local/legacy token-in-URL forms:
+
 ```
 http://127.0.0.1:<port>/mcp/<token>
 http://127.0.0.1:<port>/http/<token>
 ```
 
 - Token is 32 random characters.
-- The URL **is the credential**. Treat it like a password.
-- MCP connectors use `/mcp/`; HTTP connectors use `/http/`.
+- The bearer token **is the credential**. Treat it like a password.
+- MCP connectors use `/mcp`; HTTP connectors use `/http`.
+- Header auth and token-in-URL auth both work. Prefer header auth for production so tokens do not appear in access logs, browser history, or screenshots.
 - Quick mode: a fresh MCP token per run.
 - Configured mode: persists per connector until you delete it. See [Connector Tokens](#connector-tokens) below.
 
@@ -91,11 +102,18 @@ url = "http://127.0.0.1:48173/mcp/9f2c4a..."
 transport = "http"
 ```
 
-Any agent supporting MCP Streamable HTTP with a bearer-in-URL endpoint works the same way.
+Any agent supporting MCP Streamable HTTP with a token-in-URL endpoint works the same way.
+
+When the client supports request headers, use the cleaner production form:
+
+```text
+URL: http://127.0.0.1:48173/mcp
+Authorization: Bearer 9f2c4a...
+```
 
 ### HTTP connector for non-MCP agents
 
-Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP connector in the web UI and use **Copy skill** on the connector card. The copied instructions include the secret URL base and endpoints for `memory_load`, `memory_list`, `memory_read`, `memory_search`, status, and workflows. Write-enabled HTTP connectors expose write operations through POST only. If you are using a tunnel, open the web UI through the tunnel URL before copying so the pasted skill uses the reachable host.
+Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP connector in the web UI and use **Copy skill** on the connector card. The copied instructions include the tokenless URL base, `Authorization: Bearer <token>`, and endpoints for `memory_load`, `memory_list`, `memory_read`, `memory_search`, status, and workflows. Write-enabled HTTP connectors expose write operations through POST only. If you are using a tunnel, open the web UI through the tunnel URL before copying so the pasted skill uses the reachable host.
 
 ## Where Config Lives
 
@@ -116,7 +134,7 @@ workdirs/
 ## Connector Tokens
 
 - **Stored** inside `config.json` on each connector's `token` field. The whole file is written atomically with mode `0600`.
-- **Shown in the web UI** embedded in the connector URL. Treat it as secret and paste it only into the intended agent.
+- **Shown in the web UI** embedded in the local/legacy connector URL and in the bearer auth header copied by **Copy auth**. Treat it as secret and paste it only into the intended agent.
 - **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from `config.json` and any future request bearing it returns 404.
 - **Rotated** with the "Rotate token" button in the web UI (`POST /api/connectors/{id}/rotate`). The connector keeps its ID, name, directory access, and write flag; only the token changes. The previous URL stops authenticating immediately — paste the new one into the agent.
 
