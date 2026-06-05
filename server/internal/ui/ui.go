@@ -10,7 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
@@ -21,23 +23,37 @@ var fsys embed.FS
 
 // Handler is the web UI handler.
 type Handler struct {
-	reg     *registry.Registry
-	baseURL string
+	reg      *registry.Registry
+	accounts *account.Store
+	sessions *SessionManager
+	baseURL  string
 }
 
-func New(reg *registry.Registry, baseURL string) *Handler {
-	return &Handler{reg: reg, baseURL: baseURL}
+func New(reg *registry.Registry, accounts *account.Store, baseURL string) *Handler {
+	return &Handler{
+		reg:      reg,
+		accounts: accounts,
+		sessions: NewSessionManager(24 * time.Hour),
+		baseURL:  baseURL,
+	}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.index)
+	mux.HandleFunc("/admin", h.adminIndex)
 	mux.Handle("/assets/", http.FileServer(http.FS(fsys)))
-	mux.HandleFunc("/api/directories", h.directoriesAPI)
-	mux.HandleFunc("/api/directories/", h.directoryAPI)
-	mux.HandleFunc("/api/connectors", h.connectorsAPI)
-	mux.HandleFunc("/api/connectors/", h.connectorAPI)
-	mux.HandleFunc("/api/browse", h.browseAPI)
-	mux.HandleFunc("/api/logs", h.logsAPI)
+	mux.HandleFunc("/api/session", h.sessionAPI)
+	mux.HandleFunc("/api/auth/login", h.loginAPI)
+	mux.HandleFunc("/api/auth/logout", h.logoutAPI)
+	mux.HandleFunc("/api/data", h.requireUser(h.userDataAPI))
+	mux.HandleFunc("/api/admin/users", h.requireSuperAdmin(h.adminUsersAPI))
+	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
+	mux.HandleFunc("/api/directories", h.requireUser(h.directoriesAPI))
+	mux.HandleFunc("/api/directories/", h.requireUser(h.directoryAPI))
+	mux.HandleFunc("/api/connectors", h.requireUser(h.connectorsAPI))
+	mux.HandleFunc("/api/connectors/", h.requireUser(h.connectorAPI))
+	mux.HandleFunc("/api/browse", h.requireUser(h.browseAPI))
+	mux.HandleFunc("/api/logs", h.requireUser(h.logsAPI))
 }
 
 type pageData struct {
@@ -80,8 +96,22 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-func (h *Handler) pageData() pageData {
-	dirs := h.reg.Directories()
+func (h *Handler) adminIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/admin" {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := fsys.ReadFile("assets/admin.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+func (h *Handler) pageData(ownerUserID string) pageData {
+	dirs := h.reg.DirectoriesForUser(ownerUserID)
 	dirNameByID := make(map[string]string, len(dirs))
 	dirViews := make([]directoryView, 0, len(dirs))
 	for _, d := range dirs {
@@ -106,7 +136,7 @@ func (h *Handler) pageData() pageData {
 			Error:       errMsg,
 		})
 	}
-	cs := h.reg.Connectors()
+	cs := h.reg.ConnectorsForUser(ownerUserID)
 	cViews := make([]connectorView, 0, len(cs))
 	for _, c := range cs {
 		names := ""
@@ -148,8 +178,13 @@ func (h *Handler) pageData() pageData {
 // --- Directory API ---
 
 func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+		return
+	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"directories": h.pageData().Directories})
+		writeJSON(w, http.StatusOK, map[string]any{"directories": h.pageData(user.ID).Directories})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -171,7 +206,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, fmt.Errorf("name and backend are required"))
 		return
 	}
-	id, err := h.reg.AddDirectory(config.Directory{
+	id, err := h.reg.AddDirectoryForUser(user.ID, config.Directory{
 		Name:        body.Name,
 		Description: body.Description,
 		Backend:     body.Backend,
@@ -188,12 +223,17 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+		return
+	}
 	id := r.URL.Path[len("/api/directories/"):]
 	if r.Method != http.MethodDelete {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if err := h.reg.DeleteDirectory(id); err != nil {
+	if err := h.reg.DeleteDirectoryForUser(user.ID, id); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -204,8 +244,13 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 // --- Connector API ---
 
 func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+		return
+	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"connectors": h.pageData().Connectors})
+		writeJSON(w, http.StatusOK, map[string]any{"connectors": h.pageData(user.ID).Connectors})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -226,7 +271,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, fmt.Errorf("name and at least one directory are required"))
 		return
 	}
-	c, err := h.reg.AddConnector(config.Connector{
+	c, err := h.reg.AddConnectorForUser(user.ID, config.Connector{
 		Name:         body.Name,
 		Kind:         body.Kind,
 		DirectoryIDs: body.DirectoryIDs,
@@ -247,11 +292,16 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+		return
+	}
 	tail := r.URL.Path[len("/api/connectors/"):]
 	id, action, _ := strings.Cut(tail, "/")
 	switch {
 	case action == "" && r.Method == http.MethodDelete:
-		if err := h.reg.DeleteConnector(id); err != nil {
+		if err := h.reg.DeleteConnectorForUser(user.ID, id); err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
@@ -268,7 +318,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		c, err := h.reg.UpdateConnector(id, body.Name, body.Kind, body.DirectoryIDs, body.Write)
+		c, err := h.reg.UpdateConnectorForUser(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.Write)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
@@ -276,7 +326,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		logs.Info("updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)
 		writeJSON(w, http.StatusOK, map[string]string{"id": c.ID})
 	case action == "rotate" && r.Method == http.MethodPost:
-		c, err := h.reg.RotateConnector(id)
+		c, err := h.reg.RotateConnectorForUser(user.ID, id)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return

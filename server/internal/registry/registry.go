@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/storage"
 	"github.com/sudiptadeb/memd/server/internal/token"
@@ -28,6 +30,7 @@ type Registry struct {
 	mu         sync.RWMutex
 	cfg        *config.Config
 	persistent bool
+	accounts   *account.Store
 	backends   map[string]storage.Backend // directory ID → backend
 }
 
@@ -46,7 +49,39 @@ func NewPersistent() (*Registry, error) {
 			fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
 			continue
 		}
-		r.backends[d.ID] = b
+		r.backends[backendKey(d.OwnerUserID, d.ID)] = b
+	}
+	return r, nil
+}
+
+// NewAccountBacked loads user-owned directories/connectors from the SQL
+// account store. Configured mode uses this; config.json is a legacy import
+// source only.
+func NewAccountBacked(ctx context.Context, accounts *account.Store) (*Registry, error) {
+	r := &Registry{cfg: &config.Config{}, accounts: accounts, backends: map[string]storage.Backend{}}
+	users, err := accounts.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		dirs, err := accounts.ListUserDirectories(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range dirs {
+			r.cfg.Directories = append(r.cfg.Directories, d)
+			b, err := r.openBackend(d)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
+				continue
+			}
+			r.backends[backendKey(d.OwnerUserID, d.ID)] = b
+		}
+		connectors, err := accounts.ListUserConnectors(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		r.cfg.Connectors = append(r.cfg.Connectors, connectors...)
 	}
 	return r, nil
 }
@@ -146,10 +181,10 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	var out []DirectoryView
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
-			if d.ID != id {
+			if d.ID != id || d.OwnerUserID != c.OwnerUserID {
 				continue
 			}
-			b := r.backends[id]
+			b := r.backends[backendKey(d.OwnerUserID, id)]
 			if b == nil {
 				continue
 			}
@@ -173,6 +208,16 @@ func (r *Registry) DirectoryForConnector(c *Connector, id string) *DirectoryView
 // --- Mutations ---
 
 func (r *Registry) AddDirectory(d config.Directory) (string, error) {
+	return r.AddDirectoryForUser(d.OwnerUserID, d)
+}
+
+func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (string, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
+			return "", err
+		}
+	}
+	d.OwnerUserID = ownerUserID
 	if d.ID == "" {
 		d.ID = newID()
 	}
@@ -185,19 +230,27 @@ func (r *Registry) AddDirectory(d config.Directory) (string, error) {
 	}
 	r.mu.Lock()
 	r.cfg.Directories = append(r.cfg.Directories, d)
-	r.backends[d.ID] = b
+	r.backends[backendKey(d.OwnerUserID, d.ID)] = b
 	r.mu.Unlock()
-	if err := r.save(); err != nil {
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserDirectory(context.Background(), ownerUserID, d); err != nil {
+			return "", err
+		}
+	} else if err := r.save(); err != nil {
 		return "", err
 	}
 	return d.ID, nil
 }
 
 func (r *Registry) DeleteDirectory(id string) error {
+	return r.DeleteDirectoryForUser("", id)
+}
+
+func (r *Registry) DeleteDirectoryForUser(ownerUserID, id string) error {
 	r.mu.Lock()
 	idx := -1
 	for i, d := range r.cfg.Directories {
-		if d.ID == id {
+		if d.ID == id && d.OwnerUserID == ownerUserID {
 			idx = i
 			break
 		}
@@ -206,19 +259,34 @@ func (r *Registry) DeleteDirectory(id string) error {
 		r.mu.Unlock()
 		return errors.New("directory not found")
 	}
-	if b := r.backends[id]; b != nil {
+	if b := r.backends[backendKey(ownerUserID, id)]; b != nil {
 		_ = b.Close()
 	}
-	delete(r.backends, id)
+	delete(r.backends, backendKey(ownerUserID, id))
 	r.cfg.Directories = append(r.cfg.Directories[:idx], r.cfg.Directories[idx+1:]...)
 	for i := range r.cfg.Connectors {
-		r.cfg.Connectors[i].DirectoryIDs = removeString(r.cfg.Connectors[i].DirectoryIDs, id)
+		if r.cfg.Connectors[i].OwnerUserID == ownerUserID {
+			r.cfg.Connectors[i].DirectoryIDs = removeString(r.cfg.Connectors[i].DirectoryIDs, id)
+		}
 	}
 	r.mu.Unlock()
+	if r.accounts != nil {
+		return r.accounts.DeleteUserDirectory(context.Background(), ownerUserID, id)
+	}
 	return r.save()
 }
 
 func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
+	return r.AddConnectorForUser(c.OwnerUserID, c)
+}
+
+func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (config.Connector, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
+			return config.Connector{}, err
+		}
+	}
+	c.OwnerUserID = ownerUserID
 	c.Kind = config.NormalizeConnectorKind(c.Kind)
 	if c.Kind != config.ConnectorKindMCP && c.Kind != config.ConnectorKindHTTP {
 		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", c.Kind)
@@ -239,7 +307,11 @@ func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 	r.mu.Lock()
 	r.cfg.Connectors = append(r.cfg.Connectors, c)
 	r.mu.Unlock()
-	if err := r.save(); err != nil {
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, c); err != nil {
+			return config.Connector{}, err
+		}
+	} else if err := r.save(); err != nil {
 		return config.Connector{}, err
 	}
 	return c, nil
@@ -249,6 +321,15 @@ func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 // write flag. The token, ID, and creation time are preserved.
 // Returns the updated connector.
 func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string, write bool) (config.Connector, error) {
+	return r.UpdateConnectorForUser("", id, name, kind, directoryIDs, write)
+}
+
+func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, directoryIDs []string, write bool) (config.Connector, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
+			return config.Connector{}, err
+		}
+	}
 	if name == "" {
 		return config.Connector{}, errors.New("name is required")
 	}
@@ -262,7 +343,7 @@ func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string,
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
-		if c.ID == id {
+		if c.ID == id && c.OwnerUserID == ownerUserID {
 			idx = i
 			break
 		}
@@ -274,7 +355,7 @@ func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string,
 	for _, did := range directoryIDs {
 		found := false
 		for _, d := range r.cfg.Directories {
-			if d.ID == did {
+			if d.ID == did && d.OwnerUserID == ownerUserID {
 				found = true
 				break
 			}
@@ -290,7 +371,11 @@ func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string,
 	r.cfg.Connectors[idx].Write = write
 	updated := r.cfg.Connectors[idx]
 	r.mu.Unlock()
-	if err := r.save(); err != nil {
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, updated); err != nil {
+			return config.Connector{}, err
+		}
+	} else if err := r.save(); err != nil {
 		return config.Connector{}, err
 	}
 	return updated, nil
@@ -300,6 +385,15 @@ func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string,
 // previous token stops authenticating immediately (any agent using it
 // will need the new URL). Returns the updated connector.
 func (r *Registry) RotateConnector(id string) (config.Connector, error) {
+	return r.RotateConnectorForUser("", id)
+}
+
+func (r *Registry) RotateConnectorForUser(ownerUserID, id string) (config.Connector, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
+			return config.Connector{}, err
+		}
+	}
 	tok, err := token.New()
 	if err != nil {
 		return config.Connector{}, err
@@ -307,7 +401,7 @@ func (r *Registry) RotateConnector(id string) (config.Connector, error) {
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
-		if c.ID == id {
+		if c.ID == id && c.OwnerUserID == ownerUserID {
 			idx = i
 			break
 		}
@@ -319,17 +413,25 @@ func (r *Registry) RotateConnector(id string) (config.Connector, error) {
 	r.cfg.Connectors[idx].Token = tok
 	updated := r.cfg.Connectors[idx]
 	r.mu.Unlock()
-	if err := r.save(); err != nil {
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, updated); err != nil {
+			return config.Connector{}, err
+		}
+	} else if err := r.save(); err != nil {
 		return config.Connector{}, err
 	}
 	return updated, nil
 }
 
 func (r *Registry) DeleteConnector(id string) error {
+	return r.DeleteConnectorForUser("", id)
+}
+
+func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
-		if c.ID == id {
+		if c.ID == id && c.OwnerUserID == ownerUserID {
 			idx = i
 			break
 		}
@@ -340,7 +442,136 @@ func (r *Registry) DeleteConnector(id string) error {
 	}
 	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
 	r.mu.Unlock()
+	if r.accounts != nil {
+		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
+	}
 	return r.save()
+}
+
+func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBundle, replace bool) error {
+	if r.accounts == nil {
+		return errors.New("registry is not account-backed")
+	}
+	if err := r.accounts.ImportUserData(context.Background(), ownerUserID, bundle, replace); err != nil {
+		return err
+	}
+	newBackends := make(map[string]storage.Backend, len(bundle.Directories))
+	for _, d := range bundle.Directories {
+		d.OwnerUserID = ownerUserID
+		b, err := r.openBackend(d)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "memd: imported directory %q failed to open: %v\n", d.Name, err)
+			continue
+		}
+		newBackends[backendKey(ownerUserID, d.ID)] = b
+	}
+	connectors := make([]config.Connector, len(bundle.Connectors))
+	for i, c := range bundle.Connectors {
+		c.OwnerUserID = ownerUserID
+		connectors[i] = c
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if replace {
+		r.replaceUserDataLocked(ownerUserID, bundle.Directories, connectors, newBackends)
+		return nil
+	}
+
+	for _, d := range bundle.Directories {
+		d.OwnerUserID = ownerUserID
+		key := backendKey(ownerUserID, d.ID)
+		found := false
+		for i, existing := range r.cfg.Directories {
+			if existing.OwnerUserID == ownerUserID && existing.ID == d.ID {
+				if old := r.backends[key]; old != nil {
+					_ = old.Close()
+				}
+				r.cfg.Directories[i] = d
+				if b := newBackends[key]; b != nil {
+					r.backends[key] = b
+				} else {
+					delete(r.backends, key)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.cfg.Directories = append(r.cfg.Directories, d)
+			if b := newBackends[key]; b != nil {
+				r.backends[key] = b
+			}
+		}
+	}
+	for _, c := range connectors {
+		found := false
+		for i, existing := range r.cfg.Connectors {
+			if existing.OwnerUserID == ownerUserID && existing.ID == c.ID {
+				r.cfg.Connectors[i] = c
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.cfg.Connectors = append(r.cfg.Connectors, c)
+		}
+	}
+	return nil
+}
+
+func (r *Registry) replaceUserDataLocked(ownerUserID string, dirs []config.Directory, connectors []config.Connector, newBackends map[string]storage.Backend) {
+	filteredDirs := r.cfg.Directories[:0]
+	for _, d := range r.cfg.Directories {
+		if d.OwnerUserID == ownerUserID {
+			if old := r.backends[backendKey(ownerUserID, d.ID)]; old != nil {
+				_ = old.Close()
+			}
+			delete(r.backends, backendKey(ownerUserID, d.ID))
+			continue
+		}
+		filteredDirs = append(filteredDirs, d)
+	}
+	r.cfg.Directories = filteredDirs
+	for _, d := range dirs {
+		d.OwnerUserID = ownerUserID
+		r.cfg.Directories = append(r.cfg.Directories, d)
+		if b := newBackends[backendKey(ownerUserID, d.ID)]; b != nil {
+			r.backends[backendKey(ownerUserID, d.ID)] = b
+		}
+	}
+	filteredConnectors := r.cfg.Connectors[:0]
+	for _, c := range r.cfg.Connectors {
+		if c.OwnerUserID != ownerUserID {
+			filteredConnectors = append(filteredConnectors, c)
+		}
+	}
+	r.cfg.Connectors = filteredConnectors
+	r.cfg.Connectors = append(r.cfg.Connectors, connectors...)
+}
+
+func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []config.Directory
+	for _, d := range r.cfg.Directories {
+		if d.OwnerUserID == ownerUserID {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []config.Connector
+	for _, c := range r.cfg.Connectors {
+		if c.OwnerUserID == ownerUserID {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func removeString(list []string, target string) []string {
@@ -385,4 +616,8 @@ func newID() string {
 		b[i] = chars[rand.Intn(len(chars))]
 	}
 	return string(b)
+}
+
+func backendKey(ownerUserID, id string) string {
+	return ownerUserID + "\x00" + id
 }
