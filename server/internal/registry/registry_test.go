@@ -1,8 +1,11 @@
 package registry
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
 )
 
@@ -120,4 +123,112 @@ func TestAddConnector_DefaultsKindToMCP(t *testing.T) {
 	if c.Kind != config.ConnectorKindMCP || c.EffectiveKind() != config.ConnectorKindMCP {
 		t.Fatalf("kind = %q effective=%q, want mcp", c.Kind, c.EffectiveKind())
 	}
+}
+
+func TestNewAccountBackedKeepsBrokenDirectoryVisible(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	user, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "friend", Password: "friend-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "missing")
+	if err := store.UpsertUserDirectory(ctx, user.ID, config.Directory{
+		ID:        "dir1",
+		Name:      "Missing",
+		Backend:   "local",
+		LocalPath: missingPath,
+	}); err != nil {
+		t.Fatalf("UpsertUserDirectory: %v", err)
+	}
+	if err := store.UpsertUserConnector(ctx, user.ID, config.Connector{
+		ID:           "conn1",
+		Name:         "Agent",
+		Kind:         config.ConnectorKindMCP,
+		Token:        "tok_123",
+		DirectoryIDs: []string{"dir1"},
+	}); err != nil {
+		t.Fatalf("UpsertUserConnector: %v", err)
+	}
+
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	dirs := r.DirectoriesForUser(user.ID)
+	if len(dirs) != 1 || dirs[0].LocalPath != missingPath {
+		t.Fatalf("directories = %+v", dirs)
+	}
+	conn := r.ConnectorByToken("tok_123")
+	if conn == nil {
+		t.Fatalf("connector was not loaded")
+	}
+	if got := r.DirectoriesForConnector(conn); len(got) != 0 {
+		t.Fatalf("broken directory should not be served, got %+v", got)
+	}
+}
+
+func TestImportUserDataKeepsBrokenDirectoryVisible(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	user, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "friend", Password: "friend-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	missingPath := filepath.Join(t.TempDir(), "missing")
+	bundle := account.NewUserDataBundle(
+		[]config.Directory{{
+			ID:        "dir1",
+			Name:      "Missing",
+			Backend:   "local",
+			LocalPath: missingPath,
+		}},
+		[]config.Connector{{
+			ID:           "conn1",
+			Name:         "Agent",
+			Kind:         config.ConnectorKindMCP,
+			Token:        "tok_123",
+			DirectoryIDs: []string{"dir1"},
+		}},
+	)
+	if err := r.ImportUserData(user.ID, bundle, false); err != nil {
+		t.Fatalf("ImportUserData: %v", err)
+	}
+	dirs := r.DirectoriesForUser(user.ID)
+	if len(dirs) != 1 || dirs[0].LocalPath != missingPath {
+		t.Fatalf("directories = %+v", dirs)
+	}
+	conn := r.ConnectorByToken("tok_123")
+	if conn == nil {
+		t.Fatalf("connector was not imported")
+	}
+	if got := r.DirectoriesForConnector(conn); len(got) != 0 {
+		t.Fatalf("broken directory should not be served, got %+v", got)
+	}
+}
+
+func openRegistryTestStore(t *testing.T) *account.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "memd.db")
+	store, err := account.Open(context.Background(), account.DBConfig{
+		Driver:     "sqlite",
+		DSN:        "file:" + path,
+		Source:     "test",
+		SQLitePath: path,
+	})
+	if err != nil {
+		t.Fatalf("account.Open: %v", err)
+	}
+	if err := store.Init(context.Background()); err != nil {
+		t.Fatalf("account.Init: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
 }

@@ -28,7 +28,9 @@
     const payload = await response.json().catch(function () {
       return {};
     });
-    throw new Error(payload.error || response.statusText || "request failed");
+    const error = new Error(payload.error || response.statusText || "request failed");
+    error.status = response.status;
+    throw error;
   }
 
   async function api(path, options) {
@@ -138,12 +140,45 @@
     };
   }
 
+  function defaultLoginForm() {
+    return {
+      username: "",
+      password: "",
+      err: "",
+      submitting: false
+    };
+  }
+
+  function downloadJSON(filename, value) {
+    const blob = new Blob([JSON.stringify(value, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function readFileText(file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || "")); };
+      reader.onerror = function () { reject(reader.error || new Error("read failed")); };
+      reader.readAsText(file);
+    });
+  }
+
   window.memdApp = function () {
     return {
+      sessionChecked: false,
+      user: null,
       loading: true,
       loadErr: "",
       directories: [],
       connectors: [],
+      loginForm: defaultLoginForm(),
       theme: storageGet("memd-theme", "light"),
       layoutMode: storageGet("memd-layout", "wide") === "centered" ? "centered" : "wide",
       infoMode: storageGet("memd-info", "1") !== "0",
@@ -165,16 +200,81 @@
       logsPolling: false,
       logsTimer: null,
 
-      init() {
+      async init() {
         this.setTheme(this.theme);
         this.setLayout(this.layoutMode);
         this.setLogsWidth(this.logsWidth);
-        this.load();
+        await this.checkSession();
+        if (this.user) {
+          await this.load();
+          this.startLogs();
+        }
+      },
+
+      async checkSession() {
+        try {
+          const data = await api("/api/session", { cache: "no-store" });
+          this.user = data.user || null;
+        } catch (error) {
+          this.user = null;
+        } finally {
+          this.sessionChecked = true;
+          this.loading = false;
+        }
+      },
+
+      async login() {
+        this.loginForm.err = "";
+        this.loginForm.submitting = true;
+        try {
+          const data = await api("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: this.loginForm.username,
+              password: this.loginForm.password
+            })
+          });
+          this.user = data.user || null;
+          this.loginForm = defaultLoginForm();
+          await this.load();
+          this.startLogs();
+        } catch (error) {
+          this.loginForm.err = error.message || "login failed";
+        } finally {
+          this.loginForm.submitting = false;
+        }
+      },
+
+      async logout() {
+        await fetch("/api/auth/logout", { method: "POST" }).catch(function () {});
+        this.stopLogs();
+        this.user = null;
+        this.directories = [];
+        this.connectors = [];
+        this.entries = [];
+        this.lastID = -1;
+        this.closeOverlays();
+      },
+
+      startLogs() {
         this.pollLogs();
-        this.logsTimer = window.setInterval(() => this.pollLogs(), 2000);
+        if (!this.logsTimer) {
+          this.logsTimer = window.setInterval(() => this.pollLogs(), 2000);
+        }
+      },
+
+      stopLogs() {
+        if (this.logsTimer) {
+          window.clearInterval(this.logsTimer);
+          this.logsTimer = null;
+        }
       },
 
       async load() {
+        if (!this.user) {
+          return;
+        }
         this.loading = true;
         this.loadErr = "";
         try {
@@ -192,6 +292,10 @@
             return connector;
           });
         } catch (error) {
+          if (error.status === 401) {
+            this.user = null;
+            this.stopLogs();
+          }
           this.loadErr = error.message || String(error);
         } finally {
           this.loading = false;
@@ -471,6 +575,45 @@
         await this.load();
       },
 
+      async exportUserData() {
+        try {
+          const bundle = await api("/api/data", { cache: "no-store" });
+          downloadJSON("memd-user-data-" + this.user.username + ".json", bundle);
+        } catch (error) {
+          window.alert(error.message || "export failed");
+        }
+      },
+
+      openImportUserData() {
+        const input = this.$refs.userDataImport;
+        if (input) {
+          input.value = "";
+          input.click();
+        }
+      },
+
+      async importUserData(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) {
+          return;
+        }
+        const replace = window.confirm("Replace your existing directories and connectors? Choose Cancel to merge/update by id.");
+        try {
+          const text = await readFileText(file);
+          const bundle = JSON.parse(text);
+          const suffix = replace ? "?replace=1" : "";
+          await api("/api/data" + suffix, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(bundle)
+          });
+          this.showToast("Imported data");
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "import failed");
+        }
+      },
+
       async openPicker() {
         this.pickerOpen = true;
         await this.browse("");
@@ -502,6 +645,9 @@
       },
 
       async pollLogs() {
+        if (!this.user) {
+          return;
+        }
         if (this.logsPolling) {
           return;
         }

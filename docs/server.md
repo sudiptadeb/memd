@@ -8,9 +8,11 @@ What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
 - Web UI for managing directories and MCP/HTTP connectors. Each connector gets a bearer token credential; token-in-URL remains supported for local/legacy use.
+- Configured mode bootstraps a local account/team metadata database. The default database is cgo-free SQLite; `MEMD_DATABASE_URL` can point at another SQL URL once additional drivers are linked.
+- The web UI requires local login. Super admins can open `/admin` to create users, disable/enable accounts, and reset passwords.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
-- Localhost-only binding. No admin auth, no remote-access story, no public hosting.
+- Localhost-only binding. Remote-access hardening, team-scoped ownership, and public hosting are still in progress.
 
 What's planned (not yet implemented): skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
 
@@ -48,17 +50,125 @@ In the UI:
 
 1. **Add directories.** Pick local folder or Git repo. For Git: paste the URL, branch, base path inside the repo, and pick an SSH key path or PAT env var. memd clones into a working copy under the config dir.
 2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick MCP or HTTP, which directories the connector can see, and whether write is allowed. memd generates a unique token and shows token-in-URL plus header-auth forms.
-3. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when the client supports headers, or use **Copy skill** for HTTP connectors.
+3. **Import/export user data.** Signed-in users can export or import their own directories and connectors from the Directories toolbar. Super admins do not manage this from the admin page.
+4. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when the client supports headers, or use **Copy skill** for HTTP connectors.
 
 ## CLI
 
 ```
 memd <directory>             # quick mode
 memd serve [--port PORT]     # configured mode + web UI
+memd serve --init-db         # initialize account DB, prompting for first super admin
+memd data export --user USER --out FILE
+memd data import --user USER --in FILE [--replace]
+memd data export-legacy-config --out FILE
 memd version
 ```
 
 Both modes bind to `127.0.0.1`. There is no way to expose the server publicly in v1.
+
+Configured mode account bootstrap:
+
+```bash
+# Interactive first run.
+memd serve
+
+# Non-interactive first run.
+MEMD_INIT_DB=1 \
+MEMD_CREATE_SUPER_ADMIN_USERNAME=sudi \
+MEMD_CREATE_SUPER_ADMIN_PASSWORD='change-me' \
+memd serve
+
+# Add another super admin from the server process only. There is no API route
+# for creating super admins.
+memd serve --create-super-admin alice
+```
+
+Prefer the password prompt or `MEMD_CREATE_SUPER_ADMIN_PASSWORD` over
+`--super-admin-password`; command-line arguments can be visible to other local
+processes.
+
+## Account Metadata Database
+
+Configured mode stores production metadata in a SQL database:
+
+- local users and password hashes
+- super-admin markers
+- teams and team memberships
+- user-owned directories and connectors, including connector tokens
+- future Git branch state and sync jobs
+
+Memory data itself should remain in user-owned Git repositories. The database is
+only the control plane.
+
+By default, memd uses:
+
+```text
+~/Library/Application Support/memd/memd.db   # macOS
+~/.config/memd/memd.db                       # Linux
+%APPDATA%\memd\memd.db                       # Windows
+```
+
+Override it with `MEMD_DATABASE_URL`:
+
+```bash
+MEMD_DATABASE_URL=sqlite:///var/lib/memd/memd.db memd serve
+```
+
+SQLite is opened through the pure-Go `modernc.org/sqlite` driver, so the normal
+`CGO_ENABLED=0` build still works. memd adds conservative SQLite defaults when
+they are not already present in the DSN: foreign keys on, WAL journal mode,
+normal synchronous mode, a busy timeout, and immediate write transactions. The
+connection pool is limited to one open connection to avoid SQLite writer-lock
+surprises in this metadata workload.
+
+Other SQL connection URLs are parsed but not opened yet; future builds can link
+additional drivers behind the account/team store boundary.
+
+## Local Login And Users
+
+Configured mode serves the UI shell publicly, then asks `/api/session` whether a
+local login session exists. Directory, connector, browse, logs, and admin JSON
+APIs require that session. MCP and plain HTTP connector endpoints still use
+connector bearer tokens; they do not use browser sessions.
+
+Super admins are created only by the server startup process:
+
+```bash
+memd serve --create-super-admin alice
+```
+
+The web UI does not expose a "make super admin" action. Super admins open
+`/admin`, a separate Alpine app from the memory UI, to:
+
+- create regular local users
+- disable or enable accounts
+- reset passwords
+
+Sessions are in-memory and expire after 24 hours. Restarting memd signs everyone
+out, which is acceptable for the current friends/family deployment target.
+
+## User Data Import And Export
+
+Directories and connectors are scoped to the signed-in user. A normal user can
+export their own bundle from `/api/data` or the UI, then import it into another
+account. The bundle contains connector bearer tokens, so handle it as a secret.
+
+The CLI supports the same migration flow:
+
+```bash
+# Export one SQL-backed user's directories/connectors.
+memd data export --user alice --out alice-memd-user-data.json
+
+# Import into any existing local user.
+memd data import --user bob --in alice-memd-user-data.json --replace
+
+# Convert the old config.json registry into an importable bundle.
+memd data export-legacy-config --out current-legacy-user-data.json
+```
+
+Legacy `config.json` is now only an import source for configured mode. The SQL
+store is the source of truth after import.
 
 ## Connector URL Shapes
 
@@ -126,16 +236,17 @@ Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP conne
 Layout inside that path:
 
 ```
-config.json      # directories, connectors, tokens — mode 0600
+config.json      # legacy directory/connector registry, import source only
+memd.db          # local account/user/directory/connector metadata database
 workdirs/
   <id>/          # working copy for each Git-backed directory
 ```
 
 ## Connector Tokens
 
-- **Stored** inside `config.json` on each connector's `token` field. The whole file is written atomically with mode `0600`.
+- **Stored** inside `memd.db` on each connector's `token` field. Legacy `config.json` exports can also contain tokens.
 - **Shown in the web UI** embedded in the local/legacy connector URL and in the bearer auth header copied by **Copy auth**. Treat it as secret and paste it only into the intended agent.
-- **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from `config.json` and any future request bearing it returns 404.
+- **Revoked** by deleting the connector from the web UI (`DELETE /api/connectors/{id}`). The token is removed from the user's SQL connector row and any future request bearing it returns 404.
 - **Rotated** with the "Rotate token" button in the web UI (`POST /api/connectors/{id}/rotate`). The connector keeps its ID, name, directory access, and write flag; only the token changes. The previous URL stops authenticating immediately — paste the new one into the agent.
 
 ## Git Directory Behavior
@@ -152,7 +263,7 @@ Local-folder directories: just file I/O, no Git, no debounce.
 
 ## Security Notes
 
-- Localhost-bound. Anyone with a shell on your machine can read the web UI and `config.json`. Lock your laptop.
+- Localhost-bound. Anyone with a shell on your machine can read local config and database files. Lock your laptop.
 - Connector URLs are passwords. Don't paste them in shared logs, screenshots, or chats.
-- `config.json` is mode `0600` and holds all connector tokens. Be deliberate before syncing the config dir between machines.
-- v1 has no admin auth and no remote-access story. Public hosting is out of scope until v2.
+- `memd.db` and exported user-data JSON can hold connector tokens. Be deliberate before syncing or sharing them.
+- v1 has local UI login, but no remote-access hardening story yet. Public hosting is still in progress.

@@ -49,6 +49,7 @@ type Config struct {
 // Directory describes one memory directory.
 type Directory struct {
 	ID          string    `json:"id"`
+	OwnerUserID string    `json:"owner_user_id,omitempty"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Backend     string    `json:"backend"` // "local" or "git"
@@ -80,6 +81,7 @@ type Git struct {
 // Connector grants an agent access to one or more directories.
 type Connector struct {
 	ID           string    `json:"id"`
+	OwnerUserID  string    `json:"owner_user_id,omitempty"`
 	Name         string    `json:"name"`
 	Kind         string    `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
 	Token        string    `json:"token"`

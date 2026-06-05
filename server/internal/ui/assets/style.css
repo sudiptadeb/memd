@@ -97,6 +97,10 @@ a {
   display: none !important;
 }
 
+.hidden-file {
+  display: none !important;
+}
+
 .icon {
   display: inline-flex;
   flex-shrink: 0;
@@ -177,6 +181,85 @@ a {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 18%, transparent);
 }
 
+.top-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.top-link:hover {
+  color: var(--fg-1);
+  border-color: var(--border-strong);
+}
+
+.top-tabs {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.top-tabs button {
+  min-width: 74px;
+  padding: 6px 10px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+}
+
+.top-tabs button:hover,
+.top-tabs button.on {
+  color: var(--fg-1);
+  background: var(--bg);
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 260px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.user-pill span {
+  min-width: 0;
+  padding: 7px 9px;
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-pill button {
+  align-self: stretch;
+  padding: 0 9px;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  font-weight: 650;
+  border-left: 1px solid var(--border);
+}
+
+.user-pill button:hover {
+  color: var(--fg-1);
+  background: var(--surface);
+}
+
 .top-icon,
 .icon-btn {
   display: inline-flex;
@@ -240,6 +323,44 @@ a {
 
 .body.resizing * {
   user-select: none;
+}
+
+.login-shell {
+  display: grid;
+  min-height: calc(100vh - 59px);
+  place-items: center;
+  padding: 32px 18px;
+}
+
+.login-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(100%, 360px);
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.login-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.login-head h1 {
+  color: var(--fg-1);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.login-submit {
+  justify-content: center;
+  width: 100%;
+  margin-top: 2px;
 }
 
 .main {
@@ -463,6 +584,10 @@ section {
   border-color: var(--border-strong);
 }
 
+.muted-card {
+  opacity: 0.74;
+}
+
 .connector-card {
   cursor: pointer;
 }
@@ -527,6 +652,69 @@ section {
 .card-meta b {
   color: var(--fg-2);
   font-weight: 550;
+}
+
+.admin-section {
+  margin-top: 28px;
+}
+
+.user-cards {
+  gap: 8px;
+}
+
+.user-card {
+  gap: 10px;
+}
+
+.user-avatar {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.user-main {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.user-meta-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 10px;
+  padding: 9px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.user-meta-grid span {
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.user-meta-grid code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-path {
@@ -1463,6 +1651,14 @@ section {
     display: none;
   }
 
+  .top-tabs button {
+    min-width: 0;
+  }
+
+  .user-pill {
+    max-width: 150px;
+  }
+
   .main {
     gap: 24px;
     padding: 0 16px 56px;
@@ -1484,6 +1680,11 @@ section {
 
   .card-head {
     flex-wrap: wrap;
+  }
+
+  .user-card .card-head .btn {
+    flex: 1;
+    justify-content: center;
   }
 
   .url-row {

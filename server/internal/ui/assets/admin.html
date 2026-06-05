@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>memd admin</title>
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script defer src="/assets/admin.js"></script>
+    <script defer src="/assets/alpine.min.js"></script>
+  </head>
+  <body x-data="memdAdminApp()" x-init="init()" @keydown.escape.window="closeSheets()">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="memd home">
+        <img class="logo logo-light" src="/assets/logo-light.png" alt="memd" />
+        <img class="logo logo-dark" src="/assets/logo-dark.png" alt="memd" />
+      </a>
+      <div class="brand-sub">Super admin</div>
+      <span class="spacer"></span>
+      <a class="top-link" href="/">Memory</a>
+      <div class="user-pill" x-show="user" x-cloak>
+        <span x-text="user ? (user.display_name || user.username) : ''"></span>
+        <button type="button" @click="logout()">Log out</button>
+      </div>
+      <button class="top-icon" type="button" @click="toggleTheme()" :title="theme === 'light' ? 'Switch to dark' : 'Switch to light'">
+        <svg class="icon" aria-hidden="true" x-show="theme === 'light'"><use href="/assets/icons/moon.svg#icon"></use></svg>
+        <svg class="icon" aria-hidden="true" x-show="theme === 'dark'"><use href="/assets/icons/sun.svg#icon"></use></svg>
+      </button>
+    </header>
+
+    <main class="login-shell" x-show="sessionChecked && !user" x-cloak>
+      <form class="login-panel" @submit.prevent="login()">
+        <div class="login-head">
+          <span class="eyebrow">memd admin</span>
+          <h1>Sign in</h1>
+        </div>
+        <div class="field">
+          <label class="field-label">Username</label>
+          <input class="input" x-model="loginForm.username" autocomplete="username" required autofocus />
+        </div>
+        <div class="field">
+          <label class="field-label">Password</label>
+          <input class="input" x-model="loginForm.password" type="password" autocomplete="current-password" required />
+        </div>
+        <span class="err" x-text="loginForm.err" x-show="loginForm.err"></span>
+        <button class="btn primary login-submit" type="submit" :disabled="loginForm.submitting">Sign in</button>
+      </form>
+    </main>
+
+    <main class="main admin-main" x-show="sessionChecked && user && !user.super_admin" x-cloak>
+      <div class="empty error-state">
+        <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/triangle-alert.svg#icon"></use></svg></div>
+        <h4>Super admin required</h4>
+        <p>This page only manages local user accounts.</p>
+        <a class="btn secondary" href="/">Back to memory</a>
+      </div>
+    </main>
+
+    <main class="main admin-main" x-show="sessionChecked && user && user.super_admin" x-cloak>
+      <section class="admin-section">
+        <div class="section-head">
+          <div class="titles">
+            <span class="step">Super admin</span>
+            <h2>Users <span class="count" x-text="users.length"></span></h2>
+            <span class="desc">Create local accounts, disable access, and reset passwords.</span>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn secondary" type="button" @click="loadUsers()">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+            Refresh
+          </button>
+          <button class="btn primary" type="button" @click="openSheet('user')">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+            Add user
+          </button>
+        </div>
+
+        <div class="empty load-state" x-show="loading" x-cloak>
+          <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg></div>
+          <h4>Loading users</h4>
+        </div>
+
+        <div class="empty error-state" x-show="loadErr" x-cloak>
+          <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/triangle-alert.svg#icon"></use></svg></div>
+          <h4>Could not load users</h4>
+          <p x-text="loadErr"></p>
+        </div>
+
+        <div class="cards user-cards" x-show="!loading && !loadErr">
+          <template x-for="target in users" :key="target.id">
+            <article class="card user-card" :class="target.disabled ? 'muted-card' : ''">
+              <div class="card-head">
+                <div class="user-avatar" x-text="userDisplayName(target).slice(0, 1).toUpperCase()"></div>
+                <div class="user-main">
+                  <div class="card-name" x-text="userDisplayName(target)"></div>
+                  <div class="card-meta" x-text="target.username"></div>
+                </div>
+                <span class="dot accent" x-show="target.super_admin">super admin</span>
+                <span class="dot danger" x-show="target.disabled">disabled</span>
+                <span class="spacer"></span>
+                <button class="btn ghost" type="button" @click="resetPassword(target)">Reset password</button>
+                <button class="btn" :class="target.disabled ? 'secondary' : 'danger'" type="button" @click="toggleDisabled(target)" x-text="target.disabled ? 'Enable' : 'Disable'"></button>
+              </div>
+              <div class="user-meta-grid">
+                <span>Created</span>
+                <code x-text="target.created_at"></code>
+                <span>Last login</span>
+                <code x-text="target.last_login_at || 'never'"></code>
+              </div>
+            </article>
+          </template>
+        </div>
+      </section>
+    </main>
+
+    <div class="scrim" :class="sheet ? 'open' : ''" @click="closeSheets()"></div>
+
+    <aside class="sheet" :class="sheet === 'user' ? 'open' : ''" :aria-hidden="sheet !== 'user'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3>Add user</h3>
+          <div class="sub">Create a regular local login account.</div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <form class="sheet-body" id="add-user-form" @submit.prevent="createUser()">
+        <div class="field">
+          <label class="field-label">Username<span class="req">*</span></label>
+          <input class="input" x-model="userForm.username" required autocomplete="off" />
+        </div>
+        <div class="field">
+          <label class="field-label">Display name</label>
+          <input class="input" x-model="userForm.display_name" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label class="field-label">Temporary password<span class="req">*</span></label>
+          <input class="input" type="password" x-model="userForm.password" required autocomplete="new-password" />
+        </div>
+        <span class="err" x-text="userForm.err" x-show="userForm.err"></span>
+      </form>
+
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
+        <button class="btn primary" type="submit" form="add-user-form" :disabled="userForm.submitting || !userForm.username || !userForm.password">Create user</button>
+      </footer>
+    </aside>
+
+    <div class="toast" :class="toast ? 'show' : ''" x-cloak>
+      <svg class="icon" aria-hidden="true"><use href="/assets/icons/check.svg#icon"></use></svg>
+      <span x-text="toast"></span>
+    </div>
+  </body>
+</html>
