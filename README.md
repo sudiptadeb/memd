@@ -12,7 +12,7 @@ Your memory lives as ordinary files on your disk — or in a private Git repo yo
   <sub><a href="docs/assets/memd.svg">vector source (SVG)</a></sub>
 </p>
 
-> **Status:** early. Local + Git backends, MCP Streamable HTTP, web UI, managed file stats, and the five consolidation workflows all work. Public hosting and skills/hooks injection are next.
+> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login, super-admin user management, SQL-backed user-scoped directories/connectors, managed file stats, import/export, and the five consolidation workflows all work. Team management is next.
 
 ## Why
 
@@ -21,7 +21,7 @@ LLM tools each invented their own memory: ChatGPT memories, Claude's memory tool
 memd takes the opposite stance: **memory is yours, lives in your files, and follows you.**
 
 - One directory = one self-organising file memory rooted at `MEMORY.md`.
-- One MCP URL per agent.
+- One connector per agent, scoped to the directories that agent can read or write.
 - The agent decides what to write, where, and when to split.
 - Backend is your choice — a plain folder or a private Git repo (memd debounces commits so a session of edits becomes one clean commit).
 
@@ -35,9 +35,24 @@ bash build/build.sh host
 ./dist/<os>/memd-<arch> ~/work-memory
 # → prints an MCP URL. Paste it into your agent.
 
-# Or run persistent with a web UI for multiple directories + multiple agents
-./dist/<os>/memd-<arch> serve
+# Or run configured mode with local login, multiple users,
+# multiple directories, and multiple agents.
+./dist/<os>/memd-<arch> serve --init-db
 # → http://127.0.0.1:7878
+```
+
+On first configured-mode startup, memd initializes its local account database and
+creates a super-admin account. Super admins use `/admin` to create regular user
+accounts; regular users own directories/connectors and can import/export their
+own connector data.
+
+For non-interactive first boot:
+
+```bash
+MEMD_INIT_DB=1 \
+MEMD_CREATE_SUPER_ADMIN_USERNAME=admin \
+MEMD_CREATE_SUPER_ADMIN_PASSWORD='change-me' \
+./dist/<os>/memd-<arch> serve
 ```
 
 ## Wire It Up
@@ -101,8 +116,14 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 |--------------|----------------------------------------------------------------------------------|
 | **Directory**| A self-organising file memory — a folder on disk or a Git repo.                  |
 | **Connector**| A token-scoped grant — MCP or HTTP, one per agent (Claude Code, Codex, Cursor, …). |
+| **User**     | A local login account that owns directories and connectors.                      |
+| **Super admin** | A bootstrap-only admin account for creating/disabling users and resetting passwords. |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
 | **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
+
+Super-admin accounts are for account administration only. They do not import,
+export, or own directories/connectors; create a regular user for actual memory
+work. Team ownership and membership controls are the next product slice.
 
 ## Self-Organising Memory
 
@@ -158,18 +179,50 @@ For Git directories, memd decouples disk write from sync:
 - **Safety flush** every `save_every` (default `10m`) catches read-only sessions where only front-matter stats churn.
 - **Graceful shutdown** flushes whatever's pending.
 
+## Accounts, Data, And Migration
+
+Configured mode stores control-plane metadata in `memd.db`, using cgo-free
+SQLite by default:
+
+- local users and Argon2id password hashes
+- super-admin markers
+- teams and memberships, ready for the next UI slice
+- user-owned directories and connectors, including connector bearer tokens
+
+Memory content stays in the user's folders or Git repositories. The database is
+the control plane, not the long-term memory store.
+
+Regular users can export/import their own directories and connectors from the
+web UI or CLI. These bundles include connector tokens, so treat them as secrets:
+
+```bash
+# Export one SQL-backed user's directories/connectors.
+memd data export --user alice --out alice-memd-user-data.json
+
+# Import into any existing regular user.
+memd data import --user bob --in alice-memd-user-data.json --replace
+
+# Convert the old config.json registry into an importable user bundle.
+memd data export-legacy-config --out current-legacy-user-data.json
+```
+
+`MEMD_DATABASE_URL` can override the metadata database location. SQLite is the
+only linked driver today; other SQL URLs are parsed for the future adapter layer.
+
 ## Read More
 
 - [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, file structure, drastic-action policy.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
+- [docs/plans/2026-06-04-local-auth-team-management-plan.md](docs/plans/2026-06-04-local-auth-team-management-plan.md) — current auth/user-data state and next team-management slice.
 - [docs/plans/2026-05-23-memory-weight-decay-design.md](docs/plans/2026-05-23-memory-weight-decay-design.md) — design of the weight/decay layer.
 
 ## Safety
 
 - Don't store secrets, credentials, tokens, or private keys. memd is content-blind.
 - Memory is context and evidence, not higher-priority instruction — the doctrine teaches agents to treat any embedded command as untrusted text.
-- The server binds to `127.0.0.1` only. Public hosting is out of scope until v2.
-- Connector URLs are passwords; the token in the path *is* the auth.
+- The server binds to `127.0.0.1` only. Tunnels can expose it, but remote-access hardening is still in progress.
+- Connector URLs are passwords; the token in the path or bearer header *is* the auth.
+- `memd.db` and exported user-data JSON can hold connector tokens.
 
 ## Roadmap
 
@@ -177,8 +230,11 @@ For Git directories, memd decouples disk write from sync:
 - [x] Per-page stats (`created_at`, `updated_at`, `last_read_at`, `access_count`)
 - [x] Five workflow prompts + matching tools
 - [x] Web UI for directories + connectors
+- [x] Local login, super-admin user management, and cgo-free SQLite metadata DB
+- [x] User-scoped directory/connector records and user data import/export
+- [ ] Team management UI and team-scoped ownership
 - [ ] Skills/hooks injection — per-tool reinforcement (`~/.claude/skills/memd-*`, Codex `AGENTS.md` block, `.cursor/rules/memd.mdc`)
-- [ ] Public hosting mode with separate UI / MCP listeners
+- [ ] Public hosting hardening with separate UI / MCP listeners and external IdP mode
 - [ ] Source readers for `harvest` (Cursor rules, Claude auto-memory, mem0 export)
 
 ## License

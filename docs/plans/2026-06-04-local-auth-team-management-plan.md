@@ -24,14 +24,17 @@ state, and audit events.
   one open DB connection. This metadata workload is small; predictable locking is
   more important than maximizing concurrent writes.
 
-## Implemented First Slice
+## Current Implemented State
 
 - `server/internal/account` owns the local account/team SQL store.
-- Schema v1 includes:
+- Schema v2 includes:
   - `users`
   - `super_admins`
   - `teams`
   - `team_members`
+  - `user_directories`
+  - `user_connectors`
+  - `user_connector_directories`
   - `schema_migrations`
 - `memd serve` opens the account DB before starting the HTTP server.
 - If the DB is missing, interactive startup asks whether to initialize it.
@@ -42,23 +45,36 @@ state, and audit events.
   There is intentionally no API route for this.
 - The web UI has local login backed by an in-memory 24-hour session cookie.
 - Directory, connector, browse, logs, and admin JSON APIs require login.
-- Super admins can use the Users dashboard to create regular users,
+- Super admins use the separate `/admin` Alpine app to create regular users,
   disable/enable users, and reset passwords.
+- Super-admin accounts cannot own, import, export, create, or update
+  directories/connectors. They are only for account administration.
+- Regular users own their directories/connectors.
+- Configured mode now loads directory/connector records from SQL. Legacy
+  `config.json` is only an import source.
+- Regular users can import/export their own directory/connector bundle from the
+  UI or the CLI:
+  - `memd data export --user USER --out FILE`
+  - `memd data import --user USER --in FILE [--replace]`
+  - `memd data export-legacy-config --out FILE`
 
-## Next Slices
+## Next Slice: Teams
 
-1. Add team UI for manual team creation and membership assignment.
-2. Move directory/connector records from `config.json` into the SQL control
-   plane with team ownership.
-3. Add Git directory grants:
+1. Add team UI for manual team creation.
+2. Add team membership assignment and roles (`owner`, `admin`, `member`,
+   `viewer`).
+3. Decide how user-owned directories/connectors become team-owned or
+   team-shared.
+4. Add team-scoped directory/connector list filters and API checks.
+5. Add Git directory grants:
    - user supplies repo URL and read/write credential
    - memd clones into a controlled workdir
    - memd creates per-connector branches
-4. Add connector branch sync modes:
+6. Add connector branch sync modes:
    - raise/update PR
    - auto-merge
    - manual only
-5. Add generic OIDC mode behind `auth.mode = local | oidc`.
+7. Add generic OIDC mode behind `auth.mode = local | oidc`.
 
 ## Deferred
 

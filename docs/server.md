@@ -12,9 +12,11 @@ What works today:
 - The web UI requires local login. Super admins can open `/admin` to create users, disable/enable accounts, and reset passwords.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
-- Localhost-only binding. Remote-access hardening, team-scoped ownership, and public hosting are still in progress.
+- Localhost-only binding. Tunnels can expose it, but remote-access hardening, team-scoped ownership, and public hosting are still in progress.
 
-What's planned (not yet implemented): skills/hooks injection, public hosting mode, source readers for `harvest`. See [README.md](../README.md) Roadmap.
+What's planned (not yet implemented): team management, skills/hooks injection,
+public hosting hardening, and source readers for `harvest`. See
+[README.md](../README.md) Roadmap.
 
 ## Two Modes
 
@@ -65,7 +67,9 @@ memd data export-legacy-config --out FILE
 memd version
 ```
 
-Both modes bind to `127.0.0.1`. There is no way to expose the server publicly in v1.
+Both modes bind to `127.0.0.1`. There is no built-in public listener in v1;
+use a tunnel only when you understand that remote-access hardening is still in
+progress.
 
 Configured mode account bootstrap:
 
@@ -148,6 +152,10 @@ The web UI does not expose a "make super admin" action. Super admins open
 Sessions are in-memory and expire after 24 hours. Restarting memd signs everyone
 out, which is acceptable for the current friends/family deployment target.
 
+Super-admin accounts are account-management identities only. They cannot own,
+import, export, create, or update directories/connectors. Create a regular user
+for actual memory work.
+
 ## User Data Import And Export
 
 Directories and connectors are scoped to the signed-in user. A normal user can
@@ -169,6 +177,9 @@ memd data export-legacy-config --out current-legacy-user-data.json
 
 Legacy `config.json` is now only an import source for configured mode. The SQL
 store is the source of truth after import.
+
+Team tables are present in the metadata database, but team UI, membership
+assignment, and team-scoped directory/connector ownership are the next slice.
 
 ## Connector URL Shapes
 
