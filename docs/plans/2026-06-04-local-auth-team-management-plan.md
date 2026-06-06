@@ -60,6 +60,8 @@ state, and audit events.
 
 ## Next Slice: Teams
 
+Detailed handoff: [Teams Work Handoff](2026-06-07-teams-handoff.md).
+
 1. Add team UI for manual team creation.
 2. Add team membership assignment and roles (`owner`, `admin`, `member`,
    `viewer`).
