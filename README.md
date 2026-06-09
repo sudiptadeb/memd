@@ -12,7 +12,7 @@ Your memory lives as ordinary files on your disk — or in a private Git repo yo
   <sub><a href="docs/assets/memd.svg">vector source (SVG)</a></sub>
 </p>
 
-> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login, super-admin user management, regular-user teams, invite links, team-scoped directories/connectors, SQL-backed user data, managed file stats, import/export, responsive web UI, and the five consolidation workflows all work.
+> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login **plus IdP-agnostic OIDC single sign-on**, super-admin user management, regular-user teams, invite links, team-scoped directories/connectors, SQL-backed user data, managed file stats, import/export, responsive web UI, and the five consolidation workflows all work.
 
 ## Why
 
@@ -46,6 +46,12 @@ creates a super-admin account. Super admins use `/admin` to create regular user
 accounts; regular users own directories/connectors and can import/export their
 own connector data. Regular users can also create teams, invite other regular
 users, and mark selected directories/connectors as team-scoped.
+
+That local super admin is also your **bootstrap for SSO**: sign in locally once,
+open `/admin`, and configure any OpenID Connect identity provider (see
+[Authentication & SSO](#authentication--sso-oidc)). Once SSO is on, the login
+page leads with it and local accounts remain a backup for super-admin-created
+logins.
 
 For non-interactive first boot:
 
@@ -119,8 +125,8 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 | **Connector**| A token-scoped grant — MCP or HTTP, one per agent (Claude Code, Codex, Cursor, …). |
 | **Team**     | A shared space owned by regular users. Team admins can expose selected directories/connectors to members. |
 | **Invite link** | A copyable team join URL with optional expiry and max-use limits.             |
-| **User**     | A local login account that owns directories and connectors.                      |
-| **Super admin** | A bootstrap-only admin account for creating/disabling users and resetting passwords. |
+| **User**     | A login account (local password **or** SSO via OIDC) that owns directories and connectors. |
+| **Super admin** | A bootstrap/admin account for managing users and configuring SSO. |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
 | **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
 
@@ -208,12 +214,118 @@ For Git directories, memd decouples disk write from sync:
 - **Safety flush** every `save_every` (default `10m`) catches read-only sessions where only front-matter stats churn.
 - **Graceful shutdown** flushes whatever's pending.
 
+## Authentication & SSO (OIDC)
+
+memd authenticates the web UI with either **local accounts** (super-admin
+created, no self-signup) or **single sign-on via any OpenID Connect provider**.
+SSO is IdP-agnostic — Keycloak, Authentik, Okta, Auth0, Google, Entra ID, etc.
+There are no per-provider code paths: you supply four values and everything else
+(authorization/token/JWKS/end-session endpoints, signing algorithms) is read from
+the IdP's discovery document at `<issuer>/.well-known/openid-configuration`.
+
+Under the hood: Authorization Code + **PKCE**, `state` (CSRF) and `nonce`
+(replay) on every login, ID tokens validated **locally** against the IdP's JWKS
+(signature, `iss`, `aud`, `exp`, `nonce`), users keyed on the **`sub`** claim
+and auto-provisioned on first login, sessions in an HttpOnly / Secure /
+SameSite=Lax encrypted cookie with silent refresh and an absolute lifetime cap.
+
+### The four values
+
+| Value | What it is |
+|-------|------------|
+| `OIDC_ISSUER_URL` | Discovery base. memd fetches `<issuer>/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID` | The client/application ID registered at your IdP. |
+| `OIDC_CLIENT_SECRET` | The client secret for that application. |
+| `OIDC_REDIRECT_URI` | Must be `https://<your-memd-host>/auth/callback`, registered verbatim at the IdP. |
+
+### Where configuration lives
+
+OIDC configuration is stored in the database and **edited by a super admin in
+the web UI** (`/admin` → *Single sign-on*). Save validates the configuration by
+performing discovery before it takes effect, and applies live — no restart.
+
+For automated deployments you can **seed** the configuration from environment
+variables on first boot (see [`.env.example`](.env.example)); after that, the
+database is the source of truth. Secrets belong in your platform's secret store,
+never committed. Also set `MEMD_SESSION_SECRET` in production so sessions survive
+restarts.
+
+### Configure your IdP
+
+**1. Register memd as an application** at your IdP and set the redirect URI to:
+
+```
+https://<your-memd-host>/auth/callback
+```
+
+**2. Configure memd** in `/admin` → *Single sign-on*: enable SSO, paste the
+issuer URL, client ID, client secret, and the same redirect URI, then save.
+
+#### Keycloak (concrete example)
+
+1. In your realm, **Clients → Create client**: Client type *OpenID Connect*,
+   Client ID `memd`.
+2. Enable **Client authentication** (makes it confidential) and the
+   **Standard flow**.
+3. Set **Valid redirect URIs** to `https://memd.example.com/auth/callback`.
+4. Copy the secret from **Credentials**.
+5. (For admin-by-group) add a **Group Membership** mapper named `groups` to the
+   client's dedicated scope so a `groups` claim appears in the ID token, and put
+   your admins in a group such as `memd-admins`.
+6. In memd's *Single sign-on* form:
+   - Issuer URL: `https://keycloak.example.com/realms/<realm>`
+   - Client ID: `memd`
+   - Client secret: *(from step 4)*
+   - Redirect URI: `https://memd.example.com/auth/callback`
+   - Groups claim: `groups`, Admin group: `memd-admins`
+
+#### Generic OIDC provider
+
+Any compliant provider works the same way:
+
+- Issuer URL: the provider's base issuer (e.g. `https://accounts.google.com`,
+  `https://your-tenant.auth0.com`, `https://<tenant>.okta.com`).
+- Client ID / secret: from the application you registered.
+- Redirect URI: `https://memd.example.com/auth/callback`.
+- **Admin mapping:** if your IdP emits group/role claims, set *Groups claim* and
+  *Admin group*. If it does **not** (e.g. plain Google), leave those blank and
+  list your administrators under **Admin emails** (or **Admin subjects**).
+- **Refresh tokens:** memd requests offline access automatically. Some IdPs only
+  issue a refresh token when `offline_access` is in the scopes — add it to
+  *Scopes* if needed.
+
+### Granting admin
+
+Admin rights are derived from the IdP, kept separate from authentication, via
+either:
+
+- **A group claim** — set *Admin group* to a group name; members of that group
+  (in the configured *Groups claim*) become admins, or
+- **An allowlist** — *Admin emails* or *Admin subjects*, for IdPs that don't
+  emit groups.
+
+OIDC logins only ever **grant** admin (they never silently demote), so an admin
+who bootstrapped the deployment isn't locked out by an IdP group change. Disable
+accounts from the admin UI when you need to revoke access.
+
+### Migrating existing accounts
+
+Pre-SSO accounts were created with a username and password. On a user's **first
+OIDC login**, memd links the existing local account when the token's
+`preferred_username` or `email` matches that account's username — it attaches the
+`sub` and stores the email, and the account keeps its roles (including super
+admin). Every login after that resolves by `sub`. So an existing admin simply
+signs in through SSO with a matching username/email and retains admin. No manual
+step is required as long as the usernames line up; otherwise grant admin via the
+allowlist.
+
 ## Accounts, Data, And Migration
 
 Configured mode stores control-plane metadata in `memd.db`, using cgo-free
 SQLite by default:
 
 - local users and Argon2id password hashes
+- OIDC identities (`sub`, email) for SSO users, plus the stored OIDC config
 - super-admin markers
 - teams, memberships, invite token hashes, and invite use records
 - user-owned directories and connectors, including connector bearer tokens and
@@ -266,8 +378,9 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 - [x] User-scoped directory/connector records and user data import/export
 - [x] Team management, invite links, and team-scoped directories/connectors
 - [x] Responsive app shell with sidebar/drawer navigation and dedicated Activity/Info views
+- [x] IdP-agnostic OIDC single sign-on (Authorization Code + PKCE, local JWKS validation)
 - [ ] Skills/hooks injection — per-tool reinforcement (`~/.claude/skills/memd-*`, Codex `AGENTS.md` block, `.cursor/rules/memd.mdc`)
-- [ ] Public hosting hardening with separate UI / MCP listeners and external IdP mode
+- [ ] Public hosting hardening with separate UI / MCP listeners
 - [ ] Source readers for `harvest` (Cursor rules, Claude auto-memory, mem0 export)
 
 ## License

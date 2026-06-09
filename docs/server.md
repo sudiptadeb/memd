@@ -12,7 +12,9 @@ What works today:
   screens use a hamburger drawer and show Activity as a normal page.
 - Web UI for managing directories and MCP/HTTP connectors. Each connector gets a bearer token credential; token-in-URL remains supported for local/legacy use.
 - Configured mode bootstraps a local account/team metadata database. The default database is cgo-free SQLite; `MEMD_DATABASE_URL` can point at another SQL URL once additional drivers are linked.
-- The web UI requires local login. Super admins can open `/admin` to create users, disable/enable accounts, and reset passwords.
+- The web UI requires login: local accounts (super-admin created) or
+  IdP-agnostic OIDC single sign-on. Super admins open `/admin` to create users,
+  disable/enable accounts, reset passwords, and configure SSO.
 - Regular users can create teams, invite other regular users with copyable
   invite links, and mark selected directories/connectors as team-scoped.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
@@ -150,28 +152,46 @@ surprises in this metadata workload.
 Other SQL connection URLs are parsed but not opened yet; future builds can link
 additional drivers behind the account/team store boundary.
 
-## Local Login And Users
+## Login And Users
 
 Configured mode serves the UI shell publicly, then asks `/api/session` whether a
-local login session exists. Directory, connector, browse, logs, and admin JSON
-APIs require that session. MCP and plain HTTP connector endpoints still use
-connector bearer tokens; they do not use browser sessions.
+login session exists and whether SSO is enabled. Directory, connector, browse,
+logs, and admin JSON APIs require that session. MCP and plain HTTP connector
+endpoints still use connector bearer tokens; they do not use browser sessions.
 
-Super admins are created only by the server startup process:
+memd supports two sign-in methods:
+
+- **Local accounts** — username/password, created by a super admin. There is no
+  self-signup. This is the default when no IdP is configured, and a backup when
+  SSO is on.
+- **Single sign-on (OIDC)** — any OpenID Connect provider. Configured by a super
+  admin in `/admin` → *Single sign-on*; see the
+  [Authentication & SSO section in the README](../README.md#authentication--sso-oidc).
+  Users are keyed on the `sub` claim and auto-provisioned on first login.
+
+The first super admin is created by the server startup process (this is also the
+SSO bootstrap — sign in locally once, then configure your IdP):
 
 ```bash
 memd serve --create-super-admin alice
 ```
 
-The web UI does not expose a "make super admin" action. Super admins open
-`/admin`, a separate Alpine app from the memory UI, to:
+The web UI does not expose a "make super admin" action for local accounts.
+Super admins open `/admin`, a separate Alpine app from the memory UI, to:
 
-- create regular local users
-- disable or enable accounts
-- reset passwords
+- create regular local users, disable/enable accounts, reset passwords
+- configure OIDC single sign-on (issuer, client credentials, admin mapping)
 
-Sessions are in-memory and expire after 24 hours. Restarting memd signs everyone
-out, which is acceptable for the current friends/family deployment target.
+For SSO, admin rights come from a configurable group claim (`OIDC_ADMIN_GROUP`)
+or an explicit allowlist (`ADMIN_EMAILS` / `ADMIN_SUBJECTS`).
+
+Sessions live in an HttpOnly, Secure, SameSite=Lax **encrypted cookie** (no
+server-side session store); each request re-validates the cookie and reloads the
+user so disable/role changes take effect immediately. Set `MEMD_SESSION_SECRET`
+so sessions survive restarts and stay valid across replicas; if it is unset,
+memd uses an ephemeral key and restarting signs everyone out. The absolute
+session lifetime defaults to 24h (`MEMD_SESSION_MAX_AGE`). OIDC sessions refresh
+the ID token silently while under that cap.
 
 Super-admin accounts are account-management identities only. They cannot own,
 import, export, create, or update directories/connectors, create teams, or
