@@ -51,6 +51,8 @@ type User struct {
 	ID                string
 	Username          string
 	DisplayName       string
+	Email             string
+	Subject           string // OIDC `sub`; empty for local-only accounts
 	Disabled          bool
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -58,6 +60,14 @@ type User struct {
 	LastLoginAt       *time.Time
 	SuperAdmin        bool
 }
+
+// userColumns is the canonical projection used to populate a User via scanUser.
+// Keep the ordering in sync with scanUser.
+const userColumns = `u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.subject,
+	       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END`
+
+const userJoin = `FROM users u
+	  LEFT JOIN super_admins sa ON sa.user_id = u.id`
 
 type Team struct {
 	ID        string
@@ -211,10 +221,58 @@ func (s *Store) Init(ctx context.Context) error {
 			return err
 		}
 	}
+	// Bring pre-OIDC databases (schema v2) up to date: add the email/subject
+	// columns and the partial unique index used to key users on their OIDC sub.
+	if err := ensureUserColumns(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject ON users(subject) WHERE subject IS NOT NULL`); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)`, latestSchemaVersion, nowString()); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ensureUserColumns adds OIDC columns to the users table when upgrading an
+// existing database. SQLite's ALTER TABLE ADD COLUMN errors if the column
+// already exists, so we probe the current columns first.
+func ensureUserColumns(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(users)`)
+	if err != nil {
+		return err
+	}
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !cols["email"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !cols["subject"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN subject TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) HasSuperAdmin(ctx context.Context) (bool, error) {
@@ -372,7 +430,7 @@ func (s *Store) AuthenticateLocal(ctx context.Context, username, password string
 		return User{}, ErrNotInitialized
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.password_hash,
+		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.subject, u.password_hash,
 		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
 		  FROM users u
 		  LEFT JOIN super_admins sa ON sa.user_id = u.id
@@ -465,10 +523,8 @@ func (s *Store) AddTeamMember(ctx context.Context, teamID, userID, role, actorUs
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at,
-		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
-		  FROM users u
-		  LEFT JOIN super_admins sa ON sa.user_id = u.id
+		SELECT `+userColumns+`
+		  `+userJoin+`
 		 WHERE u.id = ?`, id)
 	user, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -479,10 +535,8 @@ func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at,
-		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
-		  FROM users u
-		  LEFT JOIN super_admins sa ON sa.user_id = u.id
+		SELECT `+userColumns+`
+		  `+userJoin+`
 		 ORDER BY lower(u.username)`)
 	if err != nil {
 		return nil, err
@@ -618,8 +672,8 @@ func scanUser(row userScanner) (User, error) {
 	var u User
 	var disabled, superAdmin int
 	var created, updated, changed string
-	var last sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &superAdmin); err != nil {
+	var last, subject sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &subject, &superAdmin); err != nil {
 		return User{}, err
 	}
 	u.Disabled = disabled != 0
@@ -627,6 +681,7 @@ func scanUser(row userScanner) (User, error) {
 	u.UpdatedAt = mustParseTime(updated)
 	u.PasswordChangedAt = mustParseTime(changed)
 	u.LastLoginAt = parseOptionalTime(last)
+	u.Subject = subject.String
 	u.SuperAdmin = superAdmin != 0
 	return u, nil
 }
@@ -635,8 +690,8 @@ func scanUserWithHash(row userScanner) (User, string, error) {
 	var u User
 	var disabled, superAdmin int
 	var created, updated, changed, hash string
-	var last sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &hash, &superAdmin); err != nil {
+	var last, subject sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &subject, &hash, &superAdmin); err != nil {
 		return User{}, "", err
 	}
 	u.Disabled = disabled != 0
@@ -644,6 +699,7 @@ func scanUserWithHash(row userScanner) (User, string, error) {
 	u.UpdatedAt = mustParseTime(updated)
 	u.PasswordChangedAt = mustParseTime(changed)
 	u.LastLoginAt = parseOptionalTime(last)
+	u.Subject = subject.String
 	u.SuperAdmin = superAdmin != 0
 	return u, hash, nil
 }
