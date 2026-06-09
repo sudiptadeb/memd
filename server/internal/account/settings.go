@@ -14,17 +14,13 @@ const settingKeyOIDC = "oidc"
 // running provider (env vars only seed it on first boot). The client secret is
 // stored here alongside the other control-plane secrets in memd.db.
 type OIDCSettings struct {
-	Enabled               bool     `json:"enabled"`
-	IssuerURL             string   `json:"issuer_url"`
-	ClientID              string   `json:"client_id"`
-	ClientSecret          string   `json:"client_secret"`
-	RedirectURI           string   `json:"redirect_uri"`
-	Scopes                string   `json:"scopes"`
-	GroupsClaim           string   `json:"groups_claim"`
-	AdminGroup            string   `json:"admin_group"`
-	AdminSubjects         []string `json:"admin_subjects"`
-	AdminEmails           []string `json:"admin_emails"`
-	PostLogoutRedirectURI string   `json:"post_logout_redirect_uri"`
+	Enabled               bool   `json:"enabled"`
+	IssuerURL             string `json:"issuer_url"`
+	ClientID              string `json:"client_id"`
+	ClientSecret          string `json:"client_secret"`
+	RedirectURI           string `json:"redirect_uri"`
+	Scopes                string `json:"scopes"`
+	PostLogoutRedirectURI string `json:"post_logout_redirect_uri"`
 }
 
 // GetOIDCSettings returns the stored OIDC settings. The bool is false when no

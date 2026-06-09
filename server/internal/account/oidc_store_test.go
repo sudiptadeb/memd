@@ -25,6 +25,7 @@ func TestUpsertOIDCUserProvisionsAndIsIdempotent(t *testing.T) {
 	store := openOIDCTestStore(t)
 
 	first, err := store.UpsertOIDCUser(ctx, OIDCIdentity{
+		Issuer:            "https://idp.example.com",
 		Subject:           "idp|abc",
 		Email:             "ada@example.com",
 		Name:              "Ada Lovelace",
@@ -33,7 +34,7 @@ func TestUpsertOIDCUserProvisionsAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	if first.Subject != "idp|abc" || first.Email != "ada@example.com" || first.DisplayName != "Ada Lovelace" {
+	if first.Issuer != "https://idp.example.com" || first.Subject != "idp|abc" || first.Email != "ada@example.com" || first.DisplayName != "Ada Lovelace" {
 		t.Fatalf("unexpected provisioned user: %+v", first)
 	}
 	if first.SuperAdmin {
@@ -41,7 +42,7 @@ func TestUpsertOIDCUserProvisionsAndIsIdempotent(t *testing.T) {
 	}
 
 	// Second login with the same subject must reuse the same record.
-	second, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Subject: "idp|abc", Email: "ada@new.example.com"})
+	second, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Issuer: "https://idp.example.com", Subject: "idp|abc", Email: "ada@new.example.com"})
 	if err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestUpsertOIDCUserProvisionsAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestUpsertOIDCUserLinksExistingLocalAccountAndKeepsAdmin(t *testing.T) {
+func TestUpsertOIDCUserDoesNotLinkExistingLocalAccount(t *testing.T) {
 	ctx := context.Background()
 	store := openOIDCTestStore(t)
 
@@ -70,44 +71,51 @@ func TestUpsertOIDCUserLinksExistingLocalAccountAndKeepsAdmin(t *testing.T) {
 		t.Fatalf("CreateSuperAdmin: %v", err)
 	}
 
-	// First OIDC login whose preferred_username matches the local username.
-	linked, err := store.UpsertOIDCUser(ctx, OIDCIdentity{
+	cloud, err := store.UpsertOIDCUser(ctx, OIDCIdentity{
+		Issuer:            "https://idp.example.com",
 		Subject:           "idp|boss-sub",
 		Email:             "boss@example.com",
 		PreferredUsername: "boss",
 	})
 	if err != nil {
-		t.Fatalf("link upsert: %v", err)
+		t.Fatalf("cloud upsert: %v", err)
 	}
-	if linked.ID != admin.ID {
-		t.Fatalf("expected to link existing account %s, got %s", admin.ID, linked.ID)
+	if cloud.ID == admin.ID {
+		t.Fatalf("OIDC login linked local account %s", admin.ID)
 	}
-	if linked.Subject != "idp|boss-sub" {
-		t.Fatalf("subject not attached: %q", linked.Subject)
+	if cloud.Username != "boss-2" {
+		t.Fatalf("expected unique cloud username boss-2, got %q", cloud.Username)
 	}
-	if !linked.SuperAdmin {
-		t.Fatalf("linked account lost its super-admin rights")
+	if cloud.SuperAdmin {
+		t.Fatalf("OIDC account unexpectedly became super admin")
 	}
 
-	// Subsequent logins now resolve purely by subject.
-	again, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Subject: "idp|boss-sub", PreferredUsername: "boss"})
+	// Subsequent logins resolve by issuer+subject.
+	again, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Issuer: "https://idp.example.com", Subject: "idp|boss-sub", PreferredUsername: "boss"})
 	if err != nil {
 		t.Fatalf("re-login: %v", err)
 	}
-	if again.ID != admin.ID {
-		t.Fatalf("subject re-login resolved to a different user")
+	if again.ID != cloud.ID {
+		t.Fatalf("issuer+subject re-login resolved to a different user")
 	}
 }
 
-func TestUpsertOIDCUserGrantsAdminFromClaim(t *testing.T) {
+func TestUpsertOIDCUserKeysByIssuerAndSubject(t *testing.T) {
 	ctx := context.Background()
 	store := openOIDCTestStore(t)
 
-	user, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Subject: "idp|adm", Email: "ops@example.com", Admin: true})
+	first, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Issuer: "https://idp-a.example.com", Subject: "same-sub", PreferredUsername: "sam"})
 	if err != nil {
-		t.Fatalf("upsert: %v", err)
+		t.Fatalf("first upsert: %v", err)
 	}
-	if !user.SuperAdmin {
-		t.Fatalf("admin claim did not grant super admin")
+	second, err := store.UpsertOIDCUser(ctx, OIDCIdentity{Issuer: "https://idp-b.example.com", Subject: "same-sub", PreferredUsername: "sam"})
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("same subject from a different issuer reused user %s", first.ID)
+	}
+	if first.SuperAdmin || second.SuperAdmin {
+		t.Fatalf("OIDC provisioning should not grant super admin: first=%v second=%v", first.SuperAdmin, second.SuperAdmin)
 	}
 }

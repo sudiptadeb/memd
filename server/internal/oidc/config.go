@@ -12,23 +12,15 @@ import (
 )
 
 // Environment variables. The first four are the only required values; the rest
-// tune authorization and logout.
+// tune scopes and logout.
 const (
 	EnvIssuerURL             = "OIDC_ISSUER_URL"    // discovery base; <issuer>/.well-known/openid-configuration is fetched
 	EnvClientID              = "OIDC_CLIENT_ID"     //
 	EnvClientSecret          = "OIDC_CLIENT_SECRET" //
 	EnvRedirectURI           = "OIDC_REDIRECT_URI"  // must be registered at the IdP
 	EnvScopes                = "OIDC_SCOPES"        // optional, space-separated; default "openid profile email"
-	EnvGroupsClaim           = "OIDC_GROUPS_CLAIM"  // optional; ID-token claim holding group/role names (default "groups")
-	EnvAdminGroup            = "OIDC_ADMIN_GROUP"   // optional; membership in this group grants admin
-	EnvAdminSubjects         = "ADMIN_SUBJECTS"     // optional, comma-separated allowlist of `sub` values
-	EnvAdminEmails           = "ADMIN_EMAILS"       // optional, comma-separated allowlist of emails
 	EnvPostLogoutRedirectURI = "OIDC_POST_LOGOUT_REDIRECT_URI"
 )
-
-// DefaultGroupsClaim is the ID-token claim consulted for group/role membership
-// when OIDC_GROUPS_CLAIM is not set.
-const DefaultGroupsClaim = "groups"
 
 // Config is the resolved OIDC configuration for one deployment (single IdP).
 type Config struct {
@@ -37,10 +29,6 @@ type Config struct {
 	ClientSecret          string
 	RedirectURI           string
 	Scopes                []string
-	GroupsClaim           string
-	AdminGroup            string
-	AdminSubjects         []string
-	AdminEmails           []string
 	PostLogoutRedirectURI string
 }
 
@@ -76,21 +64,12 @@ func ConfigFromEnv() (Config, bool, error) {
 		return Config{}, false, fmt.Errorf("OIDC is partially configured; missing %s", strings.Join(missing, ", "))
 	}
 
-	groupsClaim := strings.TrimSpace(os.Getenv(EnvGroupsClaim))
-	if groupsClaim == "" {
-		groupsClaim = DefaultGroupsClaim
-	}
-
 	cfg := Config{
 		IssuerURL:             strings.TrimRight(issuer, "/"),
 		ClientID:              clientID,
 		ClientSecret:          clientSecret,
 		RedirectURI:           redirect,
 		Scopes:                ParseScopes(os.Getenv(EnvScopes)),
-		GroupsClaim:           groupsClaim,
-		AdminGroup:            strings.TrimSpace(os.Getenv(EnvAdminGroup)),
-		AdminSubjects:         splitList(os.Getenv(EnvAdminSubjects)),
-		AdminEmails:           splitList(os.Getenv(EnvAdminEmails)),
 		PostLogoutRedirectURI: strings.TrimSpace(os.Getenv(EnvPostLogoutRedirectURI)),
 	}
 	return cfg, true, nil
@@ -114,14 +93,4 @@ func ParseScopes(raw string) []string {
 		fields = append([]string{"openid"}, fields...)
 	}
 	return fields
-}
-
-func splitList(raw string) []string {
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }

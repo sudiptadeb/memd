@@ -79,15 +79,14 @@ func newMockIdP(t *testing.T) *mockIdP {
 func (idp *mockIdP) mintForCode(code string) string {
 	now := time.Now()
 	claims := map[string]any{
-		"iss":    idp.server.URL,
-		"sub":    "idp|user-1",
-		"aud":    "client",
-		"iat":    now.Unix(),
-		"exp":    now.Add(time.Hour).Unix(),
-		"nonce":  idp.nonce,
-		"email":  "ada@example.com",
-		"name":   "Ada Lovelace",
-		"groups": []string{"users", "admins"},
+		"iss":   idp.server.URL,
+		"sub":   "idp|user-1",
+		"aud":   "client",
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Hour).Unix(),
+		"nonce": idp.nonce,
+		"email": "ada@example.com",
+		"name":  "Ada Lovelace",
 	}
 	switch code {
 	case "expired":
@@ -137,8 +136,6 @@ func (idp *mockIdP) provider(t *testing.T) *Provider {
 		ClientSecret: "secret",
 		RedirectURI:  "https://app.example.com/auth/callback",
 		Scopes:       []string{"openid", "profile", "email"},
-		GroupsClaim:  "groups",
-		AdminGroup:   "admins",
 	})
 	if err != nil {
 		t.Fatalf("New provider (discovery): %v", err)
@@ -169,14 +166,11 @@ func TestExchangeValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	if tokens.Identity.Subject != "idp|user-1" {
-		t.Fatalf("subject = %q", tokens.Identity.Subject)
+	if tokens.Identity.Issuer != idp.server.URL || tokens.Identity.Subject != "idp|user-1" {
+		t.Fatalf("identity = iss=%q sub=%q", tokens.Identity.Issuer, tokens.Identity.Subject)
 	}
 	if tokens.Identity.Email != "ada@example.com" || tokens.Identity.Name != "Ada Lovelace" {
 		t.Fatalf("identity display fields wrong: %+v", tokens.Identity)
-	}
-	if !tokens.Identity.Admin {
-		t.Fatalf("expected admin via group claim")
 	}
 	if tokens.RefreshToken != "refresh-token" {
 		t.Fatalf("refresh token = %q", tokens.RefreshToken)
