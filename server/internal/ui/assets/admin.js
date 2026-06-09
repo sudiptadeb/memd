@@ -43,13 +43,6 @@
     return { username: "", display_name: "", password: "", err: "", submitting: false };
   }
 
-  function splitCSV(value) {
-    return String(value || "")
-      .split(",")
-      .map(function (s) { return s.trim(); })
-      .filter(function (s) { return s.length > 0; });
-  }
-
   function defaultOIDCForm() {
     return {
       enabled: false,
@@ -59,10 +52,6 @@
       has_client_secret: false,
       redirect_uri: "",
       scopes: "",
-      groups_claim: "",
-      admin_group: "",
-      admin_subjects: "",
-      admin_emails: "",
       post_logout_redirect_uri: "",
       active: false,
       err: "",
@@ -193,10 +182,6 @@
           has_client_secret: Boolean(cfg.has_client_secret),
           redirect_uri: cfg.redirect_uri || "",
           scopes: cfg.scopes || "",
-          groups_claim: cfg.groups_claim || "",
-          admin_group: cfg.admin_group || "",
-          admin_subjects: (cfg.admin_subjects || []).join(", "),
-          admin_emails: (cfg.admin_emails || []).join(", "),
           post_logout_redirect_uri: cfg.post_logout_redirect_uri || "",
           active: Boolean(cfg.active)
         });
@@ -212,10 +197,6 @@
           client_id: this.oidcForm.client_id,
           redirect_uri: this.oidcForm.redirect_uri,
           scopes: this.oidcForm.scopes,
-          groups_claim: this.oidcForm.groups_claim,
-          admin_group: this.oidcForm.admin_group,
-          admin_subjects: splitCSV(this.oidcForm.admin_subjects),
-          admin_emails: splitCSV(this.oidcForm.admin_emails),
           post_logout_redirect_uri: this.oidcForm.post_logout_redirect_uri
         };
         // Only send the secret when the admin typed a new one; otherwise keep

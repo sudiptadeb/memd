@@ -23,6 +23,7 @@ const (
 // disable/role changes take effect immediately.
 type sessionData struct {
 	UserID         string    `json:"uid"`
+	Issuer         string    `json:"iss,omitempty"` // OIDC `iss`; empty for local logins
 	Subject        string    `json:"sub,omitempty"` // OIDC `sub`; empty for local logins
 	Username       string    `json:"usr"`
 	SuperAdmin     bool      `json:"adm"`
