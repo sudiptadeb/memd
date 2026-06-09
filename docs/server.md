@@ -159,8 +159,9 @@ Super admins open `/admin`, a separate Alpine app from the memory UI, to:
 - create regular local users, disable/enable accounts, reset passwords
 - configure OIDC single sign-on (issuer, client credentials, admin mapping)
 
-For SSO, admin rights come from a configurable group claim (`OIDC_ADMIN_GROUP`)
-or an explicit allowlist (`ADMIN_EMAILS` / `ADMIN_SUBJECTS`).
+For SSO, OIDC only authenticates cloud accounts. Super-admin access remains a
+local-account flow, and team ownership/admin roles are maintained inside memd
+rather than derived from IdP claims.
 
 Sessions live in an HttpOnly, Secure, SameSite=Lax **encrypted cookie** (no
 server-side session store); each request re-validates the cookie and reloads the

@@ -116,26 +116,8 @@
               <div class="field-hint">Space-separated. Add <code>offline_access</code> if your IdP needs it for refresh tokens.</div>
             </div>
             <div class="field">
-              <label class="field-label">Groups claim</label>
-              <input class="input" x-model="oidcForm.groups_claim" placeholder="groups" />
-            </div>
-            <div class="field">
-              <label class="field-label">Admin group</label>
-              <input class="input" x-model="oidcForm.admin_group" placeholder="memd-admins" />
-              <div class="field-hint">Members of this group in the groups claim get admin.</div>
-            </div>
-            <div class="field">
               <label class="field-label">Post-logout redirect URI</label>
               <input class="input" x-model="oidcForm.post_logout_redirect_uri" placeholder="https://memd.example.com/" />
-            </div>
-            <div class="field oidc-wide">
-              <label class="field-label">Admin emails</label>
-              <input class="input" x-model="oidcForm.admin_emails" placeholder="you@example.com, ops@example.com" />
-              <div class="field-hint">Comma-separated allowlist for IdPs that don't emit groups.</div>
-            </div>
-            <div class="field oidc-wide">
-              <label class="field-label">Admin subjects</label>
-              <input class="input" x-model="oidcForm.admin_subjects" placeholder="sub-claim values, comma-separated" />
             </div>
           </div>
 

@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 3
+const latestSchemaVersion = 4
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -19,6 +19,7 @@ var schemaStatements = []string{
 		password_changed_at TEXT NOT NULL,
 		last_login_at TEXT,
 		email TEXT NOT NULL DEFAULT '',
+		issuer TEXT NOT NULL DEFAULT '',
 		subject TEXT
 	)`,
 	`CREATE TABLE IF NOT EXISTS app_settings (

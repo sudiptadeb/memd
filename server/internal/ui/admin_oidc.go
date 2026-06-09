@@ -15,18 +15,14 @@ import (
 // oidcConfigView is the admin-facing representation of the OIDC settings. The
 // client secret is never sent back to the browser; only its presence is.
 type oidcConfigView struct {
-	Enabled               bool     `json:"enabled"`
-	IssuerURL             string   `json:"issuer_url"`
-	ClientID              string   `json:"client_id"`
-	HasClientSecret       bool     `json:"has_client_secret"`
-	RedirectURI           string   `json:"redirect_uri"`
-	Scopes                string   `json:"scopes"`
-	GroupsClaim           string   `json:"groups_claim"`
-	AdminGroup            string   `json:"admin_group"`
-	AdminSubjects         []string `json:"admin_subjects"`
-	AdminEmails           []string `json:"admin_emails"`
-	PostLogoutRedirectURI string   `json:"post_logout_redirect_uri"`
-	Active                bool     `json:"active"` // provider currently loaded
+	Enabled               bool   `json:"enabled"`
+	IssuerURL             string `json:"issuer_url"`
+	ClientID              string `json:"client_id"`
+	HasClientSecret       bool   `json:"has_client_secret"`
+	RedirectURI           string `json:"redirect_uri"`
+	Scopes                string `json:"scopes"`
+	PostLogoutRedirectURI string `json:"post_logout_redirect_uri"`
+	Active                bool   `json:"active"` // provider currently loaded
 }
 
 // adminOIDCAPI lets a super admin read and update the IdP configuration, which
@@ -49,17 +45,13 @@ func (h *Handler) adminOIDCAPI(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Enabled               bool     `json:"enabled"`
-		IssuerURL             string   `json:"issuer_url"`
-		ClientID              string   `json:"client_id"`
-		ClientSecret          *string  `json:"client_secret"` // pointer: nil/absent keeps the stored secret
-		RedirectURI           string   `json:"redirect_uri"`
-		Scopes                string   `json:"scopes"`
-		GroupsClaim           string   `json:"groups_claim"`
-		AdminGroup            string   `json:"admin_group"`
-		AdminSubjects         []string `json:"admin_subjects"`
-		AdminEmails           []string `json:"admin_emails"`
-		PostLogoutRedirectURI string   `json:"post_logout_redirect_uri"`
+		Enabled               bool    `json:"enabled"`
+		IssuerURL             string  `json:"issuer_url"`
+		ClientID              string  `json:"client_id"`
+		ClientSecret          *string `json:"client_secret"` // pointer: nil/absent keeps the stored secret
+		RedirectURI           string  `json:"redirect_uri"`
+		Scopes                string  `json:"scopes"`
+		PostLogoutRedirectURI string  `json:"post_logout_redirect_uri"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
@@ -79,10 +71,6 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 		ClientSecret:          current.ClientSecret,
 		RedirectURI:           strings.TrimSpace(body.RedirectURI),
 		Scopes:                strings.TrimSpace(body.Scopes),
-		GroupsClaim:           strings.TrimSpace(body.GroupsClaim),
-		AdminGroup:            strings.TrimSpace(body.AdminGroup),
-		AdminSubjects:         cleanList(body.AdminSubjects),
-		AdminEmails:           cleanList(body.AdminEmails),
 		PostLogoutRedirectURI: strings.TrimSpace(body.PostLogoutRedirectURI),
 	}
 	if body.ClientSecret != nil {
@@ -121,20 +109,12 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 
 // configFromSettings maps the persisted settings to a normalized oidc.Config.
 func configFromSettings(s account.OIDCSettings) oidc.Config {
-	groupsClaim := strings.TrimSpace(s.GroupsClaim)
-	if groupsClaim == "" {
-		groupsClaim = oidc.DefaultGroupsClaim
-	}
 	return oidc.Config{
 		IssuerURL:             strings.TrimRight(strings.TrimSpace(s.IssuerURL), "/"),
 		ClientID:              strings.TrimSpace(s.ClientID),
 		ClientSecret:          s.ClientSecret,
 		RedirectURI:           strings.TrimSpace(s.RedirectURI),
 		Scopes:                oidc.ParseScopes(s.Scopes),
-		GroupsClaim:           groupsClaim,
-		AdminGroup:            strings.TrimSpace(s.AdminGroup),
-		AdminSubjects:         s.AdminSubjects,
-		AdminEmails:           s.AdminEmails,
 		PostLogoutRedirectURI: strings.TrimSpace(s.PostLogoutRedirectURI),
 	}
 }
@@ -147,23 +127,9 @@ func viewFromSettings(s account.OIDCSettings, active bool) oidcConfigView {
 		HasClientSecret:       s.ClientSecret != "",
 		RedirectURI:           s.RedirectURI,
 		Scopes:                s.Scopes,
-		GroupsClaim:           s.GroupsClaim,
-		AdminGroup:            s.AdminGroup,
-		AdminSubjects:         s.AdminSubjects,
-		AdminEmails:           s.AdminEmails,
 		PostLogoutRedirectURI: s.PostLogoutRedirectURI,
 		Active:                active,
 	}
-}
-
-func cleanList(in []string) []string {
-	var out []string
-	for _, item := range in {
-		if v := strings.TrimSpace(item); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // LoadOIDCFromStore initializes the manager from persisted settings at startup,
@@ -212,10 +178,6 @@ func seedOIDCFromEnv() (account.OIDCSettings, bool) {
 		ClientSecret:          cfg.ClientSecret,
 		RedirectURI:           cfg.RedirectURI,
 		Scopes:                strings.Join(cfg.Scopes, " "),
-		GroupsClaim:           cfg.GroupsClaim,
-		AdminGroup:            cfg.AdminGroup,
-		AdminSubjects:         cfg.AdminSubjects,
-		AdminEmails:           cfg.AdminEmails,
 		PostLogoutRedirectURI: cfg.PostLogoutRedirectURI,
 	}, true
 }

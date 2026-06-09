@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base32"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -52,6 +53,7 @@ type User struct {
 	Username          string
 	DisplayName       string
 	Email             string
+	Issuer            string // OIDC `iss`; empty for local-only accounts
 	Subject           string // OIDC `sub`; empty for local-only accounts
 	Disabled          bool
 	CreatedAt         time.Time
@@ -63,7 +65,7 @@ type User struct {
 
 // userColumns is the canonical projection used to populate a User via scanUser.
 // Keep the ordering in sync with scanUser.
-const userColumns = `u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.subject,
+const userColumns = `u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject,
 	       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END`
 
 const userJoin = `FROM users u
@@ -221,12 +223,17 @@ func (s *Store) Init(ctx context.Context) error {
 			return err
 		}
 	}
-	// Bring pre-OIDC databases (schema v2) up to date: add the email/subject
-	// columns and the partial unique index used to key users on their OIDC sub.
+	// Bring older databases up to date: OIDC users are keyed by issuer+subject.
 	if err := ensureUserColumns(ctx, tx); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject ON users(subject) WHERE subject IS NOT NULL`); err != nil {
+	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_users_subject`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users(issuer, subject) WHERE subject IS NOT NULL AND subject != ''`); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)`, latestSchemaVersion, nowString()); err != nil {
@@ -267,12 +274,38 @@ func ensureUserColumns(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
+	if !cols["issuer"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN issuer TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if !cols["subject"] {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN subject TEXT`); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func backfillUserIssuerFromSettings(ctx context.Context, tx *sql.Tx) error {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key = ?`, settingKeyOIDC).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var settings OIDCSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return err
+	}
+	issuer := strings.TrimRight(strings.TrimSpace(settings.IssuerURL), "/")
+	if issuer == "" {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET issuer = ? WHERE issuer = '' AND subject IS NOT NULL AND subject != ''`, issuer)
+	return err
 }
 
 func (s *Store) HasSuperAdmin(ctx context.Context) (bool, error) {
@@ -430,7 +463,7 @@ func (s *Store) AuthenticateLocal(ctx context.Context, username, password string
 		return User{}, ErrNotInitialized
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.subject, u.password_hash,
+		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject, u.password_hash,
 		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
 		  FROM users u
 		  LEFT JOIN super_admins sa ON sa.user_id = u.id
@@ -673,7 +706,7 @@ func scanUser(row userScanner) (User, error) {
 	var disabled, superAdmin int
 	var created, updated, changed string
 	var last, subject sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &subject, &superAdmin); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &superAdmin); err != nil {
 		return User{}, err
 	}
 	u.Disabled = disabled != 0
@@ -691,7 +724,7 @@ func scanUserWithHash(row userScanner) (User, string, error) {
 	var disabled, superAdmin int
 	var created, updated, changed, hash string
 	var last, subject sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &subject, &hash, &superAdmin); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &hash, &superAdmin); err != nil {
 		return User{}, "", err
 	}
 	u.Disabled = disabled != 0
