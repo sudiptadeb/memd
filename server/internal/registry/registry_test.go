@@ -214,6 +214,64 @@ func TestImportUserDataKeepsBrokenDirectoryVisible(t *testing.T) {
 	}
 }
 
+func TestTeamScopedDirectoriesVisibleToMembers(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "member", Password: "member-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, member.ID, account.RoleMember, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember: %v", err)
+	}
+	dir := config.Directory{
+		ID:        "dir1",
+		TeamID:    team.ID,
+		Name:      "Shared",
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	}
+	if err := store.UpsertUserDirectory(ctx, owner.ID, dir); err != nil {
+		t.Fatalf("UpsertUserDirectory: %v", err)
+	}
+	conn := config.Connector{
+		ID:           "conn1",
+		TeamID:       team.ID,
+		Name:         "Agent",
+		Kind:         config.ConnectorKindMCP,
+		Token:        "tok_123",
+		DirectoryIDs: []string{dir.ID},
+	}
+	if err := store.UpsertUserConnector(ctx, owner.ID, conn); err != nil {
+		t.Fatalf("UpsertUserConnector: %v", err)
+	}
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	memberDirs := r.DirectoriesForUser(member.ID)
+	if len(memberDirs) != 1 || memberDirs[0].ID != dir.ID || memberDirs[0].OwnerUserID != owner.ID {
+		t.Fatalf("member directories = %+v, want shared owner dir", memberDirs)
+	}
+	memberConnectors := r.ConnectorsForUser(member.ID)
+	if len(memberConnectors) != 1 || memberConnectors[0].ID != conn.ID || memberConnectors[0].OwnerUserID != owner.ID {
+		t.Fatalf("member connectors = %+v, want shared owner connector", memberConnectors)
+	}
+	views := r.DirectoriesForConnector(&memberConnectors[0])
+	if len(views) != 1 || views[0].Directory.ID != dir.ID {
+		t.Fatalf("connector directories = %+v, want shared dir", views)
+	}
+}
+
 func openRegistryTestStore(t *testing.T) *account.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "memd.db")

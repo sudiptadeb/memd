@@ -102,6 +102,7 @@
   function defaultDirForm() {
     return {
       name: "",
+      team_id: "",
       description: "",
       backend: "local",
       local_path: "",
@@ -119,6 +120,7 @@
   function defaultConnForm() {
     return {
       name: "",
+      team_id: "",
       kind: "mcp",
       selected: [],
       write: true,
@@ -131,6 +133,7 @@
     return {
       id: "",
       originalName: "",
+      team_id: "",
       name: "",
       kind: "mcp",
       selected: [],
@@ -144,6 +147,34 @@
     return {
       username: "",
       password: "",
+      err: "",
+      submitting: false
+    };
+  }
+
+  function defaultTeamForm() {
+    return {
+      name: "",
+      slug: "",
+      err: "",
+      submitting: false
+    };
+  }
+
+  function defaultMemberForm() {
+    return {
+      username: "",
+      role: "member",
+      err: "",
+      submitting: false
+    };
+  }
+
+  function defaultInviteForm() {
+    return {
+      role: "member",
+      expires_at: "",
+      max_uses: "",
       err: "",
       submitting: false
     };
@@ -176,18 +207,32 @@
       user: null,
       loading: true,
       loadErr: "",
+      inviteToken: "",
+      invitePreview: null,
+      inviteErr: "",
+      inviteAccepting: false,
       directories: [],
       connectors: [],
+      teams: [],
+      activeView: storageGet("memd-view", "directories"),
+      activeScope: storageGet("memd-scope", "personal"),
+      navOpen: false,
       loginForm: defaultLoginForm(),
       theme: storageGet("memd-theme", "light"),
       layoutMode: storageGet("memd-layout", "wide") === "centered" ? "centered" : "wide",
-      infoMode: storageGet("memd-info", "1") !== "0",
       logsHidden: storageGet("memd-logs-hidden", "0") === "1",
       logsWidth: parseInt(storageGet("memd-logs-w", "340"), 10) || 340,
       sheet: null,
       dirForm: defaultDirForm(),
       connForm: defaultConnForm(),
       editForm: defaultEditForm(),
+      teamForm: defaultTeamForm(),
+      teamDetail: null,
+      teamMembers: [],
+      teamInvites: [],
+      memberForm: defaultMemberForm(),
+      inviteForm: defaultInviteForm(),
+      createdInviteURL: "",
       pickerOpen: false,
       pickerPath: "",
       pickerEntries: [],
@@ -204,6 +249,10 @@
         this.setTheme(this.theme);
         this.setLayout(this.layoutMode);
         this.setLogsWidth(this.logsWidth);
+        this.inviteToken = new URLSearchParams(window.location.search).get("invite") || "";
+        if (this.inviteToken) {
+          await this.loadInvitePreview();
+        }
         await this.checkSession();
         if (this.user) {
           await this.load();
@@ -218,6 +267,7 @@
         } catch (error) {
           this.user = null;
         } finally {
+          this.normalizeView();
           this.sessionChecked = true;
           this.loading = false;
         }
@@ -236,6 +286,7 @@
             })
           });
           this.user = data.user || null;
+          this.normalizeView();
           this.loginForm = defaultLoginForm();
           await this.load();
           this.startLogs();
@@ -252,8 +303,15 @@
         this.user = null;
         this.directories = [];
         this.connectors = [];
+        this.teams = [];
+        this.teamDetail = null;
+        this.teamMembers = [];
+        this.teamInvites = [];
         this.entries = [];
         this.lastID = -1;
+        this.activeView = "directories";
+        this.navOpen = false;
+        storageSet("memd-view", this.activeView);
         this.closeOverlays();
       },
 
@@ -280,7 +338,8 @@
         try {
           const results = await Promise.all([
             api("/api/directories"),
-            api("/api/connectors")
+            api("/api/connectors"),
+            api("/api/teams")
           ]);
           this.directories = results[0].directories || [];
           this.connectors = (results[1].connectors || []).map(function (connector) {
@@ -291,6 +350,9 @@
             connector.auth_url = tokenlessConnectorURL(connector);
             return connector;
           });
+          this.teams = results[2].teams || [];
+          this.normalizeView();
+          this.normalizeScope();
         } catch (error) {
           if (error.status === 401) {
             this.user = null;
@@ -300,6 +362,158 @@
         } finally {
           this.loading = false;
         }
+      },
+
+      normalizeScope() {
+        if (this.activeScope !== "personal" && !this.teams.some((team) => team.id === this.activeScope)) {
+          this.activeScope = "personal";
+        }
+        storageSet("memd-scope", this.activeScope);
+      },
+
+      normalizeView() {
+        const valid = ["info", "directories", "connectors", "logs"];
+        if (this.user && !this.user.super_admin) {
+          valid.unshift("teams");
+        }
+        if (!valid.includes(this.activeView)) {
+          this.activeView = "directories";
+        }
+        storageSet("memd-view", this.activeView);
+      },
+
+      setView(view) {
+        this.activeView = view || "directories";
+        this.normalizeView();
+        this.closeNavIfMobile();
+      },
+
+      setScope(scope) {
+        this.activeScope = scope || "personal";
+        this.normalizeScope();
+        this.closeNavIfMobile();
+      },
+
+      isMobileNav() {
+        return window.matchMedia && window.matchMedia("(max-width: 920px)").matches;
+      },
+
+      toggleNav() {
+        this.navOpen = !this.navOpen;
+      },
+
+      closeNav() {
+        this.navOpen = false;
+      },
+
+      closeNavIfMobile() {
+        if (this.isMobileNav()) {
+          this.closeNav();
+        }
+      },
+
+      activeTeam() {
+        return this.teams.find((team) => team.id === this.activeScope) || null;
+      },
+
+      manageableTeams() {
+        return this.teams.filter((team) => team.can_manage);
+      },
+
+      teamName(teamID) {
+        const team = this.teams.find((item) => item.id === teamID);
+        return team ? team.name : "";
+      },
+
+      activeScopeLabel() {
+        return this.activeScope === "personal" ? "Personal" : (this.teamName(this.activeScope) || "Team");
+      },
+
+      directoryCount(scope) {
+        const wanted = scope === "personal" ? "" : (scope || "");
+        return this.directories.filter((directory) => (directory.team_id || "") === wanted).length;
+      },
+
+      connectorCount(scope) {
+        const wanted = scope === "personal" ? "" : (scope || "");
+        return this.connectors.filter((connector) => (connector.team_id || "") === wanted).length;
+      },
+
+      visibleDirectories() {
+        if (this.activeScope === "personal") {
+          return this.directories.filter((directory) => !directory.team_id);
+        }
+        return this.directories.filter((directory) => directory.team_id === this.activeScope);
+      },
+
+      visibleConnectors() {
+        if (this.activeScope === "personal") {
+          return this.connectors.filter((connector) => !connector.team_id);
+        }
+        return this.connectors.filter((connector) => connector.team_id === this.activeScope);
+      },
+
+      attachableDirectories(teamID) {
+        const scope = teamID || "";
+        return this.directories.filter((directory) => {
+          if (!directory.can_attach) return false;
+          return (directory.team_id || "") === scope;
+        });
+      },
+
+      roleLabel(role) {
+        return role || "member";
+      },
+
+      inviteUsage(invite) {
+        const limit = invite.max_uses ? String(invite.max_uses) : "unlimited";
+        return String(invite.use_count || 0) + " / " + limit;
+      },
+
+      inviteExpiry(invite) {
+        if (!invite.expires_at) return "No expiry";
+        return new Date(invite.expires_at).toLocaleString();
+      },
+
+      async loadInvitePreview() {
+        this.inviteErr = "";
+        this.invitePreview = null;
+        if (!this.inviteToken) return;
+        try {
+          const data = await api("/api/team-invites/" + encodeURIComponent(this.inviteToken), { cache: "no-store" });
+          this.invitePreview = data.invite || null;
+        } catch (error) {
+          this.inviteErr = error.message || "invite not found";
+        }
+      },
+
+      async acceptInvite() {
+        if (!this.inviteToken || !this.user) return;
+        this.inviteAccepting = true;
+        this.inviteErr = "";
+        try {
+          const data = await api("/api/team-invites/" + encodeURIComponent(this.inviteToken) + "/accept", { method: "POST" });
+          this.showToast(data.team ? "Joined " + data.team.name : "Joined team");
+          this.inviteToken = "";
+          this.invitePreview = null;
+          const url = new URL(window.location.href);
+          url.searchParams.delete("invite");
+          window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+          await this.load();
+        } catch (error) {
+          this.inviteErr = error.message || "join failed";
+        } finally {
+          this.inviteAccepting = false;
+        }
+      },
+
+      dismissInvite() {
+        this.inviteToken = "";
+        this.invitePreview = null;
+        this.inviteErr = "";
+        const url = new URL(window.location.href);
+        url.searchParams.delete("invite");
+        window.history.replaceState({}, "", url.pathname + url.search + url.hash);
       },
 
       setTheme(theme) {
@@ -320,11 +534,6 @@
 
       toggleLayout() {
         this.setLayout(this.layoutMode === "wide" ? "centered" : "wide");
-      },
-
-      setInfo(value) {
-        this.infoMode = Boolean(value);
-        storageSet("memd-info", this.infoMode ? "1" : "0");
       },
 
       setLogsHidden(value) {
@@ -360,9 +569,20 @@
       openSheet(name) {
         if (name === "dir") {
           this.dirForm = defaultDirForm();
+          const team = this.activeTeam();
+          if (team && team.can_manage) {
+            this.dirForm.team_id = team.id;
+          }
         }
         if (name === "conn") {
           this.connForm = defaultConnForm();
+          const team = this.activeTeam();
+          if (team && team.can_manage) {
+            this.connForm.team_id = team.id;
+          }
+        }
+        if (name === "team-new") {
+          this.teamForm = defaultTeamForm();
         }
         this.sheet = name;
       },
@@ -371,6 +591,7 @@
         this.editForm = {
           id: connector.id,
           originalName: connector.name,
+          team_id: connector.team_id || "",
           name: connector.name,
           kind: connector.kind || "mcp",
           selected: (connector.directory_ids || []).slice(),
@@ -381,6 +602,15 @@
         this.sheet = "edit";
       },
 
+      async openTeam(team) {
+        this.teamDetail = team;
+        this.memberForm = defaultMemberForm();
+        this.inviteForm = defaultInviteForm();
+        this.createdInviteURL = "";
+        this.sheet = "team";
+        await this.loadTeamDetail(team.id);
+      },
+
       closeSheets() {
         this.sheet = null;
       },
@@ -388,6 +618,7 @@
       closeOverlays() {
         this.closeSheets();
         this.pickerOpen = false;
+        this.closeNav();
       },
 
       showToast(message) {
@@ -465,11 +696,18 @@
         }
       },
 
+      setConnectorTeam(form, teamID) {
+        form.team_id = teamID || "";
+        const allowed = new Set(this.attachableDirectories(form.team_id).map((directory) => directory.id));
+        form.selected = form.selected.filter((id) => allowed.has(id));
+      },
+
       async createDirectory() {
         this.dirForm.err = "";
         this.dirForm.submitting = true;
         const payload = {
           name: this.dirForm.name,
+          team_id: this.dirForm.team_id || "",
           description: this.dirForm.description,
           backend: this.dirForm.backend
         };
@@ -517,6 +755,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               name: this.connForm.name,
+              team_id: this.connForm.team_id || "",
               kind: this.connForm.kind,
               directory_ids: this.connForm.selected,
               write: this.connForm.write
@@ -540,6 +779,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               name: this.editForm.name,
+              team_id: this.editForm.team_id || "",
               kind: this.editForm.kind,
               directory_ids: this.editForm.selected,
               write: this.editForm.write
@@ -573,6 +813,167 @@
         }
         await fetch("/api/connectors/" + encodeURIComponent(connector.id), { method: "DELETE" });
         await this.load();
+      },
+
+      async createTeam() {
+        this.teamForm.err = "";
+        this.teamForm.submitting = true;
+        try {
+          const data = await api("/api/teams", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: this.teamForm.name,
+              slug: this.teamForm.slug
+            })
+          });
+          this.closeSheets();
+          await this.load();
+          if (data.team && data.team.id) {
+            this.setScope(data.team.id);
+          }
+        } catch (error) {
+          this.teamForm.err = error.message || "create failed";
+        } finally {
+          this.teamForm.submitting = false;
+        }
+      },
+
+      async loadTeamDetail(teamID) {
+        try {
+          const results = await Promise.all([
+            api("/api/teams/" + encodeURIComponent(teamID) + "/members", { cache: "no-store" }),
+            api("/api/teams/" + encodeURIComponent(teamID) + "/invites", { cache: "no-store" }).catch(function () { return { invites: [] }; })
+          ]);
+          this.teamMembers = results[0].members || [];
+          this.teamInvites = results[1].invites || [];
+        } catch (error) {
+          this.memberForm.err = error.message || "load failed";
+        }
+      },
+
+      async addTeamMember() {
+        if (!this.teamDetail) return;
+        this.memberForm.err = "";
+        this.memberForm.submitting = true;
+        try {
+          await api("/api/teams/" + encodeURIComponent(this.teamDetail.id) + "/members", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: this.memberForm.username,
+              role: this.memberForm.role
+            })
+          });
+          this.memberForm = defaultMemberForm();
+          await this.loadTeamDetail(this.teamDetail.id);
+        } catch (error) {
+          this.memberForm.err = error.message || "add failed";
+        } finally {
+          this.memberForm.submitting = false;
+        }
+      },
+
+      async updateTeamMemberRole(member, role) {
+        if (!this.teamDetail) return;
+        try {
+          await api("/api/teams/" + encodeURIComponent(this.teamDetail.id) + "/members/" + encodeURIComponent(member.user_id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: role })
+          });
+          await this.loadTeamDetail(this.teamDetail.id);
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "update failed");
+          await this.loadTeamDetail(this.teamDetail.id);
+        }
+      },
+
+      async removeTeamMember(member) {
+        if (!this.teamDetail) return;
+        if (!window.confirm("Remove " + member.username + " from " + this.teamDetail.name + "?")) {
+          return;
+        }
+        try {
+          await api("/api/teams/" + encodeURIComponent(this.teamDetail.id) + "/members/" + encodeURIComponent(member.user_id), { method: "DELETE" });
+          await this.loadTeamDetail(this.teamDetail.id);
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "remove failed");
+        }
+      },
+
+      async createInvite() {
+        if (!this.teamDetail) return;
+        this.inviteForm.err = "";
+        this.inviteForm.submitting = true;
+        this.createdInviteURL = "";
+        let expiresAt = "";
+        if (this.inviteForm.expires_at) {
+          expiresAt = new Date(this.inviteForm.expires_at).toISOString();
+        }
+        const maxUses = parseInt(this.inviteForm.max_uses, 10);
+        try {
+          const data = await api("/api/teams/" + encodeURIComponent(this.teamDetail.id) + "/invites", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              role: this.inviteForm.role,
+              expires_at: expiresAt,
+              max_uses: Number.isFinite(maxUses) && maxUses > 0 ? maxUses : null
+            })
+          });
+          this.createdInviteURL = data.invite_url || "";
+          this.inviteForm = defaultInviteForm();
+          await this.loadTeamDetail(this.teamDetail.id);
+          if (this.createdInviteURL) {
+            await copyText(this.createdInviteURL);
+            this.showToast("Invite copied");
+          }
+        } catch (error) {
+          this.inviteForm.err = error.message || "invite failed";
+        } finally {
+          this.inviteForm.submitting = false;
+        }
+      },
+
+      async revokeInvite(invite) {
+        if (!this.teamDetail) return;
+        try {
+          await api("/api/teams/" + encodeURIComponent(this.teamDetail.id) + "/invites/" + encodeURIComponent(invite.id) + "/revoke", { method: "POST" });
+          await this.loadTeamDetail(this.teamDetail.id);
+        } catch (error) {
+          window.alert(error.message || "revoke failed");
+        }
+      },
+
+      async deleteTeam(team) {
+        if (!window.confirm("Delete team " + team.name + "? Team-scoped directories and connectors become personal to their original owners.")) {
+          return;
+        }
+        try {
+          await api("/api/teams/" + encodeURIComponent(team.id), { method: "DELETE" });
+          this.closeSheets();
+          this.setScope("personal");
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "delete failed");
+        }
+      },
+
+      async setDirectoryTeam(directory, teamID) {
+        try {
+          await api("/api/directories/" + encodeURIComponent(directory.id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ team_id: teamID || "" })
+          });
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "update failed");
+          await this.load();
+        }
       },
 
       async exportUserData() {
@@ -662,10 +1063,11 @@
           this.entries = this.entries.concat(fresh).slice(-200);
           this.lastID = fresh[fresh.length - 1].id;
           this.$nextTick(() => {
-            const el = this.$refs.logsScroll;
-            if (el) {
-              el.scrollTop = el.scrollHeight;
-            }
+            document.querySelectorAll(".logs-list").forEach(function (el) {
+              if (el.offsetParent !== null) {
+                el.scrollTop = el.scrollHeight;
+              }
+            });
           });
         } catch (_) {
         } finally {

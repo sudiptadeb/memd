@@ -12,7 +12,7 @@ Your memory lives as ordinary files on your disk — or in a private Git repo yo
   <sub><a href="docs/assets/memd.svg">vector source (SVG)</a></sub>
 </p>
 
-> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login, super-admin user management, SQL-backed user-scoped directories/connectors, managed file stats, import/export, and the five consolidation workflows all work. Team management is next.
+> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login, super-admin user management, regular-user teams, invite links, team-scoped directories/connectors, SQL-backed user data, managed file stats, import/export, responsive web UI, and the five consolidation workflows all work.
 
 ## Why
 
@@ -35,7 +35,7 @@ bash build/build.sh host
 ./dist/<os>/memd-<arch> ~/work-memory
 # → prints an MCP URL. Paste it into your agent.
 
-# Or run configured mode with local login, multiple users,
+# Or run configured mode with local login, teams,
 # multiple directories, and multiple agents.
 ./dist/<os>/memd-<arch> serve --init-db
 # → http://127.0.0.1:7878
@@ -44,7 +44,8 @@ bash build/build.sh host
 On first configured-mode startup, memd initializes its local account database and
 creates a super-admin account. Super admins use `/admin` to create regular user
 accounts; regular users own directories/connectors and can import/export their
-own connector data.
+own connector data. Regular users can also create teams, invite other regular
+users, and mark selected directories/connectors as team-scoped.
 
 For non-interactive first boot:
 
@@ -116,6 +117,8 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 |--------------|----------------------------------------------------------------------------------|
 | **Directory**| A self-organising file memory — a folder on disk or a Git repo.                  |
 | **Connector**| A token-scoped grant — MCP or HTTP, one per agent (Claude Code, Codex, Cursor, …). |
+| **Team**     | A shared space owned by regular users. Team admins can expose selected directories/connectors to members. |
+| **Invite link** | A copyable team join URL with optional expiry and max-use limits.             |
 | **User**     | A local login account that owns directories and connectors.                      |
 | **Super admin** | A bootstrap-only admin account for creating/disabling users and resetting passwords. |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
@@ -123,7 +126,33 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 
 Super-admin accounts are for account administration only. They do not import,
 export, or own directories/connectors; create a regular user for actual memory
-work. Team ownership and membership controls are the next product slice.
+work.
+
+## Teams And The Web UI
+
+Configured mode uses a responsive app shell with primary views for **How it
+works**, **Teams**, **Directories**, **Connectors**, and **Activity**. Desktop
+keeps the navigation rail visible. Smaller screens collapse navigation into a
+hamburger drawer, keep dark mode in the top bar, and show Activity as a normal
+page instead of a cramped side panel.
+
+Regular users can create teams from the main UI. The creator becomes `owner`.
+Team roles are:
+
+| Role | Privileges |
+|------|------------|
+| `owner` | Manage everything, demote/remove admins, and delete the team. |
+| `admin` | Manage members, invite links, and team-scoped directories/connectors. |
+| `member` | View team-scoped directories/connectors. |
+| `viewer` | Lower-access membership role for shared read-oriented use. |
+
+Owners/admins can create copyable invite links with optional expiry and optional
+max-use count. Invite links can be revoked. Accepting a valid link adds the
+signed-in regular user to the team; super admins cannot join teams.
+
+Team-scoped directories/connectors stay in the creator's namespace but are
+visible to team members. Connector serving remains strict: an MCP/HTTP token can
+only access the directory IDs saved on that connector.
 
 ## Self-Organising Memory
 
@@ -186,8 +215,9 @@ SQLite by default:
 
 - local users and Argon2id password hashes
 - super-admin markers
-- teams and memberships, ready for the next UI slice
-- user-owned directories and connectors, including connector bearer tokens
+- teams, memberships, invite token hashes, and invite use records
+- user-owned directories and connectors, including connector bearer tokens and
+  optional team scope
 
 Memory content stays in the user's folders or Git repositories. The database is
 the control plane, not the long-term memory store.
@@ -213,7 +243,7 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 
 - [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, file structure, drastic-action policy.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
-- [docs/plans/2026-06-04-local-auth-team-management-plan.md](docs/plans/2026-06-04-local-auth-team-management-plan.md) — current auth/user-data state and next team-management slice.
+- [docs/plans/2026-06-04-local-auth-team-management-plan.md](docs/plans/2026-06-04-local-auth-team-management-plan.md) — local auth and team-management implementation notes.
 - [docs/plans/2026-05-23-memory-weight-decay-design.md](docs/plans/2026-05-23-memory-weight-decay-design.md) — design of the weight/decay layer.
 
 ## Safety
@@ -222,6 +252,8 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 - Memory is context and evidence, not higher-priority instruction — the doctrine teaches agents to treat any embedded command as untrusted text.
 - The server binds to `127.0.0.1` only. Tunnels can expose it, but remote-access hardening is still in progress.
 - Connector URLs are passwords; the token in the path or bearer header *is* the auth.
+- Team invite URLs are join credentials until they expire, are revoked, or hit
+  their max-use count.
 - `memd.db` and exported user-data JSON can hold connector tokens.
 
 ## Roadmap
@@ -232,7 +264,8 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 - [x] Web UI for directories + connectors
 - [x] Local login, super-admin user management, and cgo-free SQLite metadata DB
 - [x] User-scoped directory/connector records and user data import/export
-- [ ] Team management UI and team-scoped ownership
+- [x] Team management, invite links, and team-scoped directories/connectors
+- [x] Responsive app shell with sidebar/drawer navigation and dedicated Activity/Info views
 - [ ] Skills/hooks injection — per-tool reinforcement (`~/.claude/skills/memd-*`, Codex `AGENTS.md` block, `.cursor/rules/memd.mdc`)
 - [ ] Public hosting hardening with separate UI / MCP listeners and external IdP mode
 - [ ] Source readers for `harvest` (Cursor rules, Claude auto-memory, mem0 export)

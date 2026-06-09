@@ -138,6 +138,102 @@ func TestUserDataAPIRejectsSuperAdmin(t *testing.T) {
 	}
 }
 
+func TestTeamsAPIRegularUserCreatesTeamAndSuperAdminRejected(t *testing.T) {
+	accounts := openTestAccountStore(t)
+	admin, err := accounts.CreateSuperAdmin(context.Background(), "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("CreateSuperAdmin: %v", err)
+	}
+	regular, err := accounts.CreateLocalUser(context.Background(), account.CreateUserInput{Username: "friend", Password: "friend-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+	mux, handler := newTestUI(t, accounts)
+
+	adminReq := httptest.NewRequest(http.MethodPost, "/api/teams", bytes.NewBufferString(`{"name":"Admin Team"}`))
+	addSession(t, handler, adminReq, admin)
+	adminRec := httptest.NewRecorder()
+	mux.ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusForbidden {
+		t.Fatalf("super admin create status = %d, body=%s", adminRec.Code, adminRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/teams", bytes.NewBufferString(`{"name":"Family Memory"}`))
+	addSession(t, handler, req, regular)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("regular create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Team struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"team"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("create response JSON: %v", err)
+	}
+	if body.Team.ID == "" || body.Team.Role != account.RoleOwner {
+		t.Fatalf("created team = %+v, want owner role", body.Team)
+	}
+}
+
+func TestTeamInviteAPIAcceptsValidInvite(t *testing.T) {
+	accounts := openTestAccountStore(t)
+	owner, err := accounts.CreateLocalUser(context.Background(), account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := accounts.CreateLocalUser(context.Background(), account.CreateUserInput{Username: "member", Password: "member-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	team, err := accounts.CreateTeam(context.Background(), account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	mux, handler := newTestUI(t, accounts)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/teams/"+team.ID+"/invites", bytes.NewBufferString(`{"role":"member","max_uses":1}`))
+	addSession(t, handler, createReq, owner)
+	createRec := httptest.NewRecorder()
+	mux.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("create invite status = %d, body=%s", createRec.Code, createRec.Body.String())
+	}
+	var createBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("create invite JSON: %v", err)
+	}
+	if createBody.Token == "" {
+		t.Fatalf("create invite response missing token: %s", createRec.Body.String())
+	}
+
+	previewRec := httptest.NewRecorder()
+	mux.ServeHTTP(previewRec, httptest.NewRequest(http.MethodGet, "/api/team-invites/"+createBody.Token, nil))
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body=%s", previewRec.Code, previewRec.Body.String())
+	}
+
+	acceptReq := httptest.NewRequest(http.MethodPost, "/api/team-invites/"+createBody.Token+"/accept", nil)
+	addSession(t, handler, acceptReq, member)
+	acceptRec := httptest.NewRecorder()
+	mux.ServeHTTP(acceptRec, acceptReq)
+	if acceptRec.Code != http.StatusOK {
+		t.Fatalf("accept status = %d, body=%s", acceptRec.Code, acceptRec.Body.String())
+	}
+	role, err := accounts.UserTeamRole(context.Background(), team.ID, member.ID)
+	if err != nil {
+		t.Fatalf("UserTeamRole: %v", err)
+	}
+	if role != account.RoleMember {
+		t.Fatalf("role = %q, want member", role)
+	}
+}
+
 func TestSessionAPIRejectsMissingSession(t *testing.T) {
 	accounts := openTestAccountStore(t)
 	mux, _ := newTestUI(t, accounts)
@@ -182,4 +278,15 @@ func newTestUI(t *testing.T, accounts *account.Store) (*http.ServeMux, *Handler)
 	handler := New(reg, accounts, "http://127.0.0.1:7878")
 	handler.Mount(mux)
 	return mux, handler
+}
+
+func addSession(t *testing.T, handler *Handler, req *http.Request, user account.User) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	if err := handler.sessions.Create(rec, req, user.ID, user.Username, user.SuperAdmin); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
 }

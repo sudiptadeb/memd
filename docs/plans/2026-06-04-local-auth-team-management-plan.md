@@ -27,11 +27,13 @@ state, and audit events.
 ## Current Implemented State
 
 - `server/internal/account` owns the local account/team SQL store.
-- Schema v2 includes:
+- Schema v3 includes:
   - `users`
   - `super_admins`
   - `teams`
   - `team_members`
+  - `team_invites`
+  - `team_invite_uses`
   - `user_directories`
   - `user_connectors`
   - `user_connector_directories`
@@ -48,7 +50,8 @@ state, and audit events.
 - Super admins use the separate `/admin` Alpine app to create regular users,
   disable/enable users, and reset passwords.
 - Super-admin accounts cannot own, import, export, create, or update
-  directories/connectors. They are only for account administration.
+  directories/connectors, create teams, or accept team invites. They are only
+  for account administration.
 - Regular users own their directories/connectors.
 - Configured mode now loads directory/connector records from SQL. Legacy
   `config.json` is only an import source.
@@ -57,30 +60,52 @@ state, and audit events.
   - `memd data export --user USER --out FILE`
   - `memd data import --user USER --in FILE [--replace]`
   - `memd data export-legacy-config --out FILE`
+- Regular users can create teams. The creator becomes the initial `owner`.
+- Team roles are `owner`, `admin`, `member`, and `viewer`.
+- Owners/admins can create and revoke copyable invite links with optional expiry
+  and optional max-use count.
+- Existing members can re-accept an invite without consuming another use.
+- Owners/admins can mark directories/connectors as team-scoped.
+- Team members can see team-scoped directories/connectors in the main UI.
+- MCP/HTTP connector serving remains limited to the directory IDs saved on that
+  connector.
+- User data import/export strips team scope so portable bundles stay personal.
+- The main UI is now a responsive shell with views for How it works, Teams,
+  Directories, Connectors, and Activity. Desktop uses a side navigation rail;
+  smaller screens use a hamburger drawer and show Activity as a page.
 
-## Next Slice: Teams
+## Implemented Team Slice
 
 Detailed handoff: [Teams Work Handoff](2026-06-07-teams-handoff.md).
 
-1. Add team UI for manual team creation.
-2. Add team membership assignment and roles (`owner`, `admin`, `member`,
-   `viewer`).
-3. Decide how user-owned directories/connectors become team-owned or
-   team-shared.
-4. Add team-scoped directory/connector list filters and API checks.
-5. Add Git directory grants:
-   - user supplies repo URL and read/write credential
-   - memd clones into a controlled workdir
-   - memd creates per-connector branches
-6. Add connector branch sync modes:
-   - raise/update PR
-   - auto-merge
-   - manual only
-7. Add generic OIDC mode behind `auth.mode = local | oidc`.
+1. Regular users create teams. The creator becomes the initial team
+   `owner`.
+2. Team roles:
+   - `owner`: all admin privileges, plus demoting admins and deleting the team.
+   - `admin`: manage team settings, members, invites, and team directories.
+   - `member`: access team directories/connectors marked for the team.
+   - `viewer`: lower-access membership role for shared read-oriented use.
+3. Invite links that owners/admins can create, copy, and revoke. Each link
+   can have optional time expiry and optional max-use count.
+4. Invite acceptance flow. A valid invite adds the accepting regular user to
+   the team, consuming one use only after membership is created.
+5. Team owners/admins mark directories/connectors as team-scoped. Being a
+   team member grants UI access to the team's marked directories, while MCP
+   connector tokens remain limited to their saved directory list.
+6. Team-scoped directory/connector list filters and API checks.
 
 ## Deferred
 
-- Email/SMS invite flows.
+- Git directory grants:
+  - user supplies repo URL and read/write credential
+  - memd clones into a controlled workdir
+  - memd creates per-connector branches
+- Connector branch sync modes:
+  - raise/update PR
+  - auto-merge
+  - manual only
+- Generic OIDC mode behind `auth.mode = local | oidc`.
+- Email/SMS invite delivery.
 - Billing.
 - Automatic merge-conflict resolution.
 - Full MCP OAuth 2.1 authorization server flow.

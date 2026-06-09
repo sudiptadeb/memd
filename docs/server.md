@@ -7,16 +7,21 @@ memd is a Go server you run locally. It exposes file-based memory directories to
 What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
+- Responsive web UI with separate views for How it works, Teams, Directories,
+  Connectors, and Activity. Desktop keeps a side navigation rail; smaller
+  screens use a hamburger drawer and show Activity as a normal page.
 - Web UI for managing directories and MCP/HTTP connectors. Each connector gets a bearer token credential; token-in-URL remains supported for local/legacy use.
 - Configured mode bootstraps a local account/team metadata database. The default database is cgo-free SQLite; `MEMD_DATABASE_URL` can point at another SQL URL once additional drivers are linked.
 - The web UI requires local login. Super admins can open `/admin` to create users, disable/enable accounts, and reset passwords.
+- Regular users can create teams, invite other regular users with copyable
+  invite links, and mark selected directories/connectors as team-scoped.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
-- Localhost-only binding. Tunnels can expose it, but remote-access hardening, team-scoped ownership, and public hosting are still in progress.
+- Localhost-only binding. Tunnels can expose it, but remote-access hardening and public hosting are still in progress.
 
-What's planned (not yet implemented): team management, skills/hooks injection,
-public hosting hardening, and source readers for `harvest`. See
-[README.md](../README.md) Roadmap.
+What's planned (not yet implemented): skills/hooks injection, public hosting
+hardening, and source readers for `harvest`. See [README.md](../README.md)
+Roadmap.
 
 ## Two Modes
 
@@ -50,10 +55,24 @@ The server starts, opens the web UI in your browser (default `http://127.0.0.1:7
 
 In the UI:
 
-1. **Add directories.** Pick local folder or Git repo. For Git: paste the URL, branch, base path inside the repo, and pick an SSH key path or PAT env var. memd clones into a working copy under the config dir.
-2. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick MCP or HTTP, which directories the connector can see, and whether write is allowed. memd generates a unique token and shows token-in-URL plus header-auth forms.
-3. **Import/export user data.** Signed-in users can export or import their own directories and connectors from the Directories toolbar. Super admins do not manage this from the admin page.
-4. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when the client supports headers, or use **Copy skill** for HTTP connectors.
+1. **Use the main views.** The app has How it works, Teams, Directories,
+   Connectors, and Activity. On smaller screens, open the hamburger drawer to
+   switch views; dark mode remains in the top bar.
+2. **Create teams when needed.** Regular users can create teams, manage members,
+   and create invite links with optional expiry and max-use count.
+3. **Add directories.** Pick local folder or Git repo. For Git: paste the URL,
+   branch, base path inside the repo, and pick an SSH key path or PAT env var.
+   memd clones into a working copy under the config dir. Team owners/admins can
+   mark a directory as team-scoped.
+4. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick
+   MCP or HTTP, which directories the connector can see, and whether write is
+   allowed. memd generates a unique token and shows token-in-URL plus
+   header-auth forms. Team owners/admins can mark a connector as team-scoped.
+5. **Import/export user data.** Signed-in users can export or import their own
+   directories and connectors from the Directories toolbar. Super admins do not
+   manage this from the admin page.
+6. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when
+   the client supports headers, or use **Copy skill** for HTTP connectors.
 
 ## CLI
 
@@ -99,7 +118,9 @@ Configured mode stores production metadata in a SQL database:
 - local users and password hashes
 - super-admin markers
 - teams and team memberships
-- user-owned directories and connectors, including connector tokens
+- team invite token hashes and invite use records
+- user-owned directories and connectors, including connector tokens and optional
+  team scope
 - future Git branch state and sync jobs
 
 Memory data itself should remain in user-owned Git repositories. The database is
@@ -153,14 +174,49 @@ Sessions are in-memory and expire after 24 hours. Restarting memd signs everyone
 out, which is acceptable for the current friends/family deployment target.
 
 Super-admin accounts are account-management identities only. They cannot own,
-import, export, create, or update directories/connectors. Create a regular user
-for actual memory work.
+import, export, create, or update directories/connectors, create teams, or
+accept team invites. Create a regular user for actual memory work.
+
+## Teams, Invites, And Shared Scope
+
+Regular users can create teams from the main UI. The creator becomes the initial
+`owner`. Super admins remain outside team membership.
+
+Roles:
+
+- `owner`: all team privileges, plus demoting/removing admins and deleting the
+  team.
+- `admin`: manage members, invite links, and team-scoped directories/connectors.
+- `member`: view team-scoped directories/connectors.
+- `viewer`: lower-access membership role for shared read-oriented use.
+
+Owners/admins can create invite links. Each invite can have:
+
+- no expiry or an explicit expiry timestamp
+- unlimited uses or a max-use count
+
+Invite links can be revoked. The database stores only a hash of the opaque
+invite token. The plain invite URL is returned only when the invite is created,
+so copy it then.
+
+Accepting an invite is idempotent for existing members: accepting again succeeds
+without consuming another use. Expired, revoked, and maxed-out invites cannot add
+new members.
+
+Team owners/admins can mark directories/connectors as team-scoped. Team members
+can see team-scoped objects in the UI, but connector serving stays strict: an
+MCP/HTTP token can only reach the directory IDs saved on that connector. The
+current data model keeps directories/connectors in the creator's user namespace,
+so ordinary members do not create their own connectors against another user's
+team directory yet.
 
 ## User Data Import And Export
 
 Directories and connectors are scoped to the signed-in user. A normal user can
 export their own bundle from `/api/data` or the UI, then import it into another
 account. The bundle contains connector bearer tokens, so handle it as a secret.
+Team scope is stripped from exported/imported user bundles so the bundle remains
+portable between regular users and does not leak team ownership metadata.
 
 The CLI supports the same migration flow:
 
@@ -177,9 +233,6 @@ memd data export-legacy-config --out current-legacy-user-data.json
 
 Legacy `config.json` is now only an import source for configured mode. The SQL
 store is the source of truth after import.
-
-Team tables are present in the metadata database, but team UI, membership
-assignment, and team-scoped directory/connector ownership are the next slice.
 
 ## Connector URL Shapes
 
@@ -276,5 +329,6 @@ Local-folder directories: just file I/O, no Git, no debounce.
 
 - Localhost-bound. Anyone with a shell on your machine can read local config and database files. Lock your laptop.
 - Connector URLs are passwords. Don't paste them in shared logs, screenshots, or chats.
+- Team invite URLs are join credentials until they expire, are revoked, or hit their max-use count.
 - `memd.db` and exported user-data JSON can hold connector tokens. Be deliberate before syncing or sharing them.
 - v1 has local UI login, but no remote-access hardening story yet. Public hosting is still in progress.

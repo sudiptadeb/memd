@@ -24,11 +24,13 @@ func NewUserDataBundle(dirs []config.Directory, connectors []config.Connector) U
 	cleanDirs := make([]config.Directory, len(dirs))
 	for i, d := range dirs {
 		d.OwnerUserID = ""
+		d.TeamID = ""
 		cleanDirs[i] = d
 	}
 	cleanConnectors := make([]config.Connector, len(connectors))
 	for i, c := range connectors {
 		c.OwnerUserID = ""
+		c.TeamID = ""
 		cleanConnectors[i] = c
 	}
 	return UserDataBundle{
@@ -141,11 +143,13 @@ func (s *Store) ImportUserData(ctx context.Context, ownerUserID string, bundle U
 		}
 	}
 	for _, d := range bundle.Directories {
+		d.TeamID = ""
 		if err := upsertUserDirectory(ctx, tx, ownerUserID, d); err != nil {
 			return err
 		}
 	}
 	for _, c := range bundle.Connectors {
+		c.TeamID = ""
 		if err := upsertUserConnector(ctx, tx, ownerUserID, c); err != nil {
 			return err
 		}
@@ -155,7 +159,7 @@ func (s *Store) ImportUserData(ctx context.Context, ownerUserID string, bundle U
 
 func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]config.Directory, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, description, backend, local_path,
+		SELECT id, team_id, name, description, backend, local_path,
 		       git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_ssh_key_path, git_wait_for_writes, git_save_every,
 		       created_at
 		  FROM user_directories
@@ -169,9 +173,10 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 	for rows.Next() {
 		var d config.Directory
 		var git config.Git
+		var teamID sql.NullString
 		var created string
 		if err := rows.Scan(
-			&d.ID, &d.Name, &d.Description, &d.Backend, &d.LocalPath,
+			&d.ID, &teamID, &d.Name, &d.Description, &d.Backend, &d.LocalPath,
 			&git.RemoteURL, &git.Branch, &git.BasePath, &git.AuthorName, &git.AuthorEmail, &git.SSHKeyPath, &git.WaitForWrites, &git.SaveEvery,
 			&created,
 		); err != nil {
@@ -179,6 +184,9 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 		}
 		d.CreatedAt = mustParseTime(created)
 		d.OwnerUserID = ownerUserID
+		if teamID.Valid {
+			d.TeamID = teamID.String
+		}
 		if d.Backend == "git" {
 			d.Git = &git
 			d.LocalPath = ""
@@ -190,7 +198,7 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 
 func (s *Store) ListUserConnectors(ctx context.Context, ownerUserID string) ([]config.Connector, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, kind, token, write, created_at
+		SELECT id, team_id, name, kind, token, write, created_at
 		  FROM user_connectors
 		 WHERE owner_user_id = ?
 		 ORDER BY lower(name)`, ownerUserID)
@@ -207,13 +215,17 @@ func (s *Store) ListUserConnectors(ctx context.Context, ownerUserID string) ([]c
 	for rows.Next() {
 		var c config.Connector
 		var write int
+		var teamID sql.NullString
 		var created string
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Token, &write, &created); err != nil {
+		if err := rows.Scan(&c.ID, &teamID, &c.Name, &c.Kind, &c.Token, &write, &created); err != nil {
 			return nil, err
 		}
 		c.Write = write != 0
 		c.CreatedAt = mustParseTime(created)
 		c.OwnerUserID = ownerUserID
+		if teamID.Valid {
+			c.TeamID = teamID.String
+		}
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -291,12 +303,13 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO user_directories(
-			owner_user_id, id, name, description, backend, local_path,
+			owner_user_id, id, team_id, name, description, backend, local_path,
 			git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_ssh_key_path, git_wait_for_writes, git_save_every,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(owner_user_id, id) DO UPDATE SET
+			team_id = excluded.team_id,
 			name = excluded.name,
 			description = excluded.description,
 			backend = excluded.backend,
@@ -310,7 +323,7 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 			git_wait_for_writes = excluded.git_wait_for_writes,
 			git_save_every = excluded.git_save_every,
 			updated_at = excluded.updated_at`,
-		ownerUserID, d.ID, d.Name, d.Description, d.Backend, d.LocalPath,
+		ownerUserID, d.ID, d.TeamID, d.Name, d.Description, d.Backend, d.LocalPath,
 		git.RemoteURL, git.Branch, git.BasePath, git.AuthorName, git.AuthorEmail, git.SSHKeyPath, git.WaitForWrites, git.SaveEvery,
 		created, now)
 	return err
@@ -327,15 +340,16 @@ func upsertUserConnector(ctx context.Context, tx *sql.Tx, ownerUserID string, c 
 		write = 1
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO user_connectors(owner_user_id, id, name, kind, token, write, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO user_connectors(owner_user_id, id, team_id, name, kind, token, write, created_at, updated_at)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(owner_user_id, id) DO UPDATE SET
+			team_id = excluded.team_id,
 			name = excluded.name,
 			kind = excluded.kind,
 			token = excluded.token,
 			write = excluded.write,
 			updated_at = excluded.updated_at`,
-		ownerUserID, c.ID, c.Name, c.EffectiveKind(), c.Token, write, created, now)
+		ownerUserID, c.ID, c.TeamID, c.Name, c.EffectiveKind(), c.Token, write, created, now)
 	if err != nil {
 		return err
 	}

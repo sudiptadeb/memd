@@ -60,18 +60,22 @@ type User struct {
 }
 
 type Team struct {
-	ID        string
-	Name      string
-	Slug      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID              string
+	Name            string
+	Slug            string
+	CreatedByUserID string
+	Role            string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type TeamMember struct {
-	TeamID    string
-	UserID    string
-	Role      string
-	CreatedAt time.Time
+	TeamID      string
+	UserID      string
+	Username    string
+	DisplayName string
+	Role        string
+	CreatedAt   time.Time
 }
 
 type CreateUserInput struct {
@@ -84,6 +88,32 @@ type CreateTeamInput struct {
 	Name        string
 	Slug        string
 	OwnerUserID string
+}
+
+type CreateTeamInviteInput struct {
+	TeamID          string
+	CreatedByUserID string
+	Role            string
+	ExpiresAt       *time.Time
+	MaxUses         *int
+}
+
+type TeamInvite struct {
+	ID              string
+	TeamID          string
+	Role            string
+	MaxUses         *int
+	UseCount        int
+	ExpiresAt       *time.Time
+	RevokedAt       *time.Time
+	CreatedByUserID string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type CreatedTeamInvite struct {
+	Invite TeamInvite
+	Token  string
 }
 
 func ConfigFromEnv() (DBConfig, error) {
@@ -415,7 +445,7 @@ func (s *Store) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error
 	if name == "" {
 		return Team{}, errors.New("team name is required")
 	}
-	if _, err := s.UserByID(ctx, in.OwnerUserID); err != nil {
+	if err := s.EnsureRegularActiveUser(ctx, in.OwnerUserID); err != nil {
 		return Team{}, err
 	}
 	slug := slugify(in.Slug)
@@ -426,7 +456,7 @@ func (s *Store) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error
 		return Team{}, errors.New("team slug is required")
 	}
 	now := nowString()
-	team := Team{ID: newID("team"), Name: name, Slug: slug, CreatedAt: mustParseTime(now), UpdatedAt: mustParseTime(now)}
+	team := Team{ID: newID("team"), Name: name, Slug: slug, CreatedByUserID: in.OwnerUserID, CreatedAt: mustParseTime(now), UpdatedAt: mustParseTime(now)}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Team{}, err
@@ -452,6 +482,12 @@ func (s *Store) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error
 func (s *Store) AddTeamMember(ctx context.Context, teamID, userID, role, actorUserID string) error {
 	if !validRole(role) {
 		return fmt.Errorf("invalid team role %q", role)
+	}
+	if err := s.EnsureRegularActiveUser(ctx, userID); err != nil {
+		return err
+	}
+	if err := s.canAddTeamMember(ctx, teamID, actorUserID, role); err != nil {
+		return err
 	}
 	now := nowString()
 	_, err := s.db.ExecContext(ctx, `
@@ -500,7 +536,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Store) ListTeams(ctx context.Context) ([]Team, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, slug, created_at, updated_at FROM teams ORDER BY lower(name)`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, slug, created_by_user_id, created_at, updated_at FROM teams ORDER BY lower(name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +545,7 @@ func (s *Store) ListTeams(ctx context.Context) ([]Team, error) {
 	for rows.Next() {
 		var t Team
 		var created, updated string
-		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &created, &updated); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedByUserID, &created, &updated); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = mustParseTime(created)
