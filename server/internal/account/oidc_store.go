@@ -8,27 +8,28 @@ import (
 	"strings"
 )
 
-// OIDCIdentity is the subset of verified ID-token claims used to provision or
-// link a local account on OIDC login. It is IdP-agnostic: every field is a
-// standard OIDC claim.
+// OIDCIdentity is the subset of verified ID-token claims used to provision a
+// cloud account on OIDC login. It is IdP-agnostic: every field is a standard
+// OIDC claim.
 type OIDCIdentity struct {
-	Subject           string // `sub` — stable, unique per IdP; the identity key
+	Issuer            string // `iss` — the identity-provider boundary
+	Subject           string // `sub` — stable within the issuer
 	Email             string
 	Name              string
 	PreferredUsername string
-	Admin             bool // derived from claims/allowlist by the caller
 }
 
-// UserBySubject looks up a user by their OIDC subject.
-func (s *Store) UserBySubject(ctx context.Context, subject string) (User, error) {
+// UserByOIDCIdentity looks up a user by the issuer+subject identity pair.
+func (s *Store) UserByOIDCIdentity(ctx context.Context, issuer, subject string) (User, error) {
+	issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
 	subject = strings.TrimSpace(subject)
-	if subject == "" {
+	if issuer == "" || subject == "" {
 		return User{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+userColumns+`
 		  `+userJoin+`
-		 WHERE u.subject = ?`, subject)
+		 WHERE u.issuer = ? AND u.subject = ?`, issuer, subject)
 	user, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
@@ -36,33 +37,24 @@ func (s *Store) UserBySubject(ctx context.Context, subject string) (User, error)
 	return user, err
 }
 
-// SetSuperAdmin grants super-admin to a user. OIDC logins only ever grant (never
-// revoke) admin, so an admin who is later removed from the IdP group is not
-// silently locked out of an account they bootstrapped; use the admin UI to
-// disable accounts instead.
-func (s *Store) SetSuperAdmin(ctx context.Context, userID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO super_admins(user_id, created_at, created_by_user_id) VALUES (?, ?, NULL)`,
-		userID, nowString())
-	return err
-}
-
-// UpsertOIDCUser provisions or links the local account for a verified OIDC
-// identity and records the login. Resolution order:
+// UpsertOIDCUser provisions the cloud account for a verified OIDC identity and
+// records the login. Resolution order:
 //
-//  1. Existing account already keyed on this subject -> refresh display fields.
-//  2. A local account whose username matches the token's preferred_username or
-//     email (and which has no subject yet) -> attach the subject (one-time
-//     migration of a manually-created account).
-//  3. Otherwise auto-provision a fresh account keyed on the subject.
+//  1. Existing cloud account already keyed on issuer+subject -> refresh display fields.
+//  2. Otherwise auto-provision a fresh cloud account keyed on issuer+subject.
 //
-// Identity is always keyed on `sub`; email/name are stored for display only.
+// Identity is always keyed on `iss` + `sub`; email/name are stored for display
+// only and never used to link a local account.
 func (s *Store) UpsertOIDCUser(ctx context.Context, id OIDCIdentity) (User, error) {
 	if ok, err := s.IsInitialized(ctx); err != nil || !ok {
 		if err != nil {
 			return User{}, err
 		}
 		return User{}, ErrNotInitialized
+	}
+	issuer := strings.TrimRight(strings.TrimSpace(id.Issuer), "/")
+	if issuer == "" {
+		return User{}, errors.New("oidc issuer is required")
 	}
 	subject := strings.TrimSpace(id.Subject)
 	if subject == "" {
@@ -76,16 +68,9 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, id OIDCIdentity) (User, erro
 	}
 	defer rollback(tx)
 
-	userID, err := resolveOIDCUserID(ctx, tx, subject, id, now)
+	userID, err := resolveOIDCUserID(ctx, tx, issuer, subject, id, now)
 	if err != nil {
 		return User{}, err
-	}
-	if id.Admin {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO super_admins(user_id, created_at, created_by_user_id) VALUES (?, ?, NULL)`,
-			userID, now); err != nil {
-			return User{}, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, err
@@ -93,10 +78,10 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, id OIDCIdentity) (User, erro
 	return s.UserByID(ctx, userID)
 }
 
-func resolveOIDCUserID(ctx context.Context, tx *sql.Tx, subject string, id OIDCIdentity, now string) (string, error) {
-	// 1. Already linked to this subject.
+func resolveOIDCUserID(ctx context.Context, tx *sql.Tx, issuer, subject string, id OIDCIdentity, now string) (string, error) {
+	// 1. Already linked to this issuer+subject.
 	var existingID string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE subject = ?`, subject).Scan(&existingID)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE issuer = ? AND subject = ?`, issuer, subject).Scan(&existingID)
 	if err == nil {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE users SET email = ?, display_name = COALESCE(NULLIF(display_name, ''), ?), last_login_at = ?, updated_at = ? WHERE id = ?`,
@@ -109,39 +94,17 @@ func resolveOIDCUserID(ctx context.Context, tx *sql.Tx, subject string, id OIDCI
 		return "", err
 	}
 
-	// 2. Link an existing local account by username == preferred_username/email.
-	for _, candidate := range []string{id.PreferredUsername, id.Email} {
-		norm := normalizeUsername(candidate)
-		if norm == "" {
-			continue
-		}
-		var localID string
-		err := tx.QueryRowContext(ctx,
-			`SELECT id FROM users WHERE username_norm = ? AND (subject IS NULL OR subject = '')`, norm).Scan(&localID)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE users SET subject = ?, email = ?, display_name = COALESCE(NULLIF(display_name, ''), ?), last_login_at = ?, updated_at = ? WHERE id = ?`,
-			subject, id.Email, id.Name, now, now, localID); err != nil {
-			return "", err
-		}
-		return localID, nil
-	}
-
-	// 3. Auto-provision a fresh account keyed on the subject.
+	// 2. Auto-provision a fresh cloud account keyed on issuer+subject. Local
+	// accounts are never linked automatically by username or email.
 	username, err := uniqueUsername(ctx, tx, oidcUsername(id, subject))
 	if err != nil {
 		return "", err
 	}
 	newUserID := newID("usr")
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO users(id, username, username_norm, password_hash, display_name, email, subject, disabled, created_at, updated_at, password_changed_at, last_login_at)
-		VALUES (?, ?, ?, '', ?, ?, ?, 0, ?, ?, ?, ?)`,
-		newUserID, username, normalizeUsername(username), id.Name, id.Email, subject, now, now, now, now); err != nil {
+		INSERT INTO users(id, username, username_norm, password_hash, display_name, email, issuer, subject, disabled, created_at, updated_at, password_changed_at, last_login_at)
+		VALUES (?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+		newUserID, username, normalizeUsername(username), id.Name, id.Email, issuer, subject, now, now, now, now); err != nil {
 		return "", err
 	}
 	return newUserID, nil

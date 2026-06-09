@@ -87,14 +87,14 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.accounts.UpsertOIDCUser(r.Context(), account.OIDCIdentity{
+		Issuer:            tokens.Identity.Issuer,
 		Subject:           tokens.Identity.Subject,
 		Email:             tokens.Identity.Email,
 		Name:              tokens.Identity.Name,
 		PreferredUsername: tokens.Identity.PreferredUsername,
-		Admin:             tokens.Identity.Admin,
 	})
 	if err != nil {
-		logs.Error("oidc provisioning failed for sub=%s: %v", tokens.Identity.Subject, err)
+		logs.Error("oidc provisioning failed for iss=%s sub=%s: %v", tokens.Identity.Issuer, tokens.Identity.Subject, err)
 		h.loginError(w, r, "could not provision your account")
 		return
 	}
@@ -105,6 +105,7 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.sessions.Issue(w, r, sessionData{
 		UserID:        user.ID,
+		Issuer:        user.Issuer,
 		Subject:       user.Subject,
 		Username:      user.Username,
 		SuperAdmin:    user.SuperAdmin,
@@ -114,7 +115,7 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	logs.Info("oidc login: %q (id=%s, admin=%v)", user.Username, user.ID, user.SuperAdmin)
+	logs.Info("oidc login: %q (id=%s, iss=%s, sub=%s)", user.Username, user.ID, user.Issuer, user.Subject)
 	http.Redirect(w, r, tx.ReturnTo, http.StatusFound)
 }
 
@@ -129,6 +130,10 @@ func (h *Handler) refreshSession(w http.ResponseWriter, r *http.Request, session
 	tokens, err := provider.Refresh(r.Context(), session.RefreshToken)
 	if err != nil {
 		logs.Warn("oidc refresh failed for sub=%s: %v", session.Subject, err)
+		return sessionData{}, false
+	}
+	if tokens.Identity.Issuer != session.Issuer || tokens.Identity.Subject != session.Subject {
+		logs.Warn("oidc refresh identity changed from iss=%s sub=%s to iss=%s sub=%s", session.Issuer, session.Subject, tokens.Identity.Issuer, tokens.Identity.Subject)
 		return sessionData{}, false
 	}
 	session.IDTokenExpiry = tokens.IDTokenExpiry

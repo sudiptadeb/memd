@@ -269,15 +269,11 @@ issuer URL, client ID, client secret, and the same redirect URI, then save.
    **Standard flow**.
 3. Set **Valid redirect URIs** to `https://memd.example.com/auth/callback`.
 4. Copy the secret from **Credentials**.
-5. (For admin-by-group) add a **Group Membership** mapper named `groups` to the
-   client's dedicated scope so a `groups` claim appears in the ID token, and put
-   your admins in a group such as `memd-admins`.
-6. In memd's *Single sign-on* form:
+5. In memd's *Single sign-on* form:
    - Issuer URL: `https://keycloak.example.com/realms/<realm>`
    - Client ID: `memd`
    - Client secret: *(from step 4)*
    - Redirect URI: `https://memd.example.com/auth/callback`
-   - Groups claim: `groups`, Admin group: `memd-admins`
 
 #### Generic OIDC provider
 
@@ -287,37 +283,24 @@ Any compliant provider works the same way:
   `https://your-tenant.auth0.com`, `https://<tenant>.okta.com`).
 - Client ID / secret: from the application you registered.
 - Redirect URI: `https://memd.example.com/auth/callback`.
-- **Admin mapping:** if your IdP emits group/role claims, set *Groups claim* and
-  *Admin group*. If it does **not** (e.g. plain Google), leave those blank and
-  list your administrators under **Admin emails** (or **Admin subjects**).
 - **Refresh tokens:** memd requests offline access automatically. Some IdPs only
   issue a refresh token when `offline_access` is in the scopes — add it to
   *Scopes* if needed.
 
-### Granting admin
+### Admin And Roles
 
-Admin rights are derived from the IdP, kept separate from authentication, via
-either:
-
-- **A group claim** — set *Admin group* to a group name; members of that group
-  (in the configured *Groups claim*) become admins, or
-- **An allowlist** — *Admin emails* or *Admin subjects*, for IdPs that don't
-  emit groups.
-
-OIDC logins only ever **grant** admin (they never silently demote), so an admin
-who bootstrapped the deployment isn't locked out by an IdP group change. Disable
-accounts from the admin UI when you need to revoke access.
+OIDC only authenticates cloud accounts. It does not grant super-admin rights,
+team ownership, or team admin roles from IdP claims. Super admins remain local
+accounts created through the separate local-login bootstrap/admin flow, and team
+roles are managed inside memd.
 
 ### Migrating existing accounts
 
 Pre-SSO accounts were created with a username and password. On a user's **first
-OIDC login**, memd links the existing local account when the token's
-`preferred_username` or `email` matches that account's username — it attaches the
-`sub` and stores the email, and the account keeps its roles (including super
-admin). Every login after that resolves by `sub`. So an existing admin simply
-signs in through SSO with a matching username/email and retains admin. No manual
-step is required as long as the usernames line up; otherwise grant admin via the
-allowlist.
+OIDC login**, memd creates a separate cloud account keyed by the token's
+`iss` + `sub`. It never links that cloud identity to an existing local account
+by username or email. Keep the local super-admin account for administration and
+assign any team roles inside memd after the cloud account exists.
 
 ## Accounts, Data, And Migration
 
@@ -325,7 +308,7 @@ Configured mode stores control-plane metadata in `memd.db`, using cgo-free
 SQLite by default:
 
 - local users and Argon2id password hashes
-- OIDC identities (`sub`, email) for SSO users, plus the stored OIDC config
+- OIDC identities (`iss` + `sub`, email) for SSO users, plus the stored OIDC config
 - super-admin markers
 - teams, memberships, invite token hashes, and invite use records
 - user-owned directories and connectors, including connector bearer tokens and

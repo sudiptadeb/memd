@@ -14,7 +14,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	want := sessionData{UserID: "usr_1", Subject: "idp|x", Username: "ada", SuperAdmin: true}
+	want := sessionData{UserID: "usr_1", Issuer: "https://idp.example.com", Subject: "idp|x", Username: "ada", SuperAdmin: true}
 	if err := sm.Issue(rec, req, want); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("Read failed for valid cookie")
 	}
-	if got.UserID != want.UserID || got.Subject != want.Subject || !got.SuperAdmin {
+	if got.UserID != want.UserID || got.Issuer != want.Issuer || got.Subject != want.Subject || !got.SuperAdmin {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }

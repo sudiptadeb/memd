@@ -2,7 +2,6 @@ package oidc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -25,12 +24,11 @@ type Provider struct {
 
 // Identity is the verified, IdP-agnostic view of an authenticated user.
 type Identity struct {
+	Issuer            string
 	Subject           string
 	Email             string
 	Name              string
 	PreferredUsername string
-	Groups            []string
-	Admin             bool
 }
 
 // Tokens is the result of a successful code exchange or refresh.
@@ -125,13 +123,12 @@ func (p *Provider) tokensFrom(ctx context.Context, tok *oauth2.Token, expectedNo
 		return nil, fmt.Errorf("decode id token claims: %w", err)
 	}
 	identity := Identity{
+		Issuer:            idToken.Issuer,
 		Subject:           idToken.Subject,
 		Email:             claims.Email,
 		Name:              claims.displayName(),
 		PreferredUsername: claims.PreferredUsername,
-		Groups:            claims.groups(p.cfg.GroupsClaim),
 	}
-	identity.Admin = p.computeAdmin(identity)
 
 	return &Tokens{
 		Identity:      identity,
@@ -163,49 +160,14 @@ func (p *Provider) LogoutURL(idTokenHint string) string {
 	return u.String()
 }
 
-// computeAdmin derives admin rights from the allowlists or the configured group
-// claim. This is authorization, kept separate from authentication.
-func (p *Provider) computeAdmin(id Identity) bool {
-	for _, s := range p.cfg.AdminSubjects {
-		if s == id.Subject {
-			return true
-		}
-	}
-	for _, e := range p.cfg.AdminEmails {
-		if id.Email != "" && strings.EqualFold(e, id.Email) {
-			return true
-		}
-	}
-	if p.cfg.AdminGroup != "" {
-		for _, g := range id.Groups {
-			if g == p.cfg.AdminGroup {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// claimsJSON captures the standard claims plus a flexible groups bucket. The
-// groups claim name is configurable, so groups are pulled from a generic map.
+// claimsJSON captures the standard display claims memd stores for convenience.
+// Authorization is local-only; these claims do not grant roles.
 type claimsJSON struct {
 	Email             string `json:"email"`
 	Name              string `json:"name"`
 	GivenName         string `json:"given_name"`
 	FamilyName        string `json:"family_name"`
 	PreferredUsername string `json:"preferred_username"`
-
-	extra map[string]any
-}
-
-func (c *claimsJSON) UnmarshalJSON(data []byte) error {
-	type alias claimsJSON
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*c = claimsJSON(a)
-	return json.Unmarshal(data, &c.extra)
 }
 
 func (c claimsJSON) displayName() string {
@@ -217,30 +179,4 @@ func (c claimsJSON) displayName() string {
 		return full
 	}
 	return c.PreferredUsername
-}
-
-// groups extracts group/role names from the configured claim, accepting either
-// a JSON array of strings or a single string.
-func (c claimsJSON) groups(claim string) []string {
-	raw, ok := c.extra[claim]
-	if !ok {
-		return nil
-	}
-	switch v := raw.(type) {
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	case string:
-		if v == "" {
-			return nil
-		}
-		return []string{v}
-	default:
-		return nil
-	}
 }
