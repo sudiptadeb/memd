@@ -12,6 +12,7 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/sudiptadeb/memd/server/internal/oidc"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
@@ -24,14 +25,14 @@ func TestLogsAPIIsNotCached(t *testing.T) {
 		t.Fatalf("CreateSuperAdmin: %v", err)
 	}
 	mux := http.NewServeMux()
-	handler := New(reg, accounts, "http://127.0.0.1:7878")
+	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager())
 	handler.Mount(mux)
 
 	logs.Info("activity polling regression marker")
 	req := httptest.NewRequest(http.MethodGet, "/api/logs?since=-1", nil)
 	recForCookie := httptest.NewRecorder()
-	if err := handler.sessions.Create(recForCookie, req, admin.ID, admin.Username, admin.SuperAdmin); err != nil {
-		t.Fatalf("Create session: %v", err)
+	if err := handler.sessions.Issue(recForCookie, req, sessionData{UserID: admin.ID, Username: admin.Username, SuperAdmin: admin.SuperAdmin}); err != nil {
+		t.Fatalf("Issue session: %v", err)
 	}
 	for _, cookie := range recForCookie.Result().Cookies() {
 		req.AddCookie(cookie)
@@ -102,8 +103,8 @@ func TestAdminUsersRejectsRegularUser(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
 	recForCookie := httptest.NewRecorder()
-	if err := handler.sessions.Create(recForCookie, req, regular.ID, regular.Username, regular.SuperAdmin); err != nil {
-		t.Fatalf("Create session: %v", err)
+	if err := handler.sessions.Issue(recForCookie, req, sessionData{UserID: regular.ID, Username: regular.Username, SuperAdmin: regular.SuperAdmin}); err != nil {
+		t.Fatalf("Issue session: %v", err)
 	}
 	for _, cookie := range recForCookie.Result().Cookies() {
 		req.AddCookie(cookie)
@@ -125,8 +126,8 @@ func TestUserDataAPIRejectsSuperAdmin(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/data", nil)
 	recForCookie := httptest.NewRecorder()
-	if err := handler.sessions.Create(recForCookie, req, admin.ID, admin.Username, admin.SuperAdmin); err != nil {
-		t.Fatalf("Create session: %v", err)
+	if err := handler.sessions.Issue(recForCookie, req, sessionData{UserID: admin.ID, Username: admin.Username, SuperAdmin: admin.SuperAdmin}); err != nil {
+		t.Fatalf("Issue session: %v", err)
 	}
 	for _, cookie := range recForCookie.Result().Cookies() {
 		req.AddCookie(cookie)
@@ -138,20 +139,28 @@ func TestUserDataAPIRejectsSuperAdmin(t *testing.T) {
 	}
 }
 
-func TestSessionAPIRejectsMissingSession(t *testing.T) {
+func TestSessionAPIReportsAnonymous(t *testing.T) {
 	accounts := openTestAccountStore(t)
 	mux, _ := newTestUI(t, accounts)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/session", nil))
-	if rec.Code != http.StatusUnauthorized {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	var body map[string]string
+	var body struct {
+		User any `json:"user"`
+		Auth struct {
+			OIDCEnabled bool `json:"oidc_enabled"`
+		} `json:"auth"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("session response is not JSON: %v", err)
 	}
-	if body["error"] == "" {
-		t.Fatalf("session response missing error: %s", rec.Body.String())
+	if body.User != nil {
+		t.Fatalf("expected anonymous session, got user=%v", body.User)
+	}
+	if body.Auth.OIDCEnabled {
+		t.Fatalf("expected oidc disabled in test")
 	}
 }
 
@@ -179,7 +188,16 @@ func newTestUI(t *testing.T, accounts *account.Store) (*http.ServeMux, *Handler)
 	reg := registry.NewEphemeral()
 	t.Cleanup(func() { _ = reg.Close() })
 	mux := http.NewServeMux()
-	handler := New(reg, accounts, "http://127.0.0.1:7878")
+	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager())
 	handler.Mount(mux)
 	return mux, handler
+}
+
+func newTestSessions(t *testing.T) *SessionManager {
+	t.Helper()
+	sm, err := NewSessionManager("test-secret-key", 0)
+	if err != nil {
+		t.Fatalf("NewSessionManager: %v", err)
+	}
+	return sm
 }

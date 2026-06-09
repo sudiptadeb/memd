@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 )
@@ -15,22 +16,31 @@ type sessionUser struct {
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+	Email       string `json:"email,omitempty"`
 	SuperAdmin  bool   `json:"super_admin"`
 }
 
 type authContextKey struct{}
+
+// authConfig tells the front-end which sign-in options to render. Local login is
+// always available as a backup for super-admin-created accounts; SSO is the
+// default flow when an IdP is configured.
+type authConfig struct {
+	OIDCEnabled bool `json:"oidc_enabled"`
+}
 
 func (h *Handler) sessionAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	user, ok := h.currentUser(w, r)
-	if !ok {
-		httpErr(w, http.StatusUnauthorized, errors.New("not authenticated"))
-		return
+	resp := map[string]any{"auth": authConfig{OIDCEnabled: h.oidcEnabled()}}
+	if user, ok := h.currentUser(w, r); ok {
+		resp["user"] = sessionUserFromAccount(user)
+	} else {
+		resp["user"] = nil
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": sessionUserFromAccount(user)})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) loginAPI(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +61,11 @@ func (h *Handler) loginAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusUnauthorized, account.ErrInvalidCredentials)
 		return
 	}
-	if err := h.sessions.Create(w, r, user.ID, user.Username, user.SuperAdmin); err != nil {
+	if err := h.sessions.Issue(w, r, sessionData{
+		UserID:     user.ID,
+		Username:   user.Username,
+		SuperAdmin: user.SuperAdmin,
+	}); err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -63,8 +77,19 @@ func (h *Handler) logoutAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	session, _ := h.sessions.Read(r)
 	h.sessions.Clear(w, r)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	resp := map[string]any{"ok": true}
+	// For SSO sessions, hand the browser the IdP's RP-initiated logout URL so
+	// the front-end can complete a single logout.
+	if session.Subject != "" {
+		if provider := h.oidc.Provider(); provider != nil {
+			if logoutURL := provider.LogoutURL(""); logoutURL != "" {
+				resp["logout_url"] = logoutURL
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) requireUser(next http.HandlerFunc) http.HandlerFunc {
@@ -91,10 +116,20 @@ func (h *Handler) requireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (h *Handler) currentUser(w http.ResponseWriter, r *http.Request) (account.User, bool) {
-	session, ok := h.sessions.Get(r)
+	session, ok := h.sessions.Read(r)
 	if !ok {
 		return account.User{}, false
 	}
+	// Silently refresh an expired OIDC ID token while under the absolute cap.
+	if session.needsRefresh(time.Now()) {
+		refreshed, ok := h.refreshSession(w, r, session)
+		if !ok {
+			h.sessions.Clear(w, r)
+			return account.User{}, false
+		}
+		session = refreshed
+	}
+	// Always reload the user so disable/role changes take effect immediately.
 	user, err := h.accounts.UserByID(r.Context(), session.UserID)
 	if err != nil || user.Disabled {
 		h.sessions.Clear(w, r)
@@ -116,6 +151,7 @@ func sessionUserFromAccount(user account.User) sessionUser {
 		ID:          user.ID,
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
+		Email:       user.Email,
 		SuperAdmin:  user.SuperAdmin,
 	}
 }
