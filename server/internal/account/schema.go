@@ -11,13 +11,20 @@ var schemaStatements = []string{
 		id TEXT PRIMARY KEY,
 		username TEXT NOT NULL,
 		username_norm TEXT NOT NULL UNIQUE,
-		password_hash TEXT NOT NULL,
+		password_hash TEXT NOT NULL DEFAULT '',
 		display_name TEXT NOT NULL DEFAULT '',
 		disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
 		password_changed_at TEXT NOT NULL,
-		last_login_at TEXT
+		last_login_at TEXT,
+		email TEXT NOT NULL DEFAULT '',
+		subject TEXT
+	)`,
+	`CREATE TABLE IF NOT EXISTS app_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS super_admins (
 		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

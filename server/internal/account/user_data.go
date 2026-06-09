@@ -92,10 +92,8 @@ func (b UserDataBundle) validate() error {
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (User, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at,
-		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
-		  FROM users u
-		  LEFT JOIN super_admins sa ON sa.user_id = u.id
+		SELECT `+userColumns+`
+		  `+userJoin+`
 		 WHERE u.username_norm = ?`, normalizeUsername(username))
 	user, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {

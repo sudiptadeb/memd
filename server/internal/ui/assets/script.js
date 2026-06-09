@@ -205,6 +205,8 @@
     return {
       sessionChecked: false,
       user: null,
+      oidcEnabled: false,
+      showLocalLogin: false,
       loading: true,
       loadErr: "",
       inviteToken: "",
@@ -253,6 +255,7 @@
         if (this.inviteToken) {
           await this.loadInvitePreview();
         }
+        this.readLoginError();
         await this.checkSession();
         if (this.user) {
           await this.load();
@@ -260,10 +263,24 @@
         }
       },
 
+      readLoginError() {
+        const params = new URLSearchParams(window.location.search);
+        const err = params.get("login_error");
+        if (err) {
+          this.loginForm.err = err;
+          params.delete("login_error");
+          const qs = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+        }
+      },
+
       async checkSession() {
         try {
           const data = await api("/api/session", { cache: "no-store" });
           this.user = data.user || null;
+          this.oidcEnabled = Boolean(data.auth && data.auth.oidc_enabled);
+          // When SSO is the default, keep the local form tucked away as a backup.
+          this.showLocalLogin = !this.oidcEnabled;
         } catch (error) {
           this.user = null;
         } finally {
@@ -271,6 +288,10 @@
           this.sessionChecked = true;
           this.loading = false;
         }
+      },
+
+      ssoLogin() {
+        window.location.href = "/auth/login";
       },
 
       async login() {
@@ -298,7 +319,11 @@
       },
 
       async logout() {
-        await fetch("/api/auth/logout", { method: "POST" }).catch(function () {});
+        let logoutURL = "";
+        try {
+          const data = await api("/api/auth/logout", { method: "POST" });
+          logoutURL = (data && data.logout_url) || "";
+        } catch (error) {}
         this.stopLogs();
         this.user = null;
         this.directories = [];
@@ -313,6 +338,9 @@
         this.navOpen = false;
         storageSet("memd-view", this.activeView);
         this.closeOverlays();
+        if (logoutURL) {
+          window.location.href = logoutURL;
+        }
       },
 
       startLogs() {

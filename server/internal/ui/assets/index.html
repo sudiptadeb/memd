@@ -38,26 +38,42 @@
     </header>
 
     <main class="login-shell" x-show="sessionChecked && !user" x-cloak>
-      <form class="login-panel" @submit.prevent="login()">
+      <div class="login-panel">
         <div class="login-head">
-          <span class="eyebrow">memd local login</span>
+          <span class="eyebrow">memd</span>
           <h1>Sign in</h1>
         </div>
         <div class="invite-callout" x-show="invitePreview || inviteErr" x-cloak>
           <div class="label" x-text="invitePreview ? ('Join ' + invitePreview.team_name) : 'Team invite'"></div>
           <div class="sub" x-text="invitePreview ? ('Role: ' + roleLabel(invitePreview.role)) : inviteErr"></div>
         </div>
-        <div class="field">
-          <label class="field-label">Username</label>
-          <input class="input" x-model="loginForm.username" autocomplete="username" required autofocus />
-        </div>
-        <div class="field">
-          <label class="field-label">Password</label>
-          <input class="input" x-model="loginForm.password" type="password" autocomplete="current-password" required />
-        </div>
+
         <span class="err" x-text="loginForm.err" x-show="loginForm.err"></span>
-        <button class="btn primary login-submit" type="submit" :disabled="loginForm.submitting">Sign in</button>
-      </form>
+
+        <!-- Default flow: single sign-on via the configured identity provider. -->
+        <template x-if="oidcEnabled">
+          <div class="sso-block">
+            <button class="btn primary login-submit" type="button" @click="ssoLogin()">Continue with SSO</button>
+            <button class="linklike" type="button" @click="showLocalLogin = !showLocalLogin" x-text="showLocalLogin ? 'Hide local sign-in' : 'Use a local account instead'"></button>
+          </div>
+        </template>
+
+        <!-- Backup: local accounts created by a super admin. No self-signup. -->
+        <form class="local-login" @submit.prevent="login()" x-show="showLocalLogin" x-cloak>
+          <div class="login-note" x-show="oidcEnabled" x-cloak>
+            Local sign-in is a backup for accounts a super admin created. You cannot create an account here.
+          </div>
+          <div class="field">
+            <label class="field-label">Username</label>
+            <input class="input" x-model="loginForm.username" autocomplete="username" required autofocus />
+          </div>
+          <div class="field">
+            <label class="field-label">Password</label>
+            <input class="input" x-model="loginForm.password" type="password" autocomplete="current-password" required />
+          </div>
+          <button class="btn login-submit" :class="oidcEnabled ? 'secondary' : 'primary'" type="submit" :disabled="loginForm.submitting">Sign in</button>
+        </form>
+      </div>
     </main>
 
     <div class="body" x-show="sessionChecked && user" x-cloak :class="{ 'logs-hidden': logsHidden || activeView === 'logs', 'view-logs': activeView === 'logs' }">

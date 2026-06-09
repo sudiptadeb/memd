@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/sudiptadeb/memd/server/internal/oidc"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 )
 
@@ -27,14 +27,21 @@ type Handler struct {
 	reg      *registry.Registry
 	accounts *account.Store
 	sessions *SessionManager
+	oidc     *oidc.Manager
 	baseURL  string
 }
 
-func New(reg *registry.Registry, accounts *account.Store, baseURL string) *Handler {
+// New builds the web UI handler. sessions carries the cookie-sealing key and
+// oidc is the runtime-swappable IdP provider (may be disabled).
+func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessions *SessionManager, oidcMgr *oidc.Manager) *Handler {
+	if oidcMgr == nil {
+		oidcMgr = oidc.NewManager()
+	}
 	return &Handler{
 		reg:      reg,
 		accounts: accounts,
-		sessions: NewSessionManager(24 * time.Hour),
+		sessions: sessions,
+		oidc:     oidcMgr,
 		baseURL:  baseURL,
 	}
 }
@@ -46,9 +53,12 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/session", h.sessionAPI)
 	mux.HandleFunc("/api/auth/login", h.loginAPI)
 	mux.HandleFunc("/api/auth/logout", h.logoutAPI)
+	mux.HandleFunc("/auth/login", h.oidcLogin)
+	mux.HandleFunc("/auth/callback", h.oidcCallback)
 	mux.HandleFunc("/api/data", h.requireUser(h.userDataAPI))
 	mux.HandleFunc("/api/admin/users", h.requireSuperAdmin(h.adminUsersAPI))
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
+	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))
 	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))
 	mux.HandleFunc("/api/teams/", h.requireUser(h.teamAPI))
 	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
