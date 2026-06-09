@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
@@ -67,11 +68,23 @@ func RunOptions(opts Options) error {
 	}
 	baseURL := fmt.Sprintf("http://%s", addr)
 
+	sessions, err := ui.NewSessionManager(os.Getenv("MEMD_SESSION_SECRET"), sessionMaxAge())
+	if err != nil {
+		return fmt.Errorf("init sessions: %w", err)
+	}
+	if sessions.Ephemeral() {
+		logs.Warn("MEMD_SESSION_SECRET is not set; using an ephemeral session key (logins reset on restart)")
+	}
+	oidcMgr := ui.LoadOIDCFromStore(ctx, accountStore)
+	if oidcMgr.Enabled() {
+		logs.Info("OIDC SSO enabled")
+	}
+
 	mux := http.NewServeMux()
 	mcpSrv := mcp.New(reg, doctrine.Text, "memd", version.Value)
 	mcpSrv.Mount(mux, "/mcp/")
 	mcpSrv.MountHTTP(mux, "/http/")
-	ui.New(reg, accountStore, baseURL).Mount(mux)
+	ui.New(reg, accountStore, baseURL, sessions, oidcMgr).Mount(mux)
 
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
 	fmt.Fprintln(opts.Stdout, "Press Ctrl-C to stop.")
@@ -104,6 +117,18 @@ func RunOptions(opts Options) error {
 		}
 		return nil
 	}
+}
+
+// sessionMaxAge is the absolute session-lifetime cap, overridable via
+// MEMD_SESSION_MAX_AGE (a Go duration like "12h"). Defaults to 24h.
+func sessionMaxAge() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("MEMD_SESSION_MAX_AGE")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+		logs.Warn("invalid MEMD_SESSION_MAX_AGE %q; using default", raw)
+	}
+	return 24 * time.Hour
 }
 
 func openAccountStore(ctx context.Context) (*account.Store, error) {

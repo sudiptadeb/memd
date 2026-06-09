@@ -363,6 +363,74 @@ a {
   margin-top: 2px;
 }
 
+.sso-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.local-login {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.login-note {
+  color: var(--fg-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg-3);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.linklike:hover {
+  color: var(--fg-1);
+}
+
+.oidc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.oidc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.oidc-grid .oidc-wide {
+  grid-column: 1 / -1;
+}
+
+.oidc-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ok-msg {
+  color: var(--success, #2e7d32);
+  font-size: 12.5px;
+}
+
+@media (max-width: 640px) {
+  .oidc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .main {
   display: flex;
   flex-direction: column;

@@ -43,15 +43,46 @@
     return { username: "", display_name: "", password: "", err: "", submitting: false };
   }
 
+  function splitCSV(value) {
+    return String(value || "")
+      .split(",")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  function defaultOIDCForm() {
+    return {
+      enabled: false,
+      issuer_url: "",
+      client_id: "",
+      client_secret: "",
+      has_client_secret: false,
+      redirect_uri: "",
+      scopes: "",
+      groups_claim: "",
+      admin_group: "",
+      admin_subjects: "",
+      admin_emails: "",
+      post_logout_redirect_uri: "",
+      active: false,
+      err: "",
+      msg: "",
+      saving: false
+    };
+  }
+
   window.memdAdminApp = function () {
     return {
       sessionChecked: false,
       user: null,
+      oidcEnabled: false,
+      showLocalLogin: false,
       users: [],
       loading: false,
       loadErr: "",
       loginForm: defaultLoginForm(),
       userForm: defaultUserForm(),
+      oidcForm: defaultOIDCForm(),
       theme: storageGet("memd-theme", "light"),
       sheet: null,
       toast: "",
@@ -59,10 +90,27 @@
 
       async init() {
         this.setTheme(this.theme);
+        this.readLoginError();
         await this.checkSession();
         if (this.user && this.user.super_admin) {
           await this.loadUsers();
+          await this.loadOIDC();
         }
+      },
+
+      readLoginError() {
+        const params = new URLSearchParams(window.location.search);
+        const err = params.get("login_error");
+        if (err) {
+          this.loginForm.err = err;
+          params.delete("login_error");
+          const qs = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+        }
+      },
+
+      ssoLogin() {
+        window.location.href = "/auth/login";
       },
 
       setTheme(theme) {
@@ -79,6 +127,8 @@
         try {
           const data = await api("/api/session", { cache: "no-store" });
           this.user = data.user || null;
+          this.oidcEnabled = Boolean(data.auth && data.auth.oidc_enabled);
+          this.showLocalLogin = !this.oidcEnabled;
         } catch (_) {
           this.user = null;
         } finally {
@@ -102,6 +152,7 @@
           this.loginForm = defaultLoginForm();
           if (this.user && this.user.super_admin) {
             await this.loadUsers();
+            await this.loadOIDC();
           }
         } catch (error) {
           this.loginForm.err = error.message || "login failed";
@@ -111,10 +162,82 @@
       },
 
       async logout() {
-        await fetch("/api/auth/logout", { method: "POST" }).catch(function () {});
+        let logoutURL = "";
+        try {
+          const data = await api("/api/auth/logout", { method: "POST" });
+          logoutURL = (data && data.logout_url) || "";
+        } catch (_) {}
         this.user = null;
         this.users = [];
         this.closeSheets();
+        if (logoutURL) {
+          window.location.href = logoutURL;
+        }
+      },
+
+      async loadOIDC() {
+        try {
+          const data = await api("/api/admin/oidc", { cache: "no-store" });
+          this.applyOIDC(data.oidc || {});
+        } catch (error) {
+          this.oidcForm.err = error.message || "could not load OIDC settings";
+        }
+      },
+
+      applyOIDC(cfg) {
+        this.oidcForm = Object.assign(defaultOIDCForm(), {
+          enabled: Boolean(cfg.enabled),
+          issuer_url: cfg.issuer_url || "",
+          client_id: cfg.client_id || "",
+          client_secret: "",
+          has_client_secret: Boolean(cfg.has_client_secret),
+          redirect_uri: cfg.redirect_uri || "",
+          scopes: cfg.scopes || "",
+          groups_claim: cfg.groups_claim || "",
+          admin_group: cfg.admin_group || "",
+          admin_subjects: (cfg.admin_subjects || []).join(", "),
+          admin_emails: (cfg.admin_emails || []).join(", "),
+          post_logout_redirect_uri: cfg.post_logout_redirect_uri || "",
+          active: Boolean(cfg.active)
+        });
+      },
+
+      async saveOIDC() {
+        this.oidcForm.err = "";
+        this.oidcForm.msg = "";
+        this.oidcForm.saving = true;
+        const body = {
+          enabled: this.oidcForm.enabled,
+          issuer_url: this.oidcForm.issuer_url,
+          client_id: this.oidcForm.client_id,
+          redirect_uri: this.oidcForm.redirect_uri,
+          scopes: this.oidcForm.scopes,
+          groups_claim: this.oidcForm.groups_claim,
+          admin_group: this.oidcForm.admin_group,
+          admin_subjects: splitCSV(this.oidcForm.admin_subjects),
+          admin_emails: splitCSV(this.oidcForm.admin_emails),
+          post_logout_redirect_uri: this.oidcForm.post_logout_redirect_uri
+        };
+        // Only send the secret when the admin typed a new one; otherwise keep
+        // the stored value untouched.
+        if (this.oidcForm.client_secret) {
+          body.client_secret = this.oidcForm.client_secret;
+        }
+        try {
+          const data = await api("/api/admin/oidc", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          this.applyOIDC(data.oidc || {});
+          this.oidcEnabled = Boolean(data.oidc && data.oidc.active);
+          this.oidcForm.msg = this.oidcForm.enabled ? "OIDC saved and applied." : "OIDC disabled.";
+          this.showToast("OIDC settings saved");
+        } catch (error) {
+          this.oidcForm.err = error.message || "could not save OIDC settings";
+        } finally {
+          this.oidcForm.saving = false;
+        }
       },
 
       async loadUsers() {
