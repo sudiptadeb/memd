@@ -50,6 +50,7 @@ type Config struct {
 type Directory struct {
 	ID          string    `json:"id"`
 	OwnerUserID string    `json:"owner_user_id,omitempty"`
+	TeamID      string    `json:"team_id,omitempty"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Backend     string    `json:"backend"` // "local" or "git"
@@ -82,6 +83,7 @@ type Git struct {
 type Connector struct {
 	ID           string    `json:"id"`
 	OwnerUserID  string    `json:"owner_user_id,omitempty"`
+	TeamID       string    `json:"team_id,omitempty"`
 	Name         string    `json:"name"`
 	Kind         string    `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
 	Token        string    `json:"token"`

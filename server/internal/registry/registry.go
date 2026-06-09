@@ -216,6 +216,15 @@ func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
 			return "", err
 		}
+		if d.TeamID != "" {
+			ok, err := r.accounts.CanManageTeamData(context.Background(), d.TeamID, ownerUserID)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				return "", account.ErrForbidden
+			}
+		}
 	}
 	d.OwnerUserID = ownerUserID
 	if d.ID == "" {
@@ -276,6 +285,100 @@ func (r *Registry) DeleteDirectoryForUser(ownerUserID, id string) error {
 	return r.save()
 }
 
+func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (config.Directory, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Directory{}, err
+		}
+		if teamID != "" {
+			ok, err := r.accounts.CanManageTeamData(context.Background(), teamID, actorUserID)
+			if err != nil {
+				return config.Directory{}, err
+			}
+			if !ok {
+				return config.Directory{}, account.ErrForbidden
+			}
+		}
+	}
+	_, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	for i, d := range r.cfg.Directories {
+		if d.ID != id {
+			continue
+		}
+		if d.OwnerUserID == actorUserID || (d.TeamID != "" && manageTeams[d.TeamID]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Directory{}, errors.New("directory not found")
+	}
+	current := r.cfg.Directories[idx]
+	if current.OwnerUserID != actorUserID && (current.TeamID == "" || !manageTeams[current.TeamID]) {
+		r.mu.Unlock()
+		return config.Directory{}, account.ErrForbidden
+	}
+	if current.TeamID != "" && current.TeamID != teamID && !manageTeams[current.TeamID] {
+		r.mu.Unlock()
+		return config.Directory{}, account.ErrForbidden
+	}
+	current.TeamID = teamID
+	r.cfg.Directories[idx] = current
+	r.mu.Unlock()
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserDirectory(context.Background(), current.OwnerUserID, current); err != nil {
+			return config.Directory{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Directory{}, err
+	}
+	return current, nil
+}
+
+func (r *Registry) DeleteDirectoryForActor(actorUserID, id string) error {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return err
+		}
+	}
+	_, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	var ownerUserID string
+	for i, d := range r.cfg.Directories {
+		if d.ID != id {
+			continue
+		}
+		if d.OwnerUserID == actorUserID || (d.TeamID != "" && manageTeams[d.TeamID]) {
+			idx = i
+			ownerUserID = d.OwnerUserID
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return errors.New("directory not found")
+	}
+	if b := r.backends[backendKey(ownerUserID, id)]; b != nil {
+		_ = b.Close()
+	}
+	delete(r.backends, backendKey(ownerUserID, id))
+	r.cfg.Directories = append(r.cfg.Directories[:idx], r.cfg.Directories[idx+1:]...)
+	for i := range r.cfg.Connectors {
+		if r.cfg.Connectors[i].OwnerUserID == ownerUserID {
+			r.cfg.Connectors[i].DirectoryIDs = removeString(r.cfg.Connectors[i].DirectoryIDs, id)
+		}
+	}
+	r.mu.Unlock()
+	if r.accounts != nil {
+		return r.accounts.DeleteUserDirectory(context.Background(), ownerUserID, id)
+	}
+	return r.save()
+}
+
 func (r *Registry) AddConnector(c config.Connector) (config.Connector, error) {
 	return r.AddConnectorForUser(c.OwnerUserID, c)
 }
@@ -284,6 +387,15 @@ func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
 			return config.Connector{}, err
+		}
+		if c.TeamID != "" {
+			ok, err := r.accounts.CanManageTeamData(context.Background(), c.TeamID, ownerUserID)
+			if err != nil {
+				return config.Connector{}, err
+			}
+			if !ok {
+				return config.Connector{}, account.ErrForbidden
+			}
 		}
 	}
 	c.OwnerUserID = ownerUserID
@@ -305,6 +417,12 @@ func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (
 		c.CreatedAt = time.Now()
 	}
 	r.mu.Lock()
+	if r.accounts != nil || len(r.cfg.Directories) > 0 {
+		if err := r.validateConnectorDirectoriesLocked(ownerUserID, c.TeamID, c.DirectoryIDs); err != nil {
+			r.mu.Unlock()
+			return config.Connector{}, err
+		}
+	}
 	r.cfg.Connectors = append(r.cfg.Connectors, c)
 	r.mu.Unlock()
 	if r.accounts != nil {
@@ -352,18 +470,9 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 		r.mu.Unlock()
 		return config.Connector{}, errors.New("connector not found")
 	}
-	for _, did := range directoryIDs {
-		found := false
-		for _, d := range r.cfg.Directories {
-			if d.ID == did && d.OwnerUserID == ownerUserID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			r.mu.Unlock()
-			return config.Connector{}, fmt.Errorf("unknown directory: %s", did)
-		}
+	if err := r.validateConnectorDirectoriesLocked(ownerUserID, r.cfg.Connectors[idx].TeamID, directoryIDs); err != nil {
+		r.mu.Unlock()
+		return config.Connector{}, err
 	}
 	r.cfg.Connectors[idx].Name = name
 	r.cfg.Connectors[idx].Kind = kind
@@ -379,6 +488,77 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 		return config.Connector{}, err
 	}
 	return updated, nil
+}
+
+func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, directoryIDs []string, write bool, teamID string) (config.Connector, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Connector{}, err
+		}
+		if teamID != "" {
+			ok, err := r.accounts.CanManageTeamData(context.Background(), teamID, actorUserID)
+			if err != nil {
+				return config.Connector{}, err
+			}
+			if !ok {
+				return config.Connector{}, account.ErrForbidden
+			}
+		}
+	}
+	if name == "" {
+		return config.Connector{}, errors.New("name is required")
+	}
+	if len(directoryIDs) == 0 {
+		return config.Connector{}, errors.New("at least one directory is required")
+	}
+	kind = config.NormalizeConnectorKind(kind)
+	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
+		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", kind)
+	}
+	_, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	for i, c := range r.cfg.Connectors {
+		if c.ID != id {
+			continue
+		}
+		if c.OwnerUserID == actorUserID || (c.TeamID != "" && manageTeams[c.TeamID]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Connector{}, errors.New("connector not found")
+	}
+	current := r.cfg.Connectors[idx]
+	if current.OwnerUserID != actorUserID && (current.TeamID == "" || !manageTeams[current.TeamID]) {
+		r.mu.Unlock()
+		return config.Connector{}, account.ErrForbidden
+	}
+	if current.TeamID != "" && current.TeamID != teamID && !manageTeams[current.TeamID] {
+		r.mu.Unlock()
+		return config.Connector{}, account.ErrForbidden
+	}
+	if err := r.validateConnectorDirectoriesLocked(current.OwnerUserID, teamID, directoryIDs); err != nil {
+		r.mu.Unlock()
+		return config.Connector{}, err
+	}
+	current.Name = name
+	current.Kind = kind
+	current.TeamID = teamID
+	current.DirectoryIDs = append([]string(nil), directoryIDs...)
+	current.Write = write
+	r.cfg.Connectors[idx] = current
+	r.mu.Unlock()
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserConnector(context.Background(), current.OwnerUserID, current); err != nil {
+			return config.Connector{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Connector{}, err
+	}
+	return current, nil
 }
 
 // RotateConnector replaces the connector's token with a fresh one. The
@@ -423,6 +603,45 @@ func (r *Registry) RotateConnectorForUser(ownerUserID, id string) (config.Connec
 	return updated, nil
 }
 
+func (r *Registry) RotateConnectorForActor(actorUserID, id string) (config.Connector, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Connector{}, err
+		}
+	}
+	tok, err := token.New()
+	if err != nil {
+		return config.Connector{}, err
+	}
+	_, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	for i, c := range r.cfg.Connectors {
+		if c.ID != id {
+			continue
+		}
+		if c.OwnerUserID == actorUserID || (c.TeamID != "" && manageTeams[c.TeamID]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Connector{}, errors.New("connector not found")
+	}
+	r.cfg.Connectors[idx].Token = tok
+	updated := r.cfg.Connectors[idx]
+	r.mu.Unlock()
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserConnector(context.Background(), updated.OwnerUserID, updated); err != nil {
+			return config.Connector{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Connector{}, err
+	}
+	return updated, nil
+}
+
 func (r *Registry) DeleteConnector(id string) error {
 	return r.DeleteConnectorForUser("", id)
 }
@@ -448,6 +667,38 @@ func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 	return r.save()
 }
 
+func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return err
+		}
+	}
+	_, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	var ownerUserID string
+	for i, c := range r.cfg.Connectors {
+		if c.ID != id {
+			continue
+		}
+		if c.OwnerUserID == actorUserID || (c.TeamID != "" && manageTeams[c.TeamID]) {
+			idx = i
+			ownerUserID = c.OwnerUserID
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return errors.New("connector not found")
+	}
+	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
+	r.mu.Unlock()
+	if r.accounts != nil {
+		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
+	}
+	return r.save()
+}
+
 func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBundle, replace bool) error {
 	if r.accounts == nil {
 		return errors.New("registry is not account-backed")
@@ -458,6 +709,7 @@ func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBun
 	newBackends := make(map[string]storage.Backend, len(bundle.Directories))
 	for _, d := range bundle.Directories {
 		d.OwnerUserID = ownerUserID
+		d.TeamID = ""
 		b, err := r.openBackend(d)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "memd: imported directory %q failed to open: %v\n", d.Name, err)
@@ -468,6 +720,7 @@ func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBun
 	connectors := make([]config.Connector, len(bundle.Connectors))
 	for i, c := range bundle.Connectors {
 		c.OwnerUserID = ownerUserID
+		c.TeamID = ""
 		connectors[i] = c
 	}
 
@@ -480,6 +733,7 @@ func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBun
 
 	for _, d := range bundle.Directories {
 		d.OwnerUserID = ownerUserID
+		d.TeamID = ""
 		key := backendKey(ownerUserID, d.ID)
 		found := false
 		for i, existing := range r.cfg.Directories {
@@ -535,6 +789,7 @@ func (r *Registry) replaceUserDataLocked(ownerUserID string, dirs []config.Direc
 	r.cfg.Directories = filteredDirs
 	for _, d := range dirs {
 		d.OwnerUserID = ownerUserID
+		d.TeamID = ""
 		r.cfg.Directories = append(r.cfg.Directories, d)
 		if b := newBackends[backendKey(ownerUserID, d.ID)]; b != nil {
 			r.backends[backendKey(ownerUserID, d.ID)] = b
@@ -551,11 +806,12 @@ func (r *Registry) replaceUserDataLocked(ownerUserID string, dirs []config.Direc
 }
 
 func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
+	viewTeams, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []config.Directory
 	for _, d := range r.cfg.Directories {
-		if d.OwnerUserID == ownerUserID {
+		if d.OwnerUserID == ownerUserID || (d.TeamID != "" && viewTeams[d.TeamID]) {
 			out = append(out, d)
 		}
 	}
@@ -563,15 +819,55 @@ func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
 }
 
 func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
+	viewTeams, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []config.Connector
 	for _, c := range r.cfg.Connectors {
-		if c.OwnerUserID == ownerUserID {
+		if c.OwnerUserID == ownerUserID || (c.TeamID != "" && viewTeams[c.TeamID]) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+func (r *Registry) teamAccessForUser(userID string) (map[string]bool, map[string]bool) {
+	view := map[string]bool{}
+	manage := map[string]bool{}
+	if r.accounts == nil || userID == "" {
+		return view, manage
+	}
+	teams, err := r.accounts.ListTeamsForUser(context.Background(), userID)
+	if err != nil {
+		return view, manage
+	}
+	for _, team := range teams {
+		view[team.ID] = true
+		if team.Role == account.RoleOwner || team.Role == account.RoleAdmin {
+			manage[team.ID] = true
+		}
+	}
+	return view, manage
+}
+
+func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string, directoryIDs []string) error {
+	for _, did := range directoryIDs {
+		found := false
+		for _, d := range r.cfg.Directories {
+			if d.ID != did || d.OwnerUserID != ownerUserID {
+				continue
+			}
+			if teamID != "" && d.TeamID != teamID {
+				return fmt.Errorf("directory %s is not in connector team scope", did)
+			}
+			found = true
+			break
+		}
+		if !found {
+			return fmt.Errorf("unknown directory: %s", did)
+		}
+	}
+	return nil
 }
 
 func removeString(list []string, target string) []string {

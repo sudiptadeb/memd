@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 2
+const latestSchemaVersion = 3
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -41,6 +41,26 @@ var schemaStatements = []string{
 		PRIMARY KEY (team_id, user_id)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_team_members_user_id ON team_members(user_id)`,
+	`CREATE TABLE IF NOT EXISTS team_invites (
+		id TEXT PRIMARY KEY,
+		team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+		token_hash TEXT NOT NULL UNIQUE,
+		role TEXT NOT NULL CHECK (role IN ('admin', 'member', 'viewer')),
+		max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+		use_count INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+		expires_at TEXT,
+		revoked_at TEXT,
+		created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_team_invites_team_id ON team_invites(team_id)`,
+	`CREATE TABLE IF NOT EXISTS team_invite_uses (
+		invite_id TEXT NOT NULL REFERENCES team_invites(id) ON DELETE CASCADE,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		used_at TEXT NOT NULL,
+		PRIMARY KEY (invite_id, user_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS user_directories (
 		owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		id TEXT NOT NULL,

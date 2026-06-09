@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,9 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/data", h.requireUser(h.userDataAPI))
 	mux.HandleFunc("/api/admin/users", h.requireSuperAdmin(h.adminUsersAPI))
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
+	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))
+	mux.HandleFunc("/api/teams/", h.requireUser(h.teamAPI))
+	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
 	mux.HandleFunc("/api/directories", h.requireUser(h.directoriesAPI))
 	mux.HandleFunc("/api/directories/", h.requireUser(h.directoryAPI))
 	mux.HandleFunc("/api/connectors", h.requireUser(h.connectorsAPI))
@@ -63,15 +67,23 @@ type pageData struct {
 
 type directoryView struct {
 	ID          string `json:"id"`
+	OwnerUserID string `json:"owner_user_id,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+	TeamName    string `json:"team_name,omitempty"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Backend     string `json:"backend"`
 	Detail      string `json:"detail"`
 	Error       string `json:"error,omitempty"`
+	CanManage   bool   `json:"can_manage"`
+	CanAttach   bool   `json:"can_attach"`
 }
 
 type connectorView struct {
 	ID             string   `json:"id"`
+	OwnerUserID    string   `json:"owner_user_id,omitempty"`
+	TeamID         string   `json:"team_id,omitempty"`
+	TeamName       string   `json:"team_name,omitempty"`
 	Name           string   `json:"name"`
 	Kind           string   `json:"kind"`
 	URL            string   `json:"url"`
@@ -80,6 +92,7 @@ type connectorView struct {
 	Write          bool     `json:"write"`
 	DirectoryIDs   []string `json:"directory_ids"`
 	DirectoryNames string   `json:"directory_names"`
+	CanManage      bool     `json:"can_manage"`
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +124,15 @@ func (h *Handler) adminIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) pageData(ownerUserID string) pageData {
+	teams, _ := h.accounts.ListTeamsForUser(context.Background(), ownerUserID)
+	teamNameByID := make(map[string]string, len(teams))
+	manageableTeam := make(map[string]bool, len(teams))
+	for _, team := range teams {
+		teamNameByID[team.ID] = team.Name
+		if team.Role == account.RoleOwner || team.Role == account.RoleAdmin {
+			manageableTeam[team.ID] = true
+		}
+	}
 	dirs := h.reg.DirectoriesForUser(ownerUserID)
 	dirNameByID := make(map[string]string, len(dirs))
 	dirViews := make([]directoryView, 0, len(dirs))
@@ -129,11 +151,16 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 		}
 		dirViews = append(dirViews, directoryView{
 			ID:          d.ID,
+			OwnerUserID: d.OwnerUserID,
+			TeamID:      d.TeamID,
+			TeamName:    teamNameByID[d.TeamID],
 			Name:        d.Name,
 			Description: d.Description,
 			Backend:     d.Backend,
 			Detail:      detail,
 			Error:       errMsg,
+			CanManage:   d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
+			CanAttach:   d.OwnerUserID == ownerUserID,
 		})
 	}
 	cs := h.reg.ConnectorsForUser(ownerUserID)
@@ -162,6 +189,9 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 		authURL := h.connectorAuthURL(c)
 		cViews = append(cViews, connectorView{
 			ID:             c.ID,
+			OwnerUserID:    c.OwnerUserID,
+			TeamID:         c.TeamID,
+			TeamName:       teamNameByID[c.TeamID],
 			Name:           c.Name,
 			Kind:           kind,
 			URL:            url,
@@ -170,6 +200,7 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Write:          c.Write,
 			DirectoryIDs:   ids,
 			DirectoryNames: names,
+			CanManage:      c.OwnerUserID == ownerUserID || (c.TeamID != "" && manageableTeam[c.TeamID]),
 		})
 	}
 	return pageData{Directories: dirViews, Connectors: cViews}
@@ -193,6 +224,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name        string      `json:"name"`
+		TeamID      string      `json:"team_id"`
 		Description string      `json:"description"`
 		Backend     string      `json:"backend"`
 		LocalPath   string      `json:"local_path"`
@@ -208,6 +240,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.reg.AddDirectoryForUser(user.ID, config.Directory{
 		Name:        body.Name,
+		TeamID:      body.TeamID,
 		Description: body.Description,
 		Backend:     body.Backend,
 		LocalPath:   body.LocalPath,
@@ -229,16 +262,32 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.URL.Path[len("/api/directories/"):]
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodDelete:
+		if err := h.reg.DeleteDirectoryForActor(user.ID, id); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		logs.Info("deleted directory id=%s", id)
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPatch:
+		var body struct {
+			TeamID string `json:"team_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpErr(w, http.StatusBadRequest, err)
+			return
+		}
+		d, err := h.reg.UpdateDirectoryTeamForActor(user.ID, id, body.TeamID)
+		if err != nil {
+			httpErr(w, statusForAccountError(err), err)
+			return
+		}
+		logs.Info("updated directory team scope id=%s team=%s", id, d.TeamID)
+		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "team_id": d.TeamID})
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
 	}
-	if err := h.reg.DeleteDirectoryForUser(user.ID, id); err != nil {
-		httpErr(w, http.StatusBadRequest, err)
-		return
-	}
-	logs.Info("deleted directory id=%s", id)
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Connector API ---
@@ -259,6 +308,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name         string   `json:"name"`
+		TeamID       string   `json:"team_id"`
 		Kind         string   `json:"kind"`
 		DirectoryIDs []string `json:"directory_ids"`
 		Write        bool     `json:"write"`
@@ -273,6 +323,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := h.reg.AddConnectorForUser(user.ID, config.Connector{
 		Name:         body.Name,
+		TeamID:       body.TeamID,
 		Kind:         body.Kind,
 		DirectoryIDs: body.DirectoryIDs,
 		Write:        body.Write,
@@ -301,7 +352,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 	id, action, _ := strings.Cut(tail, "/")
 	switch {
 	case action == "" && r.Method == http.MethodDelete:
-		if err := h.reg.DeleteConnectorForUser(user.ID, id); err != nil {
+		if err := h.reg.DeleteConnectorForActor(user.ID, id); err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
@@ -310,6 +361,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 	case action == "" && r.Method == http.MethodPut:
 		var body struct {
 			Name         string   `json:"name"`
+			TeamID       string   `json:"team_id"`
 			Kind         string   `json:"kind"`
 			DirectoryIDs []string `json:"directory_ids"`
 			Write        bool     `json:"write"`
@@ -318,7 +370,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		c, err := h.reg.UpdateConnectorForUser(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.Write)
+		c, err := h.reg.UpdateConnectorForActor(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.Write, body.TeamID)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
@@ -326,7 +378,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		logs.Info("updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)
 		writeJSON(w, http.StatusOK, map[string]string{"id": c.ID})
 	case action == "rotate" && r.Method == http.MethodPost:
-		c, err := h.reg.RotateConnectorForUser(user.ID, id)
+		c, err := h.reg.RotateConnectorForActor(user.ID, id)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
