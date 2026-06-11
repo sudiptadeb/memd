@@ -119,7 +119,7 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	switch req.Method {
 	case "initialize":
-		logs.Info("MCP initialize from connector %q", conn.Name)
+		logs.InfoUser(conn.OwnerUserID, "MCP initialize from connector %q", conn.Name)
 		return s.handleInitialize(conn, req)
 	case "notifications/initialized":
 		return nil
@@ -130,7 +130,7 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	case "prompts/list":
 		return s.handlePromptsList(req)
 	case "prompts/get":
-		logs.Info("MCP prompts/get from connector %q", conn.Name)
+		logs.InfoUser(conn.OwnerUserID, "MCP prompts/get from connector %q", conn.Name)
 		return s.handlePromptsGet(conn, req)
 	case "ping":
 		return &rpcResp{Jsonrpc: "2.0", ID: req.ID, Result: map[string]any{}}
@@ -452,7 +452,7 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		}
 	}
 
-	logs.Info("MCP tools/call %s from %q", params.Name, conn.Name)
+	logs.InfoUser(conn.OwnerUserID, "MCP tools/call %s from %q", params.Name, conn.Name)
 	var (
 		text  string
 		isErr bool
