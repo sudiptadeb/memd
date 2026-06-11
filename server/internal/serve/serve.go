@@ -96,7 +96,12 @@ func RunOptions(opts Options) error {
 		logs.Info("loaded connector %q (id=%s)", c.Name, c.ID)
 	}
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           withMaxBody(mux, maxRequestBody),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 
@@ -106,17 +111,38 @@ func RunOptions(opts Options) error {
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(opts.Stdout, "\nshutting down…")
-		shutdownErr := srv.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		shutdownErr := srv.Shutdown(shutdownCtx)
 		if err := reg.Close(); err != nil {
 			logs.Warn("registry close: %v", err)
 		}
 		return shutdownErr
 	case err := <-errCh:
+		if err := reg.Close(); err != nil {
+			logs.Warn("registry close: %v", err)
+		}
 		if err != nil && err != http.ErrServerClosed {
 			return err
 		}
 		return nil
 	}
+}
+
+// maxRequestBody caps the size of any single request body. It is generous
+// enough for large memory writes while preventing a client from streaming an
+// unbounded body into memory.
+const maxRequestBody = 32 << 20 // 32 MiB
+
+// withMaxBody wraps every request body in an http.MaxBytesReader so handlers
+// that decode the body can never be forced to read more than limit bytes.
+func withMaxBody(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sessionMaxAge is the absolute session-lifetime cap, overridable via
