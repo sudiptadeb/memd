@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -168,7 +169,7 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for i := range r.cfg.Connectors {
-		if r.cfg.Connectors[i].Token == tok {
+		if subtle.ConstantTimeCompare([]byte(r.cfg.Connectors[i].Token), []byte(tok)) == 1 {
 			c := r.cfg.Connectors[i]
 			return &c
 		}
