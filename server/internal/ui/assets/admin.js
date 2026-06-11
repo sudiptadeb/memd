@@ -14,7 +14,19 @@
     } catch (_) {}
   }
 
-  const initialTheme = storageGet("memd-theme", "light");
+  // Use the saved theme if there is one; otherwise follow the OS preference.
+  function resolveTheme() {
+    const saved = storageGet("memd-theme", null);
+    if (saved === "dark" || saved === "light") return saved;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "dark";
+      }
+    } catch (_) {}
+    return "light";
+  }
+
+  const initialTheme = resolveTheme();
   document.documentElement.setAttribute("data-theme", initialTheme === "dark" ? "dark" : "light");
 
   async function responseJSON(response) {
@@ -72,7 +84,7 @@
       loginForm: defaultLoginForm(),
       userForm: defaultUserForm(),
       oidcForm: defaultOIDCForm(),
-      theme: storageGet("memd-theme", "light"),
+      theme: resolveTheme(),
       sheet: null,
       toast: "",
       toastTimer: null,

@@ -102,6 +102,46 @@ func TestSplitRemoteAuthRedactsHTTPToken(t *testing.T) {
 	}
 }
 
+func TestValidateRemoteURLRejectsTransportHelpers(t *testing.T) {
+	bad := []string{
+		`ext::sh -c "id > /tmp/pwned"`,
+		"fd::17/foo",
+		"transport::address",
+		"-oProxyCommand=evil",
+		"--upload-pack=evil",
+		"sneaky://example.com/repo.git",
+	}
+	for _, raw := range bad {
+		if err := validateRemoteURL(raw); err == nil {
+			t.Errorf("validateRemoteURL(%q) = nil, want error", raw)
+		}
+	}
+
+	ok := []string{
+		"https://example.com/acme/memory.git",
+		"http://example.com/acme/memory.git",
+		"ssh://git@example.com/acme/memory.git",
+		"git@example.com:acme/memory.git",
+		"/tmp/local/remote.git",
+		"file:///tmp/local/remote.git",
+	}
+	for _, raw := range ok {
+		if err := validateRemoteURL(raw); err != nil {
+			t.Errorf("validateRemoteURL(%q) = %v, want nil", raw, err)
+		}
+	}
+}
+
+func TestNewGitRejectsTransportHelperRemote(t *testing.T) {
+	_, err := newGitFromConfig(GitConfig{
+		WorkDir:   filepath.Join(t.TempDir(), "work"),
+		RemoteURL: `ext::sh -c "id"`,
+	})
+	if err == nil {
+		t.Fatal("newGitFromConfig accepted an ext:: transport remote")
+	}
+}
+
 func TestCheckGitConnectionPushesAndCleansTemporaryBranch(t *testing.T) {
 	requireGit(t)
 	root := t.TempDir()

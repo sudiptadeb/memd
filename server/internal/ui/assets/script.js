@@ -14,7 +14,19 @@
     } catch (_) {}
   }
 
-  const initialTheme = storageGet("memd-theme", "light");
+  // Use the saved theme if there is one; otherwise follow the OS preference.
+  function resolveTheme() {
+    const saved = storageGet("memd-theme", null);
+    if (saved === "dark" || saved === "light") return saved;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "dark";
+      }
+    } catch (_) {}
+    return "light";
+  }
+
+  const initialTheme = resolveTheme();
   document.documentElement.setAttribute("data-theme", initialTheme === "dark" ? "dark" : "light");
   const initialLayout = storageGet("memd-layout", "wide");
   document.documentElement.setAttribute("data-layout", initialLayout === "centered" ? "centered" : "wide");
@@ -225,7 +237,7 @@
       activeScope: storageGet("memd-scope", "personal"),
       navOpen: false,
       loginForm: defaultLoginForm(),
-      theme: storageGet("memd-theme", "light"),
+      theme: resolveTheme(),
       layoutMode: storageGet("memd-layout", "wide") === "centered" ? "centered" : "wide",
       logsHidden: storageGet("memd-logs-hidden", "0") === "1",
       logsWidth: parseInt(storageGet("memd-logs-w", "340"), 10) || 340,
@@ -246,6 +258,7 @@
       pickerParent: "",
       pickerErr: "",
       toast: "",
+      toastLevel: "info",
       toastTimer: null,
       entries: [],
       lastID: -1,
@@ -654,8 +667,9 @@
         this.closeNav();
       },
 
-      showToast(message) {
+      showToast(message, level) {
         this.toast = message;
+        this.toastLevel = level === "error" ? "error" : "info";
         window.clearTimeout(this.toastTimer);
         this.toastTimer = window.setTimeout(() => {
           this.toast = "";
@@ -687,7 +701,7 @@
           await copyText(await response.text());
           this.showToast("Skill copied");
         } catch (_) {
-          this.showToast("Copy failed");
+          this.showToast("Copy failed", "error");
         }
       },
 
@@ -804,8 +818,12 @@
         if (!window.confirm("Delete directory " + directory.name + "? Connectors using it will lose access.")) {
           return;
         }
-        await fetch("/api/directories/" + encodeURIComponent(directory.id), { method: "DELETE" });
-        await this.load();
+        try {
+          await api("/api/directories/" + encodeURIComponent(directory.id), { method: "DELETE" });
+          await this.load();
+        } catch (error) {
+          window.alert("Could not delete directory: " + (error.message || "request failed"));
+        }
       },
 
       async createConnector() {
@@ -873,8 +891,12 @@
         if (!window.confirm("Delete connector " + connector.name + "?")) {
           return;
         }
-        await fetch("/api/connectors/" + encodeURIComponent(connector.id), { method: "DELETE" });
-        await this.load();
+        try {
+          await api("/api/connectors/" + encodeURIComponent(connector.id), { method: "DELETE" });
+          await this.load();
+        } catch (error) {
+          window.alert("Could not delete connector: " + (error.message || "request failed"));
+        }
       },
 
       async createTeam() {
@@ -986,7 +1008,9 @@
               max_uses: Number.isFinite(maxUses) && maxUses > 0 ? maxUses : null
             })
           });
-          this.createdInviteURL = data.invite_url || "";
+          // The server builds invite URLs against its 127.0.0.1 bind; rewrite
+          // them to the public origin the user is actually browsing.
+          this.createdInviteURL = publicURL(data.invite_url || "");
           this.inviteForm = defaultInviteForm();
           await this.loadTeamDetail(this.teamDetail.id);
           if (this.createdInviteURL) {

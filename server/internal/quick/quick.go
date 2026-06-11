@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
@@ -64,7 +65,17 @@ func Run(dir string) error {
 	fmt.Printf("memd serving %s\n\n  http://127.0.0.1:%d/mcp/%s\n\n  URL: http://127.0.0.1:%d/mcp\n  Authorization: Bearer %s\n\nPress Ctrl-C to stop.\n",
 		abs, port, conn.Token, port, conn.Token)
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, 32<<20) // 32 MiB
+			}
+			mux.ServeHTTP(w, r)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 
@@ -74,7 +85,9 @@ func Run(dir string) error {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nshutting down…")
-		return srv.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
 			return err

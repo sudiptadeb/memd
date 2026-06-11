@@ -252,20 +252,23 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeGitDirectoryAuth(body.Git)
-	id, err := h.reg.AddDirectoryForUser(user.ID, config.Directory{
+	// Only local accounts may choose a local directory path. OIDC-provisioned
+	// users get a name-only directory that memd sandboxes under a managed root.
+	allowCustomLocalPath := user.Issuer == ""
+	id, err := h.reg.AddDirectoryForUserManaged(user.ID, config.Directory{
 		Name:        body.Name,
 		TeamID:      body.TeamID,
 		Description: body.Description,
 		Backend:     body.Backend,
 		LocalPath:   body.LocalPath,
 		Git:         body.Git,
-	})
+	}, allowCustomLocalPath)
 	if err != nil {
-		logs.Error("add directory %q failed: %v", body.Name, err)
+		logs.ErrorUser(user.ID, "add directory %q failed: %v", body.Name, err)
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	logs.Info("added directory %q (id=%s, backend=%s)", body.Name, id, body.Backend)
+	logs.InfoUser(user.ID, "added directory %q (id=%s, backend=%s)", body.Name, id, body.Backend)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
@@ -340,7 +343,7 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		logs.Info("deleted directory id=%s", id)
+		logs.InfoUser(user.ID, "deleted directory id=%s", id)
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPatch:
 		var body struct {
@@ -355,7 +358,7 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, statusForAccountError(err), err)
 			return
 		}
-		logs.Info("updated directory team scope id=%s team=%s", id, d.TeamID)
+		logs.InfoUser(user.ID, "updated directory team scope id=%s team=%s", id, d.TeamID)
 		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "team_id": d.TeamID})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -401,11 +404,11 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		Write:        body.Write,
 	})
 	if err != nil {
-		logs.Error("add connector %q failed: %v", body.Name, err)
+		logs.ErrorUser(user.ID, "add connector %q failed: %v", body.Name, err)
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	logs.Info("added connector %q (id=%s, kind=%s, %d directories, write=%v)", body.Name, c.ID, c.EffectiveKind(), len(body.DirectoryIDs), body.Write)
+	logs.InfoUser(user.ID, "added connector %q (id=%s, kind=%s, %d directories, write=%v)", body.Name, c.ID, c.EffectiveKind(), len(body.DirectoryIDs), body.Write)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"id":        c.ID,
 		"url":       h.connectorURL(c),
@@ -428,7 +431,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		logs.Info("deleted connector id=%s", id)
+		logs.InfoUser(user.ID, "deleted connector id=%s", id)
 		w.WriteHeader(http.StatusNoContent)
 	case action == "" && r.Method == http.MethodPut:
 		var body struct {
@@ -447,7 +450,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		logs.Info("updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)
+		logs.InfoUser(user.ID, "updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)
 		writeJSON(w, http.StatusOK, map[string]string{"id": c.ID})
 	case action == "rotate" && r.Method == http.MethodPost:
 		c, err := h.reg.RotateConnectorForActor(user.ID, id)
@@ -455,7 +458,7 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		logs.Info("rotated connector %q (id=%s)", c.Name, id)
+		logs.InfoUser(user.ID, "rotated connector %q (id=%s)", c.Name, id)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"id":        c.ID,
 			"url":       h.connectorURL(c),
@@ -490,6 +493,14 @@ func (h *Handler) connectorAuthURL(c config.Connector) string {
 func (h *Handler) browseAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// The filesystem browser is a local-deployment convenience for choosing a
+	// directory path. Only local (password) accounts and super admins — who can
+	// already specify a path — may enumerate the server's filesystem.
+	user := userFromContext(r.Context())
+	if user == nil || (user.Issuer != "" && !user.SuperAdmin) {
+		httpErr(w, http.StatusForbidden, fmt.Errorf("filesystem browsing is only available to local accounts"))
 		return
 	}
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
@@ -551,6 +562,11 @@ func (h *Handler) logsAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	user := userFromContext(r.Context())
+	if user == nil {
+		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	since := int64(-1)
@@ -559,7 +575,9 @@ func (h *Handler) logsAPI(w http.ResponseWriter, r *http.Request) {
 			since = v
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": logs.Since(since)})
+	// Regular users see only their own activity; super admins see everything.
+	entries := logs.SinceForViewer(since, user.ID, user.SuperAdmin)
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 func httpErr(w http.ResponseWriter, status int, err error) {

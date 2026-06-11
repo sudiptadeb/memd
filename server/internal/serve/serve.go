@@ -96,7 +96,12 @@ func RunOptions(opts Options) error {
 		logs.Info("loaded connector %q (id=%s)", c.Name, c.ID)
 	}
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           withSecurityHeaders(withMaxBody(mux, maxRequestBody)),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 
@@ -106,17 +111,66 @@ func RunOptions(opts Options) error {
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(opts.Stdout, "\nshutting down…")
-		shutdownErr := srv.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		shutdownErr := srv.Shutdown(shutdownCtx)
 		if err := reg.Close(); err != nil {
 			logs.Warn("registry close: %v", err)
 		}
 		return shutdownErr
 	case err := <-errCh:
+		if err := reg.Close(); err != nil {
+			logs.Warn("registry close: %v", err)
+		}
 		if err != nil && err != http.ErrServerClosed {
 			return err
 		}
 		return nil
 	}
+}
+
+// maxRequestBody caps the size of any single request body. It is generous
+// enough for large memory writes while preventing a client from streaming an
+// unbounded body into memory.
+const maxRequestBody = 32 << 20 // 32 MiB
+
+// withMaxBody wraps every request body in an http.MaxBytesReader so handlers
+// that decode the body can never be forced to read more than limit bytes.
+func withMaxBody(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// contentSecurityPolicy is intentionally tight: everything the UI loads is
+// same-origin. 'unsafe-eval' is required because Alpine.js evaluates its
+// directive expressions via the Function constructor; 'unsafe-inline' covers
+// Alpine's style/class attribute bindings. frame-ancestors and base-uri lock
+// out clickjacking and base-tag hijacking.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-eval'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"base-uri 'none'"
+
+// withSecurityHeaders adds defence-in-depth headers to every response: a
+// content-security policy, MIME-sniffing and framing protections, and a
+// conservative referrer policy.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sessionMaxAge is the absolute session-lifetime cap, overridable via

@@ -115,7 +115,7 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	logs.Info("oidc login: %q (id=%s, iss=%s, sub=%s)", user.Username, user.ID, user.Issuer, user.Subject)
+	logs.InfoUser(user.ID, "oidc login: %q (id=%s, iss=%s, sub=%s)", user.Username, user.ID, user.Issuer, user.Subject)
 	http.Redirect(w, r, tx.ReturnTo, http.StatusFound)
 }
 
