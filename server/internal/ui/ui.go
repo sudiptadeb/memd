@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -151,7 +152,7 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 		detail := d.LocalPath
 		errMsg := ""
 		if d.Backend == "git" && d.Git != nil {
-			detail = fmt.Sprintf("%s @ %s : %s", d.Git.RemoteURL, d.Git.Branch, d.Git.BasePath)
+			detail = fmt.Sprintf("%s @ %s : %s", config.RedactGitRemoteURL(d.Git.RemoteURL), d.Git.Branch, d.Git.BasePath)
 		} else if d.Backend == "local" {
 			if info, err := os.Stat(d.LocalPath); err != nil {
 				errMsg = err.Error()
@@ -248,6 +249,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, fmt.Errorf("name and backend are required"))
 		return
 	}
+	normalizeGitDirectoryAuth(body.Git)
 	id, err := h.reg.AddDirectoryForUser(user.ID, config.Directory{
 		Name:        body.Name,
 		TeamID:      body.TeamID,
@@ -263,6 +265,34 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	logs.Info("added directory %q (id=%s, backend=%s)", body.Name, id, body.Backend)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func normalizeGitDirectoryAuth(g *config.Git) {
+	if g == nil {
+		return
+	}
+	clean, username, token := splitGitRemoteAuth(g.RemoteURL)
+	g.RemoteURL = clean
+	if g.AuthUsername == "" {
+		g.AuthUsername = username
+	}
+	if g.AuthToken == "" {
+		g.AuthToken = token
+	}
+}
+
+func splitGitRemoteAuth(raw string) (clean, username, token string) {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw, "", ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return raw, "", ""
+	}
+	username = u.User.Username()
+	token, _ = u.User.Password()
+	u.User = nil
+	return u.String(), username, token
 }
 
 func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {

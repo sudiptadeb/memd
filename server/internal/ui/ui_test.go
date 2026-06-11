@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/oidc"
 	"github.com/sudiptadeb/memd/server/internal/registry"
@@ -257,6 +258,17 @@ func TestSessionAPIReportsAnonymous(t *testing.T) {
 	}
 	if body.Auth.OIDCEnabled {
 		t.Fatalf("expected oidc disabled in test")
+	}
+}
+
+func TestNormalizeGitDirectoryAuthStripsInlineCredentials(t *testing.T) {
+	g := &config.Git{RemoteURL: "https://ada:secret-token@example.com/acme/memory.git"}
+	normalizeGitDirectoryAuth(g)
+	if g.RemoteURL != "https://example.com/acme/memory.git" {
+		t.Fatalf("remote URL = %q", g.RemoteURL)
+	}
+	if g.AuthUsername != "ada" || g.AuthToken != "secret-token" {
+		t.Fatalf("auth = %q/%q", g.AuthUsername, g.AuthToken)
 	}
 }
 

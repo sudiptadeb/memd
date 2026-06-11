@@ -121,6 +121,8 @@ func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
 			BasePath:      d.Git.BasePath,
 			AuthorName:    d.Git.AuthorName,
 			AuthorEmail:   d.Git.AuthorEmail,
+			AuthUsername:  d.Git.AuthUsername,
+			AuthToken:     d.Git.AuthToken,
 			SSHKeyPath:    d.Git.SSHKeyPath,
 			WaitForWrites: parseDurationOrZero(d.Git.WaitForWrites),
 			SaveEvery:     parseDurationOrZero(d.Git.SaveEvery),

@@ -257,6 +257,9 @@ func (s *Store) Init(ctx context.Context) error {
 	if err := ensureUserColumns(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureUserDirectoryColumns(ctx, tx); err != nil {
+		return err
+	}
 	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
 		return err
 	}
@@ -276,27 +279,8 @@ func (s *Store) Init(ctx context.Context) error {
 // existing database. SQLite's ALTER TABLE ADD COLUMN errors if the column
 // already exists, so we probe the current columns first.
 func ensureUserColumns(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(users)`)
+	cols, err := tableColumns(ctx, tx, "users")
 	if err != nil {
-		return err
-	}
-	cols := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		cols[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	if !cols["email"] {
@@ -315,6 +299,44 @@ func ensureUserColumns(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+func ensureUserDirectoryColumns(ctx context.Context, tx *sql.Tx) error {
+	cols, err := tableColumns(ctx, tx, "user_directories")
+	if err != nil {
+		return err
+	}
+	if !cols["git_auth_username"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_directories ADD COLUMN git_auth_username TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !cols["git_auth_token"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_directories ADD COLUMN git_auth_token TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func tableColumns(ctx context.Context, tx *sql.Tx, table string) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
 }
 
 func backfillUserIssuerFromSettings(ctx context.Context, tx *sql.Tx) error {
