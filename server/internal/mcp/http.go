@@ -14,6 +14,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, prefix strin
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	// These endpoints return agent-authored bytes; stop browsers from
+	// sniffing them into an active content type and from framing them.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 
 	conn, action, ok := s.connectorFromRequest(r, prefix, config.ConnectorKindHTTP)
 	if !ok {

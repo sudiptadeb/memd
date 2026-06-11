@@ -2,16 +2,20 @@ package registry
 
 import (
 	"context"
+	crand "crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/storage"
 	"github.com/sudiptadeb/memd/server/internal/token"
 )
@@ -46,7 +50,7 @@ func NewPersistent() (*Registry, error) {
 	for _, d := range c.Directories {
 		b, err := r.openBackend(d)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
+			logs.Error("directory %q failed to open: %v", d.Name, err)
 			continue
 		}
 		r.backends[backendKey(d.OwnerUserID, d.ID)] = b
@@ -72,7 +76,7 @@ func NewAccountBacked(ctx context.Context, accounts *account.Store) (*Registry, 
 			r.cfg.Directories = append(r.cfg.Directories, d)
 			b, err := r.openBackend(d)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
+				logs.Error("directory %q failed to open: %v", d.Name, err)
 				continue
 			}
 			r.backends[backendKey(d.OwnerUserID, d.ID)] = b
@@ -93,6 +97,44 @@ func NewEphemeral() *Registry {
 		cfg:      &config.Config{},
 		backends: map[string]storage.Backend{},
 	}
+}
+
+// resolveLocalPath applies the local-directory policy. A caller-supplied path
+// is honoured only when allowCustom is true; otherwise (and whenever no path is
+// given) memd creates and uses a sandboxed directory at
+// <ManagedLocalRoot>/<ownerUserID>/<dirID>.
+func resolveLocalPath(d *config.Directory, allowCustom bool) error {
+	custom := strings.TrimSpace(d.LocalPath)
+	if custom != "" {
+		if !allowCustom {
+			return errors.New("choosing a local directory path is only available for local accounts; create a name-only directory or use a git backend instead")
+		}
+		d.LocalPath = custom
+		return nil
+	}
+	root, err := config.ManagedLocalRoot()
+	if err != nil {
+		return err
+	}
+	if !safePathSegment(d.OwnerUserID) || !safePathSegment(d.ID) {
+		return fmt.Errorf("cannot derive a managed directory path")
+	}
+	dir := filepath.Join(root, d.OwnerUserID, d.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	d.LocalPath = dir
+	return nil
+}
+
+// safePathSegment reports whether s is a single, traversal-free path segment.
+// Owner and directory IDs are server-generated and always satisfy this; the
+// check is a guard against any future ID format change.
+func safePathSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	return !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
 }
 
 func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
@@ -159,8 +201,17 @@ func (r *Registry) Connectors() []config.Connector {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]config.Connector, len(r.cfg.Connectors))
-	copy(out, r.cfg.Connectors)
+	for i := range r.cfg.Connectors {
+		out[i] = cloneConnector(r.cfg.Connectors[i])
+	}
 	return out
+}
+
+// cloneConnector returns a copy whose DirectoryIDs has its own backing array,
+// so callers can't observe (or race with) later in-place registry mutations.
+func cloneConnector(c config.Connector) config.Connector {
+	c.DirectoryIDs = append([]string(nil), c.DirectoryIDs...)
+	return c
 }
 
 // ConnectorByToken returns the connector with this token, or nil.
@@ -168,8 +219,8 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for i := range r.cfg.Connectors {
-		if r.cfg.Connectors[i].Token == tok {
-			c := r.cfg.Connectors[i]
+		if subtle.ConstantTimeCompare([]byte(r.cfg.Connectors[i].Token), []byte(tok)) == 1 {
+			c := cloneConnector(r.cfg.Connectors[i])
 			return &c
 		}
 	}
@@ -210,10 +261,24 @@ func (r *Registry) DirectoryForConnector(c *Connector, id string) *DirectoryView
 // --- Mutations ---
 
 func (r *Registry) AddDirectory(d config.Directory) (string, error) {
-	return r.AddDirectoryForUser(d.OwnerUserID, d)
+	// Trusted/internal caller (e.g. quick mode): a custom local path is allowed.
+	return r.addDirectory(d.OwnerUserID, d, true)
 }
 
+// AddDirectoryForUser adds a directory on behalf of a trusted caller, allowing
+// a custom local path. Hosted UI flows should use AddDirectoryForUserManaged.
 func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (string, error) {
+	return r.addDirectory(ownerUserID, d, true)
+}
+
+// AddDirectoryForUserManaged adds a directory subject to the hosted policy.
+// When allowCustomLocalPath is false, a caller-supplied local path is rejected
+// and a name-only local directory is sandboxed under a per-user managed root.
+func (r *Registry) AddDirectoryForUserManaged(ownerUserID string, d config.Directory, allowCustomLocalPath bool) (string, error) {
+	return r.addDirectory(ownerUserID, d, allowCustomLocalPath)
+}
+
+func (r *Registry) addDirectory(ownerUserID string, d config.Directory, allowCustomLocalPath bool) (string, error) {
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
 			return "", err
@@ -234,6 +299,11 @@ func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (
 	}
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = time.Now()
+	}
+	if d.Backend == "local" {
+		if err := resolveLocalPath(&d, allowCustomLocalPath); err != nil {
+			return "", err
+		}
 	}
 	b, err := r.openBackend(d)
 	if err != nil {
@@ -714,7 +784,7 @@ func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBun
 		d.TeamID = ""
 		b, err := r.openBackend(d)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "memd: imported directory %q failed to open: %v\n", d.Name, err)
+			logs.Error("imported directory %q failed to open: %v", d.Name, err)
 			continue
 		}
 		newBackends[backendKey(ownerUserID, d.ID)] = b
@@ -827,7 +897,7 @@ func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
 	var out []config.Connector
 	for _, c := range r.cfg.Connectors {
 		if c.OwnerUserID == ownerUserID || (c.TeamID != "" && viewTeams[c.TeamID]) {
-			out = append(out, c)
+			out = append(out, cloneConnector(c))
 		}
 	}
 	return out
@@ -872,8 +942,11 @@ func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string
 	return nil
 }
 
+// removeString returns a new slice with target removed. It must not filter in
+// place (list[:0]): connector copies returned by the accessors share the same
+// backing array, so mutating it would race with concurrent readers.
 func removeString(list []string, target string) []string {
-	out := list[:0]
+	out := make([]string, 0, len(list))
 	for _, v := range list {
 		if v != target {
 			out = append(out, v)
@@ -909,9 +982,17 @@ func parseDurationOrZero(s string) time.Duration {
 
 func newID() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
+	b := make([]byte, 12)
+	if _, err := crand.Read(b); err != nil {
+		// crypto/rand should never fail; fall back to math/rand rather than
+		// returning a predictable constant.
+		for i := range b {
+			b[i] = chars[rand.Intn(len(chars))]
+		}
+		return string(b)
+	}
 	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
+		b[i] = chars[int(b[i])%len(chars)]
 	}
 	return string(b)
 }

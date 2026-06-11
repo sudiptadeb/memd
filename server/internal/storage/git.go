@@ -9,10 +9,69 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sudiptadeb/memd/server/internal/logs"
 )
+
+// allowedGitProtocols is the colon-separated allowlist handed to git via
+// GIT_ALLOW_PROTOCOL. It intentionally omits transport helpers such as ext and
+// fd, which let a remote URL run arbitrary shell commands.
+const allowedGitProtocols = "http:https:ssh:git:file"
+
+// transportHelperRe matches git's "helper::address" smart-transport syntax
+// (e.g. ext::, fd::, transport::). The segment before "::" is a bare token
+// with no slash, which is what distinguishes it from a local path like
+// "/tmp/a::b".
+var transportHelperRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*::`)
+
+// urlSchemeRe matches an explicit "scheme://" prefix.
+var urlSchemeRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*)://`)
+
+// validateRemoteURL rejects git remote URLs that could lead to command
+// execution or option injection. It allows normal URL schemes (http(s), ssh,
+// git, file), scp-style host:path remotes, and local filesystem paths, while
+// rejecting transport-helper URLs (ext::, fd::, ...) and anything that would be
+// parsed as a command-line flag.
+func validateRemoteURL(raw string) error {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return errors.New("remote URL required")
+	}
+	if strings.HasPrefix(s, "-") {
+		return fmt.Errorf("invalid remote URL %q: must not start with '-'", s)
+	}
+	if transportHelperRe.MatchString(s) {
+		helper := s[:strings.Index(s, "::")]
+		return fmt.Errorf("unsupported git remote transport %q::", helper)
+	}
+	if m := urlSchemeRe.FindStringSubmatch(s); m != nil {
+		switch strings.ToLower(m[1]) {
+		case "http", "https", "ssh", "git", "file":
+		default:
+			return fmt.Errorf("unsupported git remote scheme %q", m[1])
+		}
+	}
+	return nil
+}
+
+// validateBranch rejects branch names that could be interpreted as a
+// command-line flag or that contain characters git forbids in refs.
+func validateBranch(branch string) error {
+	if branch == "" {
+		return nil
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("invalid branch %q: must not start with '-'", branch)
+	}
+	if strings.ContainsAny(branch, " \t\n\r~^:?*[\\") || strings.Contains(branch, "..") {
+		return fmt.Errorf("invalid branch %q", branch)
+	}
+	return nil
+}
 
 // Default debounce + safety-flush durations for the git backend. Overridable
 // per directory via GitConfig.
@@ -114,6 +173,12 @@ func newGitFromConfig(cfg GitConfig) (*Git, error) {
 		return nil, errors.New("workdir and remote URL required")
 	}
 	remoteURL, urlUser, urlToken := splitRemoteAuth(cfg.RemoteURL)
+	if err := validateRemoteURL(remoteURL); err != nil {
+		return nil, err
+	}
+	if err := validateBranch(strings.TrimSpace(cfg.Branch)); err != nil {
+		return nil, err
+	}
 	authUsername := strings.TrimSpace(cfg.AuthUsername)
 	if authUsername == "" {
 		authUsername = urlUser
@@ -187,7 +252,10 @@ func (g *Git) clone() error {
 }
 
 func (g *Git) cmdEnv() []string {
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	env := append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ALLOW_PROTOCOL="+allowedGitProtocols,
+	)
 	if g.authToken != "" {
 		env = append(env,
 			"GIT_ASKPASS="+g.askPassPath,
@@ -338,7 +406,9 @@ func (g *Git) armDebounce(message string) {
 	g.pendingMsg = message
 	if g.debounce == nil {
 		g.debounce = time.AfterFunc(g.waitForWrites, func() {
-			_ = g.flushDirty("memd: session checkpoint")
+			if err := g.flushDirty("memd: session checkpoint"); err != nil {
+				logs.Error("git sync for %s failed: %v", redactRemoteURL(g.remoteURL), err)
+			}
 		})
 	} else {
 		g.debounce.Reset(g.waitForWrites)
@@ -394,7 +464,9 @@ func (g *Git) safetyTick() {
 	for {
 		select {
 		case <-t.C:
-			_ = g.flushDirty("memd: periodic checkpoint")
+			if err := g.flushDirty("memd: periodic checkpoint"); err != nil {
+				logs.Error("git sync for %s failed: %v", redactRemoteURL(g.remoteURL), err)
+			}
 		case <-g.stopCh:
 			return
 		}
@@ -476,11 +548,14 @@ func (g *Git) flushDirty(defaultMsg string) error {
 }
 
 func (g *Git) Status() Status {
+	g.mu.Lock()
+	lastSync, lastError := g.lastSync, g.lastError
+	g.mu.Unlock()
 	return Status{
 		Backend:   "git",
 		Path:      fmt.Sprintf("%s @ %s:%s", redactRemoteURL(g.remoteURL), g.branch, g.basePath),
-		LastSync:  g.lastSync,
-		LastError: g.lastError,
+		LastSync:  lastSync,
+		LastError: lastError,
 	}
 }
 

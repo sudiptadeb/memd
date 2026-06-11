@@ -2,9 +2,9 @@ package storage
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sudiptadeb/memd/server/internal/logs"
 )
 
 // Local is a memory backend backed by a plain folder of files.
@@ -303,51 +305,53 @@ func (l *Local) Search(query string, limit int) ([]Hit, error) {
 	var hits []Hit
 	for _, p := range paths {
 		abs := filepath.Join(l.rootEval, filepath.FromSlash(p))
-		searchable, err := isSearchableTextFile(abs)
-		if err != nil || !searchable {
-			continue
+		fileHits, done := l.searchFile(abs, p, q, limit-len(hits))
+		hits = append(hits, fileHits...)
+		if done {
+			break
 		}
-		f, err := os.Open(abs)
-		if err != nil {
-			continue
-		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		lineNo := 0
-		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if strings.Contains(strings.ToLower(line), q) {
-				hits = append(hits, Hit{Path: p, Line: lineNo, Snippet: strings.TrimSpace(line)})
-				if len(hits) >= limit {
-					f.Close()
-					return hits, nil
-				}
-			}
-		}
-		f.Close()
 	}
 	return hits, nil
 }
 
-func isSearchableTextFile(path string) (bool, error) {
-	f, err := os.Open(path)
+// searchFile scans one file for q, returning up to remaining hits. It opens the
+// file once (sniffing for binary content from the same buffered reader) and
+// returns done=true when the caller's overall limit has been reached.
+func (l *Local) searchFile(abs, p, q string, remaining int) (hits []Hit, done bool) {
+	if remaining <= 0 {
+		return nil, true
+	}
+	f, err := os.Open(abs)
 	if err != nil {
-		return false, err
+		return nil, false
 	}
 	defer f.Close()
 
-	buf := make([]byte, 8192)
-	n, err := f.Read(buf)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, err
+	br := bufio.NewReaderSize(f, 64*1024)
+	// Binary sniff: a NUL byte in the first 8 KiB means "not text".
+	if head, _ := br.Peek(8192); bytes.IndexByte(head, 0) >= 0 {
+		return nil, false
 	}
-	for _, b := range buf[:n] {
-		if b == 0 {
-			return false, nil
+
+	scanner := bufio.NewScanner(br)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+		if strings.Contains(strings.ToLower(line), q) {
+			hits = append(hits, Hit{Path: p, Line: lineNo, Snippet: strings.TrimSpace(line)})
+			if len(hits) >= remaining {
+				return hits, true
+			}
 		}
 	}
-	return true, nil
+	if err := scanner.Err(); err != nil {
+		// Don't silently drop the rest of the file (e.g. a line over the 1 MiB
+		// token limit); surface it so the gap is visible.
+		logs.Warn("search: scanning %s stopped early: %v", p, err)
+	}
+	return hits, false
 }
 
 func (l *Local) Status() Status {
