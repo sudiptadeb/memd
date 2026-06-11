@@ -5,6 +5,7 @@ package logs
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -26,6 +27,10 @@ var (
 )
 
 func append1(level, msg string) {
+	// Mirror to stderr so headless deployments (systemd, Docker) can see runtime
+	// activity; the ring buffer only survives until restart and is UI-only.
+	log.Printf("[%s] %s", level, msg)
+
 	mu.Lock()
 	defer mu.Unlock()
 	entries = append(entries, Entry{

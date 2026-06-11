@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/storage"
 	"github.com/sudiptadeb/memd/server/internal/token"
 )
@@ -48,7 +48,7 @@ func NewPersistent() (*Registry, error) {
 	for _, d := range c.Directories {
 		b, err := r.openBackend(d)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
+			logs.Error("directory %q failed to open: %v", d.Name, err)
 			continue
 		}
 		r.backends[backendKey(d.OwnerUserID, d.ID)] = b
@@ -74,7 +74,7 @@ func NewAccountBacked(ctx context.Context, accounts *account.Store) (*Registry, 
 			r.cfg.Directories = append(r.cfg.Directories, d)
 			b, err := r.openBackend(d)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "memd: directory %q failed to open: %v\n", d.Name, err)
+				logs.Error("directory %q failed to open: %v", d.Name, err)
 				continue
 			}
 			r.backends[backendKey(d.OwnerUserID, d.ID)] = b
@@ -725,7 +725,7 @@ func (r *Registry) ImportUserData(ownerUserID string, bundle account.UserDataBun
 		d.TeamID = ""
 		b, err := r.openBackend(d)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "memd: imported directory %q failed to open: %v\n", d.Name, err)
+			logs.Error("imported directory %q failed to open: %v", d.Name, err)
 			continue
 		}
 		newBackends[backendKey(ownerUserID, d.ID)] = b
