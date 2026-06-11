@@ -102,6 +102,35 @@ func TestSplitRemoteAuthRedactsHTTPToken(t *testing.T) {
 	}
 }
 
+func TestCheckGitConnectionPushesAndCleansTemporaryBranch(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runGitRaw(t, "", "init", "--bare", remote)
+	seedRepo(t, remote, filepath.Join(root, "seed"), map[string]string{
+		"MEMORY.md": "# Memory\n",
+	})
+
+	report := CheckGitConnection(GitConfig{
+		RemoteURL:   remote,
+		Branch:      "main",
+		AuthorName:  "memd test",
+		AuthorEmail: "memd@example.com",
+	})
+	if !report.OK {
+		t.Fatalf("report not ok: %+v", report)
+	}
+	for _, check := range report.Checks {
+		if !check.OK {
+			t.Fatalf("check failed: %+v", check)
+		}
+	}
+	out := runGitRaw(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads")
+	if strings.Contains(out, "refs/heads/memd-connection-check/") {
+		t.Fatalf("temporary check branch was not cleaned up:\n%s", out)
+	}
+}
+
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

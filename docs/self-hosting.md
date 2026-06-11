@@ -95,6 +95,27 @@ saved to shared docs, or rely on SSH keys for end-user deployments. SSH keys are
 difficult to provision, rotate, and scope consistently across users. OAuth-based
 Git-provider integrations may replace this manual PAT setup later.
 
+For GitHub, use a fine-grained personal access token where possible:
+
+1. Open GitHub Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token.
+2. Set a name and expiration, choose the resource owner, and select only the
+   memory repository.
+3. Set repository **Contents** to **Read and write**. Leave unrelated
+   permissions unset.
+4. Paste the token and GitHub username into memd, then run **Test connection**.
+   The check verifies read access, local commit/write behavior, and push/delete
+   of a temporary branch for PR/MR-style workflows.
+
+Organization-owned repositories may require token approval or SAML
+authorization. Protected branches can still block memd's normal direct push to
+the configured branch, even when the temporary branch check passes.
+
+For GitLab, use a project access token where available, or a personal access
+token otherwise. Grant `write_repository`, use the token as the password, and
+enter any non-empty username such as `oauth2`. GitLab protected branches and
+push rules still apply to memd's configured branch.
+
 Lock down the environment file:
 
 ```bash

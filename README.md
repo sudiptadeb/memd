@@ -214,6 +214,23 @@ For Git directories, memd decouples disk write from sync:
   SSH-key based Git auth is retained for local runs, but it is not recommended
   for end-user deployments because it is hard to provision, rotate, and scope
   safely.
+- For GitHub, create a
+  [fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token)
+  from Settings → Developer settings → Personal access tokens →
+  Fine-grained tokens. Limit repository access to the memory repo, set
+  repository **Contents** to **Read and write**, and set an expiration. If the
+  repo belongs to an organization, the token may need organization approval or
+  SAML authorization. Classic tokens should be a fallback only; use the `repo`
+  scope when a classic token is required for a private repo.
+- For GitLab, use a project access token or personal access token with
+  `write_repository`; GitLab defines that as read/write repository access for
+  pull and push over HTTPS. Use the token as the password and any non-empty
+  username, such as `oauth2`.
+- Before adding the directory, use **Test connection** in the Git form. memd
+  checks remote read access, local commit/write behavior, and push/delete of a
+  temporary branch suitable for PR/MR workflows. It does not bypass branch
+  protection; the token owner must still be allowed to push to the configured
+  branch memd will sync.
 - Do not put PATs in clone URLs, docs, shell history, or memory files. memd
   stores Git credentials with the directory's account data and strips
   credentials out of pasted HTTPS remotes before configuring the working copy.

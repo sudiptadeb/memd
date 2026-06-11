@@ -114,6 +114,9 @@
       auth_username: "",
       auth_token: "",
       ssh_key_path: "",
+      checking: false,
+      checkErr: "",
+      checkResults: [],
       err: "",
       submitting: false
     };
@@ -732,6 +735,42 @@
         form.selected = form.selected.filter((id) => allowed.has(id));
       },
 
+      gitDirectoryPayload() {
+        return {
+          remote_url: this.dirForm.remote_url,
+          branch: this.dirForm.branch || "main",
+          base_path: this.dirForm.base_path || "",
+          author_name: this.dirForm.author_name || "memd",
+          author_email: this.dirForm.author_email || "memd@localhost",
+          auth_username: this.dirForm.auth_username || "",
+          auth_token: this.dirForm.auth_token || "",
+          ssh_key_path: this.dirForm.ssh_key_path || ""
+        };
+      },
+
+      async checkGitDirectory() {
+        this.dirForm.checkErr = "";
+        this.dirForm.checkResults = [];
+        this.dirForm.checking = true;
+        try {
+          const data = await api("/api/git/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ git: this.gitDirectoryPayload() })
+          });
+          this.dirForm.checkResults = data.checks || [];
+          if (data.ok) {
+            this.showToast("Git connection verified");
+          } else {
+            this.dirForm.checkErr = "Connection check failed";
+          }
+        } catch (error) {
+          this.dirForm.checkErr = error.message || "connection check failed";
+        } finally {
+          this.dirForm.checking = false;
+        }
+      },
+
       async createDirectory() {
         this.dirForm.err = "";
         this.dirForm.submitting = true;
@@ -744,16 +783,7 @@
         if (this.dirForm.backend === "local") {
           payload.local_path = this.dirForm.local_path;
         } else {
-          payload.git = {
-            remote_url: this.dirForm.remote_url,
-            branch: this.dirForm.branch || "main",
-            base_path: this.dirForm.base_path || "",
-            author_name: this.dirForm.author_name || "memd",
-            author_email: this.dirForm.author_email || "memd@localhost",
-            auth_username: this.dirForm.auth_username || "",
-            auth_token: this.dirForm.auth_token || "",
-            ssh_key_path: this.dirForm.ssh_key_path || ""
-          };
+          payload.git = this.gitDirectoryPayload();
         }
         try {
           await api("/api/directories", {
