@@ -804,8 +804,12 @@
         if (!window.confirm("Delete directory " + directory.name + "? Connectors using it will lose access.")) {
           return;
         }
-        await fetch("/api/directories/" + encodeURIComponent(directory.id), { method: "DELETE" });
-        await this.load();
+        try {
+          await api("/api/directories/" + encodeURIComponent(directory.id), { method: "DELETE" });
+          await this.load();
+        } catch (error) {
+          window.alert("Could not delete directory: " + (error.message || "request failed"));
+        }
       },
 
       async createConnector() {
@@ -873,8 +877,12 @@
         if (!window.confirm("Delete connector " + connector.name + "?")) {
           return;
         }
-        await fetch("/api/connectors/" + encodeURIComponent(connector.id), { method: "DELETE" });
-        await this.load();
+        try {
+          await api("/api/connectors/" + encodeURIComponent(connector.id), { method: "DELETE" });
+          await this.load();
+        } catch (error) {
+          window.alert("Could not delete connector: " + (error.message || "request failed"));
+        }
       },
 
       async createTeam() {
@@ -986,7 +994,9 @@
               max_uses: Number.isFinite(maxUses) && maxUses > 0 ? maxUses : null
             })
           });
-          this.createdInviteURL = data.invite_url || "";
+          // The server builds invite URLs against its 127.0.0.1 bind; rewrite
+          // them to the public origin the user is actually browsing.
+          this.createdInviteURL = publicURL(data.invite_url || "");
           this.inviteForm = defaultInviteForm();
           await this.loadTeamDetail(this.teamDetail.id);
           if (this.createdInviteURL) {
