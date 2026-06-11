@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,14 +26,17 @@ const (
 // session of edits produces one commit instead of N. A periodic safety
 // flush catches read-only sessions where only front-matter stats churn.
 type Git struct {
-	mu          sync.Mutex
-	workdir     string
-	basePath    string
-	remoteURL   string
-	branch      string
-	authorName  string
-	authorEmail string
-	sshKey      string
+	mu           sync.Mutex
+	workdir      string
+	basePath     string
+	remoteURL    string
+	branch       string
+	authorName   string
+	authorEmail  string
+	authUsername string
+	authToken    string
+	sshKey       string
+	askPassPath  string
 
 	waitForWrites time.Duration
 	saveEvery     time.Duration
@@ -57,6 +61,8 @@ type GitConfig struct {
 	BasePath      string
 	AuthorName    string
 	AuthorEmail   string
+	AuthUsername  string
+	AuthToken     string
 	SSHKeyPath    string
 	WaitForWrites time.Duration
 	SaveEvery     time.Duration
@@ -66,13 +72,28 @@ func NewGit(cfg GitConfig) (*Git, error) {
 	if cfg.WorkDir == "" || cfg.RemoteURL == "" {
 		return nil, errors.New("workdir and remote URL required")
 	}
+	remoteURL, urlUser, urlToken := splitRemoteAuth(cfg.RemoteURL)
+	authUsername := strings.TrimSpace(cfg.AuthUsername)
+	if authUsername == "" {
+		authUsername = urlUser
+	}
+	authToken := strings.TrimSpace(cfg.AuthToken)
+	if authToken == "" {
+		authToken = urlToken
+	}
+	if authToken != "" && authUsername == "" {
+		authUsername = "x-access-token"
+	}
+
 	g := &Git{
 		workdir:       cfg.WorkDir,
 		basePath:      strings.TrimPrefix(cfg.BasePath, "/"),
-		remoteURL:     cfg.RemoteURL,
+		remoteURL:     remoteURL,
 		branch:        cfg.Branch,
 		authorName:    cfg.AuthorName,
 		authorEmail:   cfg.AuthorEmail,
+		authUsername:  authUsername,
+		authToken:     authToken,
 		sshKey:        cfg.SSHKeyPath,
 		waitForWrites: cfg.WaitForWrites,
 		saveEvery:     cfg.SaveEvery,
@@ -93,13 +114,20 @@ func NewGit(cfg GitConfig) (*Git, error) {
 	if g.saveEvery <= 0 {
 		g.saveEvery = defaultSaveEvery
 	}
+	if err := g.prepareAskPass(); err != nil {
+		return nil, err
+	}
 
 	if _, err := os.Stat(filepath.Join(g.workdir, ".git")); errors.Is(err, fs.ErrNotExist) {
 		if err := g.clone(); err != nil {
 			return nil, err
 		}
 	} else if err == nil {
-		if err := g.runQuiet("pull", "--ff-only", "origin", g.branch); err != nil {
+		if err := g.ensureOrigin(); err != nil {
+			g.lastError = err.Error()
+		} else if err := g.checkoutConfiguredBranch(); err != nil {
+			g.lastError = err.Error()
+		} else if err := g.syncRemote(); err != nil {
 			g.lastError = err.Error()
 		}
 	} else {
@@ -138,18 +166,52 @@ func (g *Git) clone() error {
 		if err2 != nil {
 			return fmt.Errorf("clone: %s", strings.TrimSpace(string(out2)))
 		}
-		_ = g.runQuiet("checkout", g.branch)
+		if err := g.runQuiet("checkout", "-B", g.branch); err != nil {
+			return err
+		}
 		_ = out
+	}
+	if err := g.ensureOrigin(); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (g *Git) cmdEnv() []string {
-	env := os.Environ()
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if g.authToken != "" {
+		env = append(env,
+			"GIT_ASKPASS="+g.askPassPath,
+			"MEMD_GIT_USERNAME="+g.authUsername,
+			"MEMD_GIT_TOKEN="+g.authToken,
+		)
+	}
 	if g.sshKey != "" {
-		env = append(env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %s -o StrictHostKeyChecking=accept-new", g.sshKey))
+		env = append(env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %s -o StrictHostKeyChecking=accept-new -o BatchMode=yes", shellQuote(g.sshKey)))
 	}
 	return env
+}
+
+func (g *Git) prepareAskPass() error {
+	if g.authToken == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(g.workdir), 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(filepath.Dir(g.workdir), ".git-askpass")
+	const script = `#!/bin/sh
+case "$1" in
+*Username*|*username*) printf '%s\n' "$MEMD_GIT_USERNAME" ;;
+*Password*|*password*) printf '%s\n' "$MEMD_GIT_TOKEN" ;;
+*) printf '\n' ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		return err
+	}
+	g.askPassPath = path
+	return nil
 }
 
 func (g *Git) runQuiet(args ...string) error {
@@ -162,6 +224,56 @@ func (g *Git) runQuiet(args ...string) error {
 		return fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+func (g *Git) ensureOrigin() error {
+	if err := g.runQuiet("remote", "get-url", "origin"); err != nil {
+		return g.runQuiet("remote", "add", "origin", g.remoteURL)
+	}
+	return g.runQuiet("remote", "set-url", "origin", g.remoteURL)
+}
+
+func (g *Git) checkoutConfiguredBranch() error {
+	if err := g.runQuiet("checkout", g.branch); err == nil {
+		return nil
+	}
+	exists, err := g.remoteBranchExists()
+	if err != nil {
+		return err
+	}
+	if exists {
+		if err := g.runQuiet("fetch", "origin", g.branch); err != nil {
+			return err
+		}
+		return g.runQuiet("checkout", "-B", g.branch, "FETCH_HEAD")
+	}
+	return g.runQuiet("checkout", "-B", g.branch)
+}
+
+func (g *Git) syncRemote() error {
+	exists, err := g.remoteBranchExists()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	return g.runQuiet("pull", "--rebase", "--autostash", "origin", g.branch)
+}
+
+func (g *Git) remoteBranchExists() (bool, error) {
+	full := []string{"-C", g.workdir, "ls-remote", "--exit-code", "--heads", "origin", g.branch}
+	cmd := exec.Command("git", full...)
+	cmd.Env = g.cmdEnv()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			return false, nil
+		}
+		return false, fmt.Errorf("git ls-remote --heads origin %s: %v: %s", g.branch, err, strings.TrimSpace(stderr.String()))
+	}
+	return true, nil
 }
 
 func (g *Git) List() ([]string, error)                  { return g.local.List() }
@@ -217,7 +329,7 @@ func (g *Git) armDebounce(message string) {
 	g.pendingMsg = message
 	if g.debounce == nil {
 		g.debounce = time.AfterFunc(g.waitForWrites, func() {
-			g.flushDirty("memd: session checkpoint")
+			_ = g.flushDirty("memd: session checkpoint")
 		})
 	} else {
 		g.debounce.Reset(g.waitForWrites)
@@ -243,8 +355,7 @@ func (g *Git) Write(path string, content []byte, message string) error {
 // times; if there's nothing dirty it's a near no-op (just runs `git add` and
 // gets "nothing to commit").
 func (g *Git) Flush() error {
-	g.flushDirty("memd: manual checkpoint")
-	return nil
+	return g.flushDirty("memd: manual checkpoint")
 }
 
 // Close stops timers and flushes any pending commits.
@@ -261,9 +372,9 @@ func (g *Git) Close() error {
 		g.debounce = nil
 	}
 	g.mu.Unlock()
-	g.flushDirty("memd: session checkpoint")
+	err := g.flushDirty("memd: session checkpoint")
 	g.wg.Wait()
-	return nil
+	return err
 }
 
 // safetyTick fires every `save_every` and commits anything dirty.
@@ -274,17 +385,18 @@ func (g *Git) safetyTick() {
 	for {
 		select {
 		case <-t.C:
-			g.flushDirty("memd: periodic checkpoint")
+			_ = g.flushDirty("memd: periodic checkpoint")
 		case <-g.stopCh:
 			return
 		}
 	}
 }
 
-// flushDirty runs `git add -A` + `git commit` + `git push`. If there's
-// nothing to commit it sets lastError to "" and returns. The caller should
-// not hold g.mu; flushDirty takes it.
-func (g *Git) flushDirty(defaultMsg string) {
+// flushDirty syncs with the remote, then runs `git add -A` + `git commit` +
+// `git push`. If there's nothing new to commit it still pushes, which retries
+// any local commits left behind by an earlier network/auth failure. The caller
+// should not hold g.mu; flushDirty takes it.
+func (g *Git) flushDirty(defaultMsg string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -305,7 +417,23 @@ func (g *Git) flushDirty(defaultMsg string) {
 	}
 	if err := g.runQuiet("add", "-A", addPath); err != nil {
 		g.lastError = err.Error()
-		return
+		return err
+	}
+	if err := g.ensureOrigin(); err != nil {
+		g.lastError = err.Error()
+		return err
+	}
+	if err := g.checkoutConfiguredBranch(); err != nil {
+		g.lastError = err.Error()
+		return err
+	}
+	if err := g.syncRemote(); err != nil {
+		g.lastError = err.Error()
+		return err
+	}
+	if err := g.runQuiet("add", "-A", addPath); err != nil {
+		g.lastError = err.Error()
+		return err
 	}
 	commitErr := g.runQuiet(
 		"-c", "user.name="+g.authorName,
@@ -315,24 +443,33 @@ func (g *Git) flushDirty(defaultMsg string) {
 	if commitErr != nil {
 		if strings.Contains(commitErr.Error(), "nothing to commit") ||
 			strings.Contains(commitErr.Error(), "no changes added to commit") {
-			g.lastError = ""
-			return
+			commitErr = nil
+		} else {
+			g.lastError = commitErr.Error()
+			return commitErr
 		}
-		g.lastError = commitErr.Error()
-		return
 	}
-	if err := g.runQuiet("push", "origin", g.branch); err != nil {
-		g.lastError = err.Error()
-		return
+	if err := g.runQuiet("push", "-u", "origin", g.branch); err != nil {
+		firstPushErr := err
+		if syncErr := g.syncRemote(); syncErr != nil {
+			err := fmt.Errorf("%v; after failed push, pull --rebase also failed: %v", firstPushErr, syncErr)
+			g.lastError = err.Error()
+			return err
+		}
+		if err := g.runQuiet("push", "-u", "origin", g.branch); err != nil {
+			g.lastError = err.Error()
+			return err
+		}
 	}
 	g.lastError = ""
 	g.lastSync = time.Now()
+	return nil
 }
 
 func (g *Git) Status() Status {
 	return Status{
 		Backend:   "git",
-		Path:      fmt.Sprintf("%s @ %s:%s", g.remoteURL, g.branch, g.basePath),
+		Path:      fmt.Sprintf("%s @ %s:%s", redactRemoteURL(g.remoteURL), g.branch, g.basePath),
 		LastSync:  g.lastSync,
 		LastError: g.lastError,
 	}
@@ -358,4 +495,30 @@ func (g *Git) EnsureIndex(description string) error {
 	}
 	body := starterMemoryMD(description, time.Now())
 	return g.Write("MEMORY.md", []byte(body), "memd: initialize MEMORY.md")
+}
+
+func splitRemoteAuth(raw string) (clean, username, token string) {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw, "", ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return raw, "", ""
+	}
+	username = u.User.Username()
+	token, _ = u.User.Password()
+	u.User = nil
+	return u.String(), username, token
+}
+
+func redactRemoteURL(raw string) string {
+	clean, _, _ := splitRemoteAuth(raw)
+	return clean
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,12 +62,14 @@ type Directory struct {
 
 // Git is the per-directory git backend config.
 type Git struct {
-	RemoteURL   string `json:"remote_url"`
-	Branch      string `json:"branch"`
-	BasePath    string `json:"base_path"`
-	AuthorName  string `json:"author_name"`
-	AuthorEmail string `json:"author_email"`
-	SSHKeyPath  string `json:"ssh_key_path,omitempty"`
+	RemoteURL    string `json:"remote_url"`
+	Branch       string `json:"branch"`
+	BasePath     string `json:"base_path"`
+	AuthorName   string `json:"author_name"`
+	AuthorEmail  string `json:"author_email"`
+	AuthUsername string `json:"auth_username,omitempty"`
+	AuthToken    string `json:"auth_token,omitempty"`
+	SSHKeyPath   string `json:"ssh_key_path,omitempty"`
 
 	// WaitForWrites is the debounce window after a memory_write. Any further
 	// write resets the timer; on expiry the working copy is committed and
@@ -77,6 +80,18 @@ type Git struct {
 	// has dirty files (e.g. read-only session that bumped FM stats) it's
 	// committed regardless of write activity. Default: 10m.
 	SaveEvery string `json:"save_every,omitempty"`
+}
+
+// RedactGitRemoteURL removes inline credentials from a git remote before it is
+// shown in UI/status output. Tokens supplied through Git.AuthToken are never
+// part of the URL, but users sometimes paste credentialed HTTPS remotes.
+func RedactGitRemoteURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = url.User("redacted")
+	return u.String()
 }
 
 // Connector grants an agent access to one or more directories.

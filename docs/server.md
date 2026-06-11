@@ -19,10 +19,12 @@ What works today:
   invite links, and mark selected directories/connectors as team-scoped.
 - MCP Streamable HTTP, the five workflows (`reorganise`, `harvest`, `dream`, `recall`, `housekeep`), managed file stats for Markdown/HTML.
 - Plain HTTP connector endpoints for agents that can fetch URLs but cannot speak MCP; the UI can copy a ready-to-paste skill/instruction block.
-- Localhost-only binding. Tunnels can expose it, but remote-access hardening and public hosting are still in progress.
+- Localhost-bound serving. Expose it through a local tunnel or a TLS reverse
+  proxy when remote agents or web clients need access.
 
-What's planned (not yet implemented): skills/hooks injection, public hosting
-hardening, and source readers for `harvest`. See [README.md](../README.md)
+What's planned (not yet implemented): skills/hooks injection, OAuth-based
+Git-provider integrations, separate UI / MCP listeners for larger hosted
+deployments, and source readers for `harvest`. See [README.md](../README.md)
 Roadmap.
 
 ## Two Modes
@@ -62,8 +64,12 @@ In the UI:
    switch views; dark mode remains in the top bar.
 2. **Create teams when needed.** Regular users can create teams, manage members,
    and create invite links with optional expiry and max-use count.
-3. **Add directories.** Pick local folder or Git repo. For Git: paste the URL,
-   branch, base path inside the repo, and pick an SSH key path or PAT env var.
+3. **Add directories.** Pick local folder or Git repo. For Git: use an HTTPS
+   remote, choose a branch and base path inside the repo, then enter a Git
+   username and personal access token with repo access. SSH-key Git auth remains
+   available for local runs, but it is unsuitable guidance for end-user
+   deployments because it is difficult to provision, rotate, and scope
+   consistently.
    memd clones into a working copy under the config dir. Team owners/admins can
    mark a directory as team-scoped.
 4. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick
@@ -88,9 +94,12 @@ memd data export-legacy-config --out FILE
 memd version
 ```
 
-Both modes bind to `127.0.0.1`. There is no built-in public listener in v1;
-use a tunnel only when you understand that remote-access hardening is still in
-progress.
+Both modes bind to `127.0.0.1`. For remote agents, web-hosted MCP clients, or
+team access, put memd behind a trusted local tunnel or a TLS reverse proxy and
+use connector header auth where the client supports it.
+
+For a repeatable Linux deployment behind nginx and HTTPS, see
+[Self-Hosting memd](self-hosting.md).
 
 Configured mode account bootstrap:
 
@@ -121,8 +130,8 @@ Configured mode stores production metadata in a SQL database:
 - super-admin markers
 - teams and team memberships
 - team invite token hashes and invite use records
-- user-owned directories and connectors, including connector tokens and optional
-  team scope
+- user-owned directories and connectors, including connector tokens, Git PATs,
+  and optional team scope
 - future Git branch state and sync jobs
 
 Memory data itself should remain in user-owned Git repositories. The database is
@@ -336,20 +345,33 @@ workdirs/
 
 ## Git Directory Behavior
 
-- **On startup:** clone if missing, pull from `main` (or the configured branch).
+- **Auth:** use an HTTPS remote plus a personal access token that has repo
+  access to the target repository. Enter the Git username and PAT in the
+  directory form. If a credential-bearing HTTPS URL is pasted, memd strips the
+  credentials out of the stored remote and keeps them in the directory auth
+  fields. OAuth-based Git-provider integrations may replace manual PAT setup
+  later.
+- **On startup:** clone if missing, then sync from `main` (or the configured
+  branch) with `git pull --rebase --autostash` when that remote branch exists.
 - **On read:** served from the working copy.
-- **On write:** the file lands in the working copy immediately. The commit + push is **debounced** — a `wait_for_writes` timer (default `5m`) is armed, and any further write resets it. When the timer expires, memd runs `git add -A`, `git commit -m <message>`, `git push`. A session of edits becomes one clean commit.
+- **On write:** the file lands in the working copy immediately. The commit + push is **debounced** — a `wait_for_writes` timer (default `5m`) is armed, and any further write resets it. When the timer expires, memd stages changes, pulls with rebase/autostash if the remote branch exists, commits, and pushes. A fresh empty remote is initialized by the first push.
 - **Safety flush** every `save_every` (default `10m`) commits whatever's dirty, so read-only sessions that only churn front-matter stats still sync.
 - **Graceful shutdown** flushes any pending commits before exit.
-- **On conflict:** the server stops writing to that directory and surfaces an error via `memory_status`. You resolve in the working copy. v1 has no automatic merge.
+- **On conflict/auth error:** local writes remain in the working copy and the
+  backend surfaces the error via `memory_status`. Resolve the working copy or
+  update credentials, then flush again. memd automatically handles clean
+  remote-advanced cases with rebase, but it does not auto-resolve content
+  conflicts.
 - Committer identity (name + email) comes from the directory's config.
 
 Local-folder directories: just file I/O, no Git, no debounce.
 
 ## Security Notes
 
-- Localhost-bound. Anyone with a shell on your machine can read local config and database files. Lock your laptop.
+- Localhost-bound. Expose memd through a TLS reverse proxy or trusted tunnel for
+  remote use, and keep host-level access restricted because anyone with a shell
+  on the host can read local config and database files.
 - Connector URLs are passwords. Don't paste them in shared logs, screenshots, or chats.
 - Team invite URLs are join credentials until they expire, are revoked, or hit their max-use count.
-- `memd.db` and exported user-data JSON can hold connector tokens. Be deliberate before syncing or sharing them.
-- v1 has local UI login, but no remote-access hardening story yet. Public hosting is still in progress.
+- `memd.db` and exported user-data JSON can hold connector tokens and Git PATs.
+  Be deliberate before syncing or sharing them.

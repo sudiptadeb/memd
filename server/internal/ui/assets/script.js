@@ -111,6 +111,8 @@
       base_path: "",
       author_name: "memd",
       author_email: "memd@localhost",
+      auth_username: "",
+      auth_token: "",
       ssh_key_path: "",
       err: "",
       submitting: false
@@ -748,6 +750,8 @@
             base_path: this.dirForm.base_path || "",
             author_name: this.dirForm.author_name || "memd",
             author_email: this.dirForm.author_email || "memd@localhost",
+            auth_username: this.dirForm.auth_username || "",
+            auth_token: this.dirForm.auth_token || "",
             ssh_key_path: this.dirForm.ssh_key_path || ""
           };
         }

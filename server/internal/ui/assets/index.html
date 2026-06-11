@@ -654,7 +654,8 @@
           <div class="git-fields">
             <div class="field">
               <label class="field-label">Remote URL<span class="req">*</span></label>
-              <input class="input" x-model="dirForm.remote_url" required placeholder="git@github.com:you/memory.git" />
+              <input class="input" x-model="dirForm.remote_url" required placeholder="https://github.com/you/memory.git" />
+              <div class="field-hint">Use an HTTPS remote for hosted memd. SSH remotes are best kept for local runs.</div>
             </div>
             <div class="field">
               <label class="field-label">Branch</label>
@@ -673,9 +674,19 @@
               <input class="input" x-model="dirForm.author_email" placeholder="memd@localhost" />
             </div>
             <div class="field">
+              <label class="field-label">Git username</label>
+              <input class="input" x-model="dirForm.auth_username" autocomplete="username" placeholder="your GitHub username" />
+              <div class="field-hint">For GitHub, your normal username works with a personal access token.</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Personal access token</label>
+              <input class="input" x-model="dirForm.auth_token" type="password" autocomplete="off" placeholder="github_pat_..." />
+              <div class="field-hint">Needs read and write access to this repository. Stored with your memd account data.</div>
+            </div>
+            <div class="field">
               <label class="field-label">SSH key path</label>
-              <input class="input" x-model="dirForm.ssh_key_path" placeholder="~/.ssh/id_ed25519" />
-              <div class="field-hint">Optional. Defaults to your SSH agent.</div>
+              <input class="input" x-model="dirForm.ssh_key_path" placeholder="local use only" />
+              <div class="field-hint">Legacy local option. Hosted deployments should use HTTPS plus a token.</div>
             </div>
           </div>
         </template>

@@ -158,7 +158,7 @@ func (s *Store) ImportUserData(ctx context.Context, ownerUserID string, bundle U
 func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]config.Directory, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, team_id, name, description, backend, local_path,
-		       git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_ssh_key_path, git_wait_for_writes, git_save_every,
+		       git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_auth_username, git_auth_token, git_ssh_key_path, git_wait_for_writes, git_save_every,
 		       created_at
 		  FROM user_directories
 		 WHERE owner_user_id = ?
@@ -175,7 +175,7 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 		var created string
 		if err := rows.Scan(
 			&d.ID, &teamID, &d.Name, &d.Description, &d.Backend, &d.LocalPath,
-			&git.RemoteURL, &git.Branch, &git.BasePath, &git.AuthorName, &git.AuthorEmail, &git.SSHKeyPath, &git.WaitForWrites, &git.SaveEvery,
+			&git.RemoteURL, &git.Branch, &git.BasePath, &git.AuthorName, &git.AuthorEmail, &git.AuthUsername, &git.AuthToken, &git.SSHKeyPath, &git.WaitForWrites, &git.SaveEvery,
 			&created,
 		); err != nil {
 			return nil, err
@@ -302,10 +302,10 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO user_directories(
 			owner_user_id, id, team_id, name, description, backend, local_path,
-			git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_ssh_key_path, git_wait_for_writes, git_save_every,
+			git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_auth_username, git_auth_token, git_ssh_key_path, git_wait_for_writes, git_save_every,
 			created_at, updated_at
 		)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(owner_user_id, id) DO UPDATE SET
 			team_id = excluded.team_id,
 			name = excluded.name,
@@ -317,12 +317,14 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 			git_base_path = excluded.git_base_path,
 			git_author_name = excluded.git_author_name,
 			git_author_email = excluded.git_author_email,
+			git_auth_username = excluded.git_auth_username,
+			git_auth_token = excluded.git_auth_token,
 			git_ssh_key_path = excluded.git_ssh_key_path,
 			git_wait_for_writes = excluded.git_wait_for_writes,
 			git_save_every = excluded.git_save_every,
 			updated_at = excluded.updated_at`,
 		ownerUserID, d.ID, d.TeamID, d.Name, d.Description, d.Backend, d.LocalPath,
-		git.RemoteURL, git.Branch, git.BasePath, git.AuthorName, git.AuthorEmail, git.SSHKeyPath, git.WaitForWrites, git.SaveEvery,
+		git.RemoteURL, git.Branch, git.BasePath, git.AuthorName, git.AuthorEmail, git.AuthUsername, git.AuthToken, git.SSHKeyPath, git.WaitForWrites, git.SaveEvery,
 		created, now)
 	return err
 }

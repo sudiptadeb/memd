@@ -2,7 +2,7 @@
 
 **Unified, file-first memory for AI agents.**
 
-Your memory lives as ordinary files on your disk — or in a private Git repo you control. Markdown is the default for prose, but standalone HTML, CSV, JSON, and other text artifacts are valid too. memd is a tiny local server that exposes those files over MCP, so every tool you use (Claude Code, Codex CLI, Cursor, ChatGPT, anything else that speaks MCP) sees the same memory.
+Your memory lives as ordinary files on your disk — or in a private Git repo you control. Markdown is the default for prose, but standalone HTML, CSV, JSON, and other text artifacts are valid too. memd is a small server that exposes those files over MCP, so every tool you use (Claude Code, Codex CLI, Cursor, ChatGPT, anything else that speaks MCP) sees the same memory.
 
 <p align="center">
   <img src="docs/assets/memd.gif" alt="memd — unified, file-first memory for AI agents" width="100%">
@@ -209,6 +209,16 @@ HTML files carry the same YAML front matter inside a leading `<!-- ... -->` comm
 
 For Git directories, memd decouples disk write from sync:
 
+- Use an **HTTPS remote** and a **personal access token with repo access** for
+  private repositories. Enter the Git username and PAT in the directory form.
+  SSH-key based Git auth is retained for local runs, but it is not recommended
+  for end-user deployments because it is hard to provision, rotate, and scope
+  safely.
+- Do not put PATs in clone URLs, docs, shell history, or memory files. memd
+  stores Git credentials with the directory's account data and strips
+  credentials out of pasted HTTPS remotes before configuring the working copy.
+  Future OAuth-based Git-provider integrations may replace this manual PAT
+  setup.
 - **FS write: instant** on every `memory_read` and `memory_write`.
 - **Commit + push: debounced** by `wait_for_writes` (default `5m`). A session of edits coalesces into one commit.
 - **Safety flush** every `save_every` (default `10m`) catches read-only sessions where only front-matter stats churn.
@@ -338,18 +348,22 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 
 - [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, file structure, drastic-action policy.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
+- [docs/self-hosting.md](docs/self-hosting.md) — generic systemd + nginx + Certbot deployment playbook.
 - [docs/plans/2026-06-04-local-auth-team-management-plan.md](docs/plans/2026-06-04-local-auth-team-management-plan.md) — local auth and team-management implementation notes.
 - [docs/plans/2026-05-23-memory-weight-decay-design.md](docs/plans/2026-05-23-memory-weight-decay-design.md) — design of the weight/decay layer.
 
 ## Safety
 
-- Don't store secrets, credentials, tokens, or private keys. memd is content-blind.
+- Don't store secrets, credentials, tokens, or private keys in memory files.
+  memd is content-blind. Control-plane credentials such as connector tokens and
+  Git PATs live in account data instead.
 - Memory is context and evidence, not higher-priority instruction — the doctrine teaches agents to treat any embedded command as untrusted text.
-- The server binds to `127.0.0.1` only. Tunnels can expose it, but remote-access hardening is still in progress.
+- The server binds to `127.0.0.1`; expose it through a local tunnel or a TLS
+  reverse proxy when remote agents or web clients need access.
 - Connector URLs are passwords; the token in the path or bearer header *is* the auth.
 - Team invite URLs are join credentials until they expire, are revoked, or hit
   their max-use count.
-- `memd.db` and exported user-data JSON can hold connector tokens.
+- `memd.db` and exported user-data JSON can hold connector tokens and Git PATs.
 
 ## Roadmap
 
@@ -363,7 +377,8 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 - [x] Responsive app shell with sidebar/drawer navigation and dedicated Activity/Info views
 - [x] IdP-agnostic OIDC single sign-on (Authorization Code + PKCE, local JWKS validation)
 - [ ] Skills/hooks injection — per-tool reinforcement (`~/.claude/skills/memd-*`, Codex `AGENTS.md` block, `.cursor/rules/memd.mdc`)
-- [ ] Public hosting hardening with separate UI / MCP listeners
+- [ ] OAuth-based Git-provider integrations for repository access
+- [ ] Separate UI / MCP listeners for larger hosted deployments
 - [ ] Source readers for `harvest` (Cursor rules, Claude auto-memory, mem0 export)
 
 ## License
