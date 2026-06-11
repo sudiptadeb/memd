@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sudiptadeb/memd/server/internal/logs"
 )
 
 // allowedGitProtocols is the colon-separated allowlist handed to git via
@@ -404,7 +406,9 @@ func (g *Git) armDebounce(message string) {
 	g.pendingMsg = message
 	if g.debounce == nil {
 		g.debounce = time.AfterFunc(g.waitForWrites, func() {
-			_ = g.flushDirty("memd: session checkpoint")
+			if err := g.flushDirty("memd: session checkpoint"); err != nil {
+				logs.Error("git sync for %s failed: %v", redactRemoteURL(g.remoteURL), err)
+			}
 		})
 	} else {
 		g.debounce.Reset(g.waitForWrites)
@@ -460,7 +464,9 @@ func (g *Git) safetyTick() {
 	for {
 		select {
 		case <-t.C:
-			_ = g.flushDirty("memd: periodic checkpoint")
+			if err := g.flushDirty("memd: periodic checkpoint"); err != nil {
+				logs.Error("git sync for %s failed: %v", redactRemoteURL(g.remoteURL), err)
+			}
 		case <-g.stopCh:
 			return
 		}
@@ -542,11 +548,14 @@ func (g *Git) flushDirty(defaultMsg string) error {
 }
 
 func (g *Git) Status() Status {
+	g.mu.Lock()
+	lastSync, lastError := g.lastSync, g.lastError
+	g.mu.Unlock()
 	return Status{
 		Backend:   "git",
 		Path:      fmt.Sprintf("%s @ %s:%s", redactRemoteURL(g.remoteURL), g.branch, g.basePath),
-		LastSync:  g.lastSync,
-		LastError: g.lastError,
+		LastSync:  lastSync,
+		LastError: lastError,
 	}
 }
 
