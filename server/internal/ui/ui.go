@@ -495,6 +495,14 @@ func (h *Handler) browseAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	// The filesystem browser is a local-deployment convenience for choosing a
+	// directory path. Only local (password) accounts and super admins — who can
+	// already specify a path — may enumerate the server's filesystem.
+	user := userFromContext(r.Context())
+	if user == nil || (user.Issuer != "" && !user.SuperAdmin) {
+		httpErr(w, http.StatusForbidden, fmt.Errorf("filesystem browsing is only available to local accounts"))
+		return
+	}
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	if path == "" {
 		home, err := os.UserHomeDir()
