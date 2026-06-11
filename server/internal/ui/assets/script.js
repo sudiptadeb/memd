@@ -246,6 +246,7 @@
       pickerParent: "",
       pickerErr: "",
       toast: "",
+      toastLevel: "info",
       toastTimer: null,
       entries: [],
       lastID: -1,
@@ -654,8 +655,9 @@
         this.closeNav();
       },
 
-      showToast(message) {
+      showToast(message, level) {
         this.toast = message;
+        this.toastLevel = level === "error" ? "error" : "info";
         window.clearTimeout(this.toastTimer);
         this.toastTimer = window.setTimeout(() => {
           this.toast = "";
@@ -687,7 +689,7 @@
           await copyText(await response.text());
           this.showToast("Skill copied");
         } catch (_) {
-          this.showToast("Copy failed");
+          this.showToast("Copy failed", "error");
         }
       },
 

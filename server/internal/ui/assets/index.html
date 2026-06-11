@@ -285,7 +285,7 @@
                     <span class="dot accent" x-show="directory.team_id" x-text="directory.team_name || teamName(directory.team_id)"></span>
                     <span class="dot" :class="directory.error ? 'danger' : 'success'" :title="directory.error || (directory.backend + ' reachable')" x-text="directory.backend"></span>
                     <span class="spacer"></span>
-                    <select class="mini-select" x-show="directory.can_manage && manageableTeams().length" :value="directory.team_id || ''" @change="setDirectoryTeam(directory, $event.target.value)">
+                    <select class="mini-select" aria-label="Move directory to team" x-show="directory.can_manage && manageableTeams().length" :value="directory.team_id || ''" @change="setDirectoryTeam(directory, $event.target.value)">
                       <option value="">Personal</option>
                       <template x-for="team in manageableTeams()" :key="team.id">
                         <option :value="team.id" x-text="team.name"></option>
@@ -336,7 +336,7 @@
           <template x-if="visibleConnectors().length">
             <div class="cards">
               <template x-for="connector in visibleConnectors()" :key="connector.id">
-                <article class="card connector-card" :class="connector.expanded ? 'expanded' : ''" @click="toggleConnectorExpand(connector)" @keydown.enter.prevent="toggleConnectorExpand(connector)" @keydown.space.prevent="toggleConnectorExpand(connector)" tabindex="0">
+                <article class="card connector-card" :class="connector.expanded ? 'expanded' : ''" @click="toggleConnectorExpand(connector)" @keydown.enter.prevent="toggleConnectorExpand(connector)" @keydown.space.prevent="toggleConnectorExpand(connector)" tabindex="0" role="button" :aria-expanded="connector.expanded ? 'true' : 'false'">
                   <div class="card-head">
                     <span class="card-name" x-text="connector.name"></span>
                     <span class="dot accent" x-show="connector.team_id" x-text="connector.team_name || teamName(connector.team_id)"></span>
@@ -475,7 +475,7 @@
 
     <div class="scrim" :class="sheet ? 'open' : ''" @click="closeSheets()"></div>
 
-    <aside class="sheet" :class="sheet === 'team-new' ? 'open' : ''" :aria-hidden="sheet !== 'team-new'" @keydown.escape.stop="closeSheets()">
+    <aside class="sheet" :class="sheet === 'team-new' ? 'open' : ''" :aria-hidden="sheet !== 'team-new'" :inert="sheet !== 'team-new'" @keydown.escape.stop="closeSheets()">
       <header class="sheet-head">
         <div>
           <h3>New team</h3>
@@ -506,7 +506,7 @@
       </footer>
     </aside>
 
-    <aside class="sheet wide-sheet" :class="sheet === 'team' ? 'open' : ''" :aria-hidden="sheet !== 'team'" @keydown.escape.stop="closeSheets()">
+    <aside class="sheet wide-sheet" :class="sheet === 'team' ? 'open' : ''" :aria-hidden="sheet !== 'team'" :inert="sheet !== 'team'" @keydown.escape.stop="closeSheets()">
       <header class="sheet-head">
         <div>
           <h3 x-text="teamDetail ? teamDetail.name : 'Team'"></h3>
@@ -530,7 +530,7 @@
                   <div class="sub" x-text="member.username"></div>
                 </div>
                 <span class="spacer"></span>
-                <select class="mini-select" :value="member.role" x-show="teamDetail && teamDetail.can_manage" @change="updateTeamMemberRole(member, $event.target.value)">
+                <select class="mini-select" aria-label="Change member role" :value="member.role" x-show="teamDetail && teamDetail.can_manage" @change="updateTeamMemberRole(member, $event.target.value)">
                   <option value="owner">owner</option>
                   <option value="admin">admin</option>
                   <option value="member">member</option>
@@ -545,8 +545,8 @@
           </div>
 
           <form class="inline-form" x-show="teamDetail && teamDetail.can_manage" @submit.prevent="addTeamMember()">
-            <input class="input" x-model="memberForm.username" placeholder="username" />
-            <select class="input compact-input" x-model="memberForm.role">
+            <input class="input" aria-label="Username to add" x-model="memberForm.username" placeholder="username" />
+            <select class="input compact-input" aria-label="Member role" x-model="memberForm.role">
               <option value="member">member</option>
               <option value="viewer">viewer</option>
               <option value="admin">admin</option>
@@ -559,13 +559,13 @@
         <div class="team-panel" x-show="teamDetail && teamDetail.can_manage">
           <div class="panel-title">Invite links</div>
           <form class="invite-grid" @submit.prevent="createInvite()">
-            <select class="input" x-model="inviteForm.role">
+            <select class="input" aria-label="Invite role" x-model="inviteForm.role">
               <option value="member">member</option>
               <option value="viewer">viewer</option>
               <option value="admin" x-show="teamDetail && teamDetail.can_delete">admin</option>
             </select>
-            <input class="input" type="datetime-local" x-model="inviteForm.expires_at" />
-            <input class="input" type="number" min="1" x-model="inviteForm.max_uses" placeholder="Max uses" />
+            <input class="input" type="datetime-local" aria-label="Invite expiry" x-model="inviteForm.expires_at" />
+            <input class="input" type="number" min="1" aria-label="Max uses" x-model="inviteForm.max_uses" placeholder="Max uses" />
             <button class="btn secondary" type="submit" :disabled="inviteForm.submitting">Create</button>
           </form>
           <div class="created-link" x-show="createdInviteURL">
@@ -588,7 +588,7 @@
       </div>
     </aside>
 
-    <aside class="sheet" :class="sheet === 'dir' ? 'open' : ''" :aria-hidden="sheet !== 'dir'" @keydown.escape.stop="closeSheets()">
+    <aside class="sheet" :class="sheet === 'dir' ? 'open' : ''" :aria-hidden="sheet !== 'dir'" :inert="sheet !== 'dir'" @keydown.escape.stop="closeSheets()">
       <header class="sheet-head">
         <div>
           <h3>Add directory</h3>
@@ -722,7 +722,7 @@
       </footer>
     </aside>
 
-    <aside class="sheet" :class="sheet === 'conn' ? 'open' : ''" :aria-hidden="sheet !== 'conn'" @keydown.escape.stop="closeSheets()">
+    <aside class="sheet" :class="sheet === 'conn' ? 'open' : ''" :aria-hidden="sheet !== 'conn'" :inert="sheet !== 'conn'" @keydown.escape.stop="closeSheets()">
       <header class="sheet-head">
         <div>
           <h3>Add connector</h3>
@@ -801,7 +801,7 @@
       </footer>
     </aside>
 
-    <aside class="sheet" :class="sheet === 'edit' ? 'open' : ''" :aria-hidden="sheet !== 'edit'" @keydown.escape.stop="closeSheets()">
+    <aside class="sheet" :class="sheet === 'edit' ? 'open' : ''" :aria-hidden="sheet !== 'edit'" :inert="sheet !== 'edit'" @keydown.escape.stop="closeSheets()">
       <header class="sheet-head">
         <div>
           <h3>Edit connector</h3>
@@ -878,7 +878,7 @@
       </footer>
     </aside>
 
-    <div class="modal-scrim" :class="pickerOpen ? 'open' : ''" @click="pickerOpen = false">
+    <div class="modal-scrim" :class="pickerOpen ? 'open' : ''" :inert="!pickerOpen" @click="pickerOpen = false">
       <div class="modal" @click.stop>
         <header class="modal-head">
           <h3>Choose a folder</h3>
@@ -908,8 +908,8 @@
       </div>
     </div>
 
-    <div class="toast" :class="toast ? 'show' : ''" x-cloak>
-      <svg class="icon" aria-hidden="true"><use href="/assets/icons/check.svg#icon"></use></svg>
+    <div class="toast" :class="toast ? 'show' : ''" role="status" aria-live="polite" x-cloak>
+      <svg class="icon" aria-hidden="true"><use :href="'/assets/icons/' + (toastLevel === 'error' ? 'triangle-alert' : 'check') + '.svg#icon'"></use></svg>
       <span x-text="toast"></span>
     </div>
   </body>
