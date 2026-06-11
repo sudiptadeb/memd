@@ -140,7 +140,10 @@ func (m *SessionManager) seal(v any) (string, error) {
 }
 
 func (m *SessionManager) open(token string, v any) error {
-	raw, err := base64.RawURLEncoding.DecodeString(token)
+	// Strict() rejects non-canonical encodings: without it, flipping the unused
+	// trailing bits of the last base64 character decodes to identical bytes, so
+	// a "tampered" token could still authenticate.
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(token)
 	if err != nil {
 		return err
 	}
