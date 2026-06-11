@@ -115,6 +115,16 @@ a {
   stroke-linejoin: round;
 }
 
+.icon.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .spacer {
   flex: 1;
 }
@@ -1519,6 +1529,60 @@ section {
   color: var(--fg-3);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.git-check .btn {
+  align-self: flex-start;
+}
+
+.git-check-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.git-check-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.git-check-row .icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.git-check-row.ok .icon {
+  color: var(--success);
+}
+
+.git-check-row.fail .icon {
+  color: var(--danger);
+}
+
+.git-check-row b {
+  display: block;
+  min-width: 0;
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.git-check-row span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg-3);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .input {

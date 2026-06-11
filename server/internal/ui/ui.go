@@ -18,6 +18,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/oidc"
 	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/sudiptadeb/memd/server/internal/storage"
 )
 
 //go:embed assets/*
@@ -65,6 +66,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
 	mux.HandleFunc("/api/directories", h.requireUser(h.directoriesAPI))
 	mux.HandleFunc("/api/directories/", h.requireUser(h.directoryAPI))
+	mux.HandleFunc("/api/git/check", h.requireUser(h.gitCheckAPI))
 	mux.HandleFunc("/api/connectors", h.requireUser(h.connectorsAPI))
 	mux.HandleFunc("/api/connectors/", h.requireUser(h.connectorAPI))
 	mux.HandleFunc("/api/browse", h.requireUser(h.browseAPI))
@@ -265,6 +267,36 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	logs.Info("added directory %q (id=%s, backend=%s)", body.Name, id, body.Backend)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (h *Handler) gitCheckAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Git *config.Git `json:"git"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Git == nil || strings.TrimSpace(body.Git.RemoteURL) == "" {
+		httpErr(w, http.StatusBadRequest, fmt.Errorf("git remote URL is required"))
+		return
+	}
+	normalizeGitDirectoryAuth(body.Git)
+	report := storage.CheckGitConnection(storage.GitConfig{
+		RemoteURL:    body.Git.RemoteURL,
+		Branch:       body.Git.Branch,
+		BasePath:     body.Git.BasePath,
+		AuthorName:   body.Git.AuthorName,
+		AuthorEmail:  body.Git.AuthorEmail,
+		AuthUsername: body.Git.AuthUsername,
+		AuthToken:    body.Git.AuthToken,
+		SSHKeyPath:   body.Git.SSHKeyPath,
+	})
+	writeJSON(w, http.StatusOK, report)
 }
 
 func normalizeGitDirectoryAuth(g *config.Git) {

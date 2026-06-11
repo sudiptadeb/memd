@@ -681,12 +681,33 @@
             <div class="field">
               <label class="field-label">Personal access token</label>
               <input class="input" x-model="dirForm.auth_token" type="password" autocomplete="off" placeholder="github_pat_..." />
-              <div class="field-hint">Needs read and write access to this repository. Stored with your memd account data.</div>
+              <div class="field-hint">GitHub: selected repo + Contents read/write. GitLab: write_repository. Stored with your memd account data.</div>
             </div>
             <div class="field">
               <label class="field-label">SSH key path</label>
               <input class="input" x-model="dirForm.ssh_key_path" placeholder="local use only" />
               <div class="field-hint">Legacy local option. Hosted deployments should use HTTPS plus a token.</div>
+            </div>
+            <div class="field git-check">
+              <button class="btn secondary" type="button" @click="checkGitDirectory()" :disabled="dirForm.checking || !dirForm.remote_url" :aria-busy="dirForm.checking ? 'true' : 'false'">
+                <svg class="icon" :class="dirForm.checking ? 'spin' : ''" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+                <span x-text="dirForm.checking ? 'Checking...' : 'Test connection'"></span>
+              </button>
+              <div class="field-hint">Checks read, local commit, temporary branch push, and cleanup.</div>
+              <div class="git-check-results" x-show="dirForm.checkResults.length">
+                <template x-for="check in dirForm.checkResults" :key="check.id">
+                  <div class="git-check-row" :class="check.ok ? 'ok' : 'fail'">
+                    <svg class="icon" aria-hidden="true">
+                      <use :href="check.ok ? '/assets/icons/check.svg#icon' : '/assets/icons/triangle-alert.svg#icon'"></use>
+                    </svg>
+                    <div>
+                      <b x-text="check.label"></b>
+                      <span x-text="check.ok ? check.detail : check.error"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <span class="err" x-text="dirForm.checkErr" x-show="dirForm.checkErr"></span>
             </div>
           </div>
         </template>

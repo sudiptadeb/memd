@@ -69,6 +69,47 @@ type GitConfig struct {
 }
 
 func NewGit(cfg GitConfig) (*Git, error) {
+	g, err := newGitFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(filepath.Join(g.workdir, ".git")); errors.Is(err, fs.ErrNotExist) {
+		if err := g.clone(); err != nil {
+			return nil, err
+		}
+	} else if err == nil {
+		if err := g.ensureOrigin(); err != nil {
+			g.lastError = err.Error()
+		} else if err := g.checkoutConfiguredBranch(); err != nil {
+			g.lastError = err.Error()
+		} else if err := g.syncRemote(); err != nil {
+			g.lastError = err.Error()
+		}
+	} else {
+		return nil, err
+	}
+
+	root := filepath.Join(g.workdir, g.basePath)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	local, err := NewLocal(root)
+	if err != nil {
+		return nil, err
+	}
+	g.local = local
+	g.lastSync = time.Now()
+
+	// Safety ticker: periodically commit anything dirty so read-only
+	// sessions (which only mutate FM stats) eventually sync.
+	g.wg.Add(1)
+	go g.safetyTick()
+
+	return g, nil
+}
+
+func newGitFromConfig(cfg GitConfig) (*Git, error) {
 	if cfg.WorkDir == "" || cfg.RemoteURL == "" {
 		return nil, errors.New("workdir and remote URL required")
 	}
@@ -117,38 +158,6 @@ func NewGit(cfg GitConfig) (*Git, error) {
 	if err := g.prepareAskPass(); err != nil {
 		return nil, err
 	}
-
-	if _, err := os.Stat(filepath.Join(g.workdir, ".git")); errors.Is(err, fs.ErrNotExist) {
-		if err := g.clone(); err != nil {
-			return nil, err
-		}
-	} else if err == nil {
-		if err := g.ensureOrigin(); err != nil {
-			g.lastError = err.Error()
-		} else if err := g.checkoutConfiguredBranch(); err != nil {
-			g.lastError = err.Error()
-		} else if err := g.syncRemote(); err != nil {
-			g.lastError = err.Error()
-		}
-	} else {
-		return nil, err
-	}
-
-	root := filepath.Join(g.workdir, g.basePath)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, err
-	}
-	local, err := NewLocal(root)
-	if err != nil {
-		return nil, err
-	}
-	g.local = local
-	g.lastSync = time.Now()
-
-	// Safety ticker: periodically commit anything dirty so read-only
-	// sessions (which only mutate FM stats) eventually sync.
-	g.wg.Add(1)
-	go g.safetyTick()
 
 	return g, nil
 }

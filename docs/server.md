@@ -351,6 +351,11 @@ workdirs/
   credentials out of the stored remote and keeps them in the directory auth
   fields. OAuth-based Git-provider integrations may replace manual PAT setup
   later.
+- **Connection check:** before saving, click **Test connection**. memd clones to
+  a temporary workspace, verifies remote read access, creates a local test
+  commit, pushes a temporary `memd-connection-check/*` branch, then deletes it.
+  This proves the token can read and push a branch for PR/MR-style workflows
+  without modifying the configured memory branch.
 - **On startup:** clone if missing, then sync from `main` (or the configured
   branch) with `git pull --rebase --autostash` when that remote branch exists.
 - **On read:** served from the working copy.
@@ -365,6 +370,56 @@ workdirs/
 - Committer identity (name + email) comes from the directory's config.
 
 Local-folder directories: just file I/O, no Git, no debounce.
+
+### GitHub PAT Setup
+
+Prefer a
+[fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token)
+for each Git-backed memory repository:
+
+1. In GitHub, open Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token.
+2. Set a descriptive token name and an expiration.
+3. Select the resource owner that owns the memory repository.
+4. Under repository access, choose **Only select repositories** and select the
+   memory repository.
+5. Under repository permissions, set **Contents** to **Read and write**. Leave
+   unrelated permissions unset.
+6. Generate the token, then paste it into memd's **Personal access token** field
+   with the GitHub username that owns the token.
+
+Notes:
+
+- GitHub fine-grained tokens automatically include repository metadata read
+  access. The key permission memd needs for clone/pull/commit/push is
+  **Contents: Read and write**.
+- Organization repositories may require owner approval for fine-grained PATs.
+  Organizations using SAML SSO may also require the token to be authorized.
+- memd pushes directly to the configured branch during normal sync. If branch
+  protection blocks direct pushes, use a branch that the token owner can push to
+  or adjust the repository rules. The connection check verifies temporary branch
+  push/delete, not protected-branch bypass.
+- If a fine-grained token cannot be used, a classic PAT with the `repo` scope is
+  the fallback for private repositories. Prefer fine-grained tokens because they
+  can be restricted to one repository.
+
+### GitLab Token Setup
+
+For GitLab, prefer a project access token when your GitLab tier and project
+settings allow it; otherwise use a personal access token:
+
+1. Create a token with an expiration.
+2. Grant `write_repository`. GitLab defines this scope as repository read/write
+   access for pull and push over HTTPS.
+3. Paste the GitLab HTTPS remote into memd.
+4. Use the token as the **Personal access token**. GitLab accepts any non-empty
+   username for Git-over-HTTPS token auth; `oauth2` is a common value.
+5. Run **Test connection**. A passing PR/MR branch check means memd can push a
+   temporary branch that can be used for merge-request workflows.
+
+Protected branches and project push rules still apply. If the configured branch
+rejects direct pushes, configure memd to sync a branch that the token can push
+to, or adjust repository rules.
 
 ## Security Notes
 
