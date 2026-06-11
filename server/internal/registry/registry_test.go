@@ -2,12 +2,59 @@ package registry
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
 )
+
+func TestAddDirectoryManagedSandbox(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", tmp)
+	reg := NewEphemeral()
+
+	// OIDC-style user (custom path not allowed), name only: memd sandboxes it.
+	id, err := reg.AddDirectoryForUserManaged("usrManaged", config.Directory{Name: "notes", Backend: "local"}, false)
+	if err != nil {
+		t.Fatalf("managed name-only directory: %v", err)
+	}
+	var got config.Directory
+	for _, d := range reg.Directories() {
+		if d.ID == id {
+			got = d
+		}
+	}
+	if got.LocalPath == "" {
+		t.Fatal("managed directory has no LocalPath")
+	}
+	if !strings.Contains(got.LocalPath, filepath.Join("usrManaged", id)) {
+		t.Errorf("managed path %q is not under the per-user/dir namespace", got.LocalPath)
+	}
+	if info, err := os.Stat(got.LocalPath); err != nil || !info.IsDir() {
+		t.Errorf("managed path was not created as a directory: %v", err)
+	}
+
+	// Same user supplying a path: rejected.
+	if _, err := reg.AddDirectoryForUserManaged("usrManaged", config.Directory{Name: "x", Backend: "local", LocalPath: t.TempDir()}, false); err == nil {
+		t.Error("custom local path should be rejected when not allowed")
+	}
+
+	// Local user supplying a path: honoured.
+	chosen := t.TempDir()
+	id3, err := reg.AddDirectoryForUserManaged("usrLocal", config.Directory{Name: "y", Backend: "local", LocalPath: chosen}, true)
+	if err != nil {
+		t.Fatalf("local user custom path: %v", err)
+	}
+	for _, d := range reg.Directories() {
+		if d.ID == id3 && d.LocalPath != chosen {
+			t.Errorf("custom path = %q, want %q", d.LocalPath, chosen)
+		}
+	}
+}
 
 func TestRotateConnector_ReplacesToken(t *testing.T) {
 	r := NewEphemeral()

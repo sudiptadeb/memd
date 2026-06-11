@@ -252,14 +252,17 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeGitDirectoryAuth(body.Git)
-	id, err := h.reg.AddDirectoryForUser(user.ID, config.Directory{
+	// Only local accounts may choose a local directory path. OIDC-provisioned
+	// users get a name-only directory that memd sandboxes under a managed root.
+	allowCustomLocalPath := user.Issuer == ""
+	id, err := h.reg.AddDirectoryForUserManaged(user.ID, config.Directory{
 		Name:        body.Name,
 		TeamID:      body.TeamID,
 		Description: body.Description,
 		Backend:     body.Backend,
 		LocalPath:   body.LocalPath,
 		Git:         body.Git,
-	})
+	}, allowCustomLocalPath)
 	if err != nil {
 		logs.Error("add directory %q failed: %v", body.Name, err)
 		httpErr(w, http.StatusBadRequest, err)

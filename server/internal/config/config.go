@@ -41,6 +41,17 @@ func WorkdirsRoot() (string, error) {
 	return filepath.Join(dir, "workdirs"), nil
 }
 
+// ManagedLocalRoot returns the root path under which memd creates sandboxed
+// local directories for users who only supply a name (rather than choosing
+// their own path). Each directory lives at <root>/<ownerUserID>/<dirID>.
+func ManagedLocalRoot() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "local"), nil
+}
+
 // Config is the on-disk shape of memd state.
 type Config struct {
 	Directories []Directory `json:"directories"`

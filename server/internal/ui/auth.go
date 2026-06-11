@@ -18,6 +18,9 @@ type sessionUser struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email,omitempty"`
 	SuperAdmin  bool   `json:"super_admin"`
+	// Local is true for password (non-OIDC) accounts. Such users may pick a
+	// custom local directory path and use the filesystem browser.
+	Local bool `json:"local"`
 }
 
 type authContextKey struct{}
@@ -153,6 +156,7 @@ func sessionUserFromAccount(user account.User) sessionUser {
 		DisplayName: user.DisplayName,
 		Email:       user.Email,
 		SuperAdmin:  user.SuperAdmin,
+		Local:       user.Issuer == "",
 	}
 }
 

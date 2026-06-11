@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +97,44 @@ func NewEphemeral() *Registry {
 		cfg:      &config.Config{},
 		backends: map[string]storage.Backend{},
 	}
+}
+
+// resolveLocalPath applies the local-directory policy. A caller-supplied path
+// is honoured only when allowCustom is true; otherwise (and whenever no path is
+// given) memd creates and uses a sandboxed directory at
+// <ManagedLocalRoot>/<ownerUserID>/<dirID>.
+func resolveLocalPath(d *config.Directory, allowCustom bool) error {
+	custom := strings.TrimSpace(d.LocalPath)
+	if custom != "" {
+		if !allowCustom {
+			return errors.New("choosing a local directory path is only available for local accounts; create a name-only directory or use a git backend instead")
+		}
+		d.LocalPath = custom
+		return nil
+	}
+	root, err := config.ManagedLocalRoot()
+	if err != nil {
+		return err
+	}
+	if !safePathSegment(d.OwnerUserID) || !safePathSegment(d.ID) {
+		return fmt.Errorf("cannot derive a managed directory path")
+	}
+	dir := filepath.Join(root, d.OwnerUserID, d.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	d.LocalPath = dir
+	return nil
+}
+
+// safePathSegment reports whether s is a single, traversal-free path segment.
+// Owner and directory IDs are server-generated and always satisfy this; the
+// check is a guard against any future ID format change.
+func safePathSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	return !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
 }
 
 func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
@@ -221,10 +261,24 @@ func (r *Registry) DirectoryForConnector(c *Connector, id string) *DirectoryView
 // --- Mutations ---
 
 func (r *Registry) AddDirectory(d config.Directory) (string, error) {
-	return r.AddDirectoryForUser(d.OwnerUserID, d)
+	// Trusted/internal caller (e.g. quick mode): a custom local path is allowed.
+	return r.addDirectory(d.OwnerUserID, d, true)
 }
 
+// AddDirectoryForUser adds a directory on behalf of a trusted caller, allowing
+// a custom local path. Hosted UI flows should use AddDirectoryForUserManaged.
 func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (string, error) {
+	return r.addDirectory(ownerUserID, d, true)
+}
+
+// AddDirectoryForUserManaged adds a directory subject to the hosted policy.
+// When allowCustomLocalPath is false, a caller-supplied local path is rejected
+// and a name-only local directory is sandboxed under a per-user managed root.
+func (r *Registry) AddDirectoryForUserManaged(ownerUserID string, d config.Directory, allowCustomLocalPath bool) (string, error) {
+	return r.addDirectory(ownerUserID, d, allowCustomLocalPath)
+}
+
+func (r *Registry) addDirectory(ownerUserID string, d config.Directory, allowCustomLocalPath bool) (string, error) {
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
 			return "", err
@@ -245,6 +299,11 @@ func (r *Registry) AddDirectoryForUser(ownerUserID string, d config.Directory) (
 	}
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = time.Now()
+	}
+	if d.Backend == "local" {
+		if err := resolveLocalPath(&d, allowCustomLocalPath); err != nil {
+			return "", err
+		}
 	}
 	b, err := r.openBackend(d)
 	if err != nil {
