@@ -45,9 +45,11 @@ func TestSessionRejectsTamperedCookie(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 	cookie := rec.Result().Cookies()[0]
-	// Flip a byte in the sealed value.
+	// Flip a byte in the middle of the sealed value. (Flipping the last
+	// character is unreliable: its trailing base64 bits are often unused, so
+	// the decode can yield identical bytes.)
 	tampered := []byte(cookie.Value)
-	tampered[len(tampered)-1] ^= 0x01
+	tampered[len(tampered)/2] ^= 0x01
 	cookie.Value = string(tampered)
 
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
