@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -160,8 +161,17 @@ func (r *Registry) Connectors() []config.Connector {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]config.Connector, len(r.cfg.Connectors))
-	copy(out, r.cfg.Connectors)
+	for i := range r.cfg.Connectors {
+		out[i] = cloneConnector(r.cfg.Connectors[i])
+	}
 	return out
+}
+
+// cloneConnector returns a copy whose DirectoryIDs has its own backing array,
+// so callers can't observe (or race with) later in-place registry mutations.
+func cloneConnector(c config.Connector) config.Connector {
+	c.DirectoryIDs = append([]string(nil), c.DirectoryIDs...)
+	return c
 }
 
 // ConnectorByToken returns the connector with this token, or nil.
@@ -170,7 +180,7 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 	defer r.mu.RUnlock()
 	for i := range r.cfg.Connectors {
 		if subtle.ConstantTimeCompare([]byte(r.cfg.Connectors[i].Token), []byte(tok)) == 1 {
-			c := r.cfg.Connectors[i]
+			c := cloneConnector(r.cfg.Connectors[i])
 			return &c
 		}
 	}
@@ -828,7 +838,7 @@ func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
 	var out []config.Connector
 	for _, c := range r.cfg.Connectors {
 		if c.OwnerUserID == ownerUserID || (c.TeamID != "" && viewTeams[c.TeamID]) {
-			out = append(out, c)
+			out = append(out, cloneConnector(c))
 		}
 	}
 	return out
@@ -873,8 +883,11 @@ func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string
 	return nil
 }
 
+// removeString returns a new slice with target removed. It must not filter in
+// place (list[:0]): connector copies returned by the accessors share the same
+// backing array, so mutating it would race with concurrent readers.
 func removeString(list []string, target string) []string {
-	out := list[:0]
+	out := make([]string, 0, len(list))
 	for _, v := range list {
 		if v != target {
 			out = append(out, v)
@@ -910,9 +923,17 @@ func parseDurationOrZero(s string) time.Duration {
 
 func newID() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
+	b := make([]byte, 12)
+	if _, err := crand.Read(b); err != nil {
+		// crypto/rand should never fail; fall back to math/rand rather than
+		// returning a predictable constant.
+		for i := range b {
+			b[i] = chars[rand.Intn(len(chars))]
+		}
+		return string(b)
+	}
 	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
+		b[i] = chars[int(b[i])%len(chars)]
 	}
 	return string(b)
 }
