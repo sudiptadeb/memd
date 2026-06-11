@@ -1,7 +1,7 @@
 // Package mcp implements a minimal MCP (Model Context Protocol) server
 // over HTTP. It supports initialize, tools/list, and tools/call — enough
 // for clients like Claude Code and Codex CLI to discover and invoke the
-// five memory_* tools that this server exposes.
+// memory_* storage tools and memd_* workflow tools that this server exposes.
 package mcp
 
 import (

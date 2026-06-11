@@ -61,7 +61,7 @@ case "${TARGET}" in
     ;;
   *)
     echo "unknown target: ${TARGET}" >&2
-    echo "usage: build/build.sh [all|clean]" >&2
+    echo "usage: build/build.sh [host|all|clean]" >&2
     exit 2
     ;;
 esac

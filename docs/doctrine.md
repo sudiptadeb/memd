@@ -72,7 +72,7 @@ Workflow entry points are user-facing:
 - `memd_reorganise(directory_id?)` or `/<connector>:reorganise` - restructure files/folders and rewrite `MEMORY.md`.
 - `memd_harvest(directory_id?)` or `/<connector>:harvest` - import durable knowledge from external sources.
 - `memd_dream(directory_id?)` or `/<connector>:dream` - consolidate recently used or stale memory.
-- `memd_recall(topic, directory_id?)` or `/<connector>:recall` - search, walk links, synthesize.
+- `memd_recall(topic, directory_id?)` or `/<connector>:recall` - search, walk links, synthesise.
 - `memd_housekeep(directory_id?)` or `/<connector>:housekeep` - fix links, orphan entries, obvious metadata drift.
 
 If memory feels cluttered, suggest the relevant workflow: `reorganise` for structure, `housekeep` for drift, `dream` for consolidation.
@@ -143,7 +143,7 @@ Only `MEMORY.md` at the root is mandatory. Everything else lives in folders that
 - Order sections by usefulness: active work and authoritative facts first, reference next, historical lessons last.
 - Do not mirror the raw topology just because `memory_load()` shows it.
 
-Reorganise when `entries > limit`, more than 20 files sit directly under one folder, more than 90 days passed since `last_reorganised`, or the user asks. A reorganisation pass skims files, merges/archive stale content, groups related files, rewrites `MEMORY.md`, and updates `last_reorganised` / `entries`.
+Reorganise when `entries > limit`, more than 20 files sit directly under one folder, more than 90 days passed since `last_reorganised`, or the user asks. A reorganisation pass skims files, merges/archives stale content, groups related files, rewrites `MEMORY.md`, and updates `last_reorganised` / `entries`.
 
 ## Acting And Safety
 

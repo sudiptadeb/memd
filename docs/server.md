@@ -55,7 +55,7 @@ If the directory is empty or has no Markdown at the root, memd writes a starter 
 memd serve
 ```
 
-The server starts, opens the web UI in your browser (default `http://127.0.0.1:7878`), and runs until you stop it.
+The server starts and prints the web UI URL (default `http://127.0.0.1:7878`) — open it in your browser. It runs until you stop it.
 
 In the UI:
 
@@ -67,9 +67,8 @@ In the UI:
 3. **Add directories.** Pick local folder or Git repo. For Git: use an HTTPS
    remote, choose a branch and base path inside the repo, then enter a Git
    username and personal access token with repo access. SSH-key Git auth remains
-   available for local runs, but it is unsuitable guidance for end-user
-   deployments because it is difficult to provision, rotate, and scope
-   consistently.
+   available for local runs, but it is not recommended for end-user deployments
+   because it is difficult to provision, rotate, and scope consistently.
    memd clones into a working copy under the config dir. Team owners/admins can
    mark a directory as team-scoped.
 4. **Add connectors.** One per agent (e.g. "Claude Code", "Codex CLI"). Pick
@@ -189,7 +188,7 @@ The web UI does not expose a "make super admin" action for local accounts.
 Super admins open `/admin`, a separate Alpine app from the memory UI, to:
 
 - create regular local users, disable/enable accounts, reset passwords
-- configure OIDC single sign-on (issuer, client credentials, admin mapping)
+- configure OIDC single sign-on (issuer, redirect URI, client credentials, scopes)
 
 For SSO, OIDC only authenticates cloud accounts. Super-admin access remains a
 local-account flow, and team ownership/admin roles are maintained inside memd

@@ -32,14 +32,17 @@ memd takes the opposite stance: **memory is yours, lives in your files, and foll
 bash build/build.sh host
 
 # One directory, ephemeral — no setup
-./dist/<os>/memd-<arch> ~/work-memory
+./dist/<os>/memd-<arch>-v<version> ~/work-memory
 # → prints an MCP URL. Paste it into your agent.
 
 # Or run configured mode with local login, teams,
 # multiple directories, and multiple agents.
-./dist/<os>/memd-<arch> serve --init-db
+./dist/<os>/memd-<arch>-v<version> serve --init-db
 # → http://127.0.0.1:7878
 ```
+
+`build/build.sh host` stamps the version into the filename, so the binary lands
+at e.g. `./dist/darwin/memd-arm64-v0.1.0-dev` (override with `VERSION=...`).
 
 On first configured-mode startup, memd initializes its local account database and
 creates a super-admin account. Super admins use `/admin` to create regular user
@@ -59,7 +62,7 @@ For non-interactive first boot:
 MEMD_INIT_DB=1 \
 MEMD_CREATE_SUPER_ADMIN_USERNAME=admin \
 MEMD_CREATE_SUPER_ADMIN_PASSWORD='change-me' \
-./dist/<os>/memd-<arch> serve
+./dist/<os>/memd-<arch>-v<version> serve
 ```
 
 ## Wire It Up

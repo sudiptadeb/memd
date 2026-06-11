@@ -108,11 +108,17 @@ func runServe(args []string) error {
 func printUsage() {
 	fmt.Println(`Usage:
   memd <directory>                         quick mode — serve one directory, ephemeral URL
-  memd serve [--port PORT] [--init-db]     configured mode — web UI for multiple directories
+  memd serve [flags]                       configured mode — web UI for multiple directories
   memd data export --user USER --out FILE
   memd data import --user USER --in FILE [--replace]
   memd data export-legacy-config --out FILE
   memd version
+
+serve flags:
+  --port PORT                  port to listen on (default 7878)
+  --init-db                    initialize the account database if needed
+  --create-super-admin USER    create a local super admin before serving
+  --super-admin-password PASS  password for --create-super-admin (prefer the env var or prompt)
 
 Configured mode uses MEMD_DATABASE_URL for account metadata. If unset, it uses a cgo-free SQLite database in the memd config directory.
 Both modes bind to 127.0.0.1.`)
