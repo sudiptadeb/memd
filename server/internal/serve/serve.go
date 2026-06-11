@@ -97,7 +97,7 @@ func RunOptions(opts Options) error {
 	}
 
 	srv := &http.Server{
-		Handler:           withMaxBody(mux, maxRequestBody),
+		Handler:           withSecurityHeaders(withMaxBody(mux, maxRequestBody)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
@@ -141,6 +141,34 @@ func withMaxBody(next http.Handler, limit int64) http.Handler {
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// contentSecurityPolicy is intentionally tight: everything the UI loads is
+// same-origin. 'unsafe-eval' is required because Alpine.js evaluates its
+// directive expressions via the Function constructor; 'unsafe-inline' covers
+// Alpine's style/class attribute bindings. frame-ancestors and base-uri lock
+// out clickjacking and base-tag hijacking.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-eval'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"base-uri 'none'"
+
+// withSecurityHeaders adds defence-in-depth headers to every response: a
+// content-security policy, MIME-sniffing and framing protections, and a
+// conservative referrer policy.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }
