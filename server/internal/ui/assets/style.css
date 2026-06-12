@@ -2253,7 +2253,8 @@ section {
   .topbar .bind,
   .topbar .top-link,
   .topbar .user-pill,
-  .topbar .top-layout {
+  .topbar .top-layout,
+  .topbar .top-theme {
     display: none !important;
   }
 

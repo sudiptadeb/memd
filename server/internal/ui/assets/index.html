@@ -20,9 +20,6 @@
       <!-- Mobile-only quick switcher in the otherwise empty middle of the top
            bar; the sidebar equivalents live behind the hamburger. -->
       <nav class="quicknav" x-show="user" x-cloak aria-label="Quick navigation">
-        <button type="button" :class="activeView === 'info' ? 'on' : ''" @click="setView('info')" title="How it works" aria-label="How it works">
-          <svg class="icon" aria-hidden="true"><use href="/assets/icons/info.svg#icon"></use></svg>
-        </button>
         <button type="button" x-show="user && !user.super_admin" :class="activeView === 'teams' ? 'on' : ''" @click="setView('teams')" title="Teams" aria-label="Teams">
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/users.svg#icon"></use></svg>
           <b x-show="teams.length" x-text="teams.length"></b>
@@ -34,9 +31,6 @@
         <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors" aria-label="Connectors">
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
           <b x-show="connectorCount(activeScope)" x-text="connectorCount(activeScope)"></b>
-        </button>
-        <button type="button" :class="activeView === 'logs' ? 'on' : ''" @click="setView('logs')" title="Activity" aria-label="Activity">
-          <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
         </button>
       </nav>
       <a class="top-link" href="/admin" x-show="user && user.super_admin" x-cloak>Admin</a>
@@ -171,6 +165,10 @@
               <button class="top-icon" type="button" @click="toggleLayout()" :title="layoutMode === 'wide' ? 'Use centered layout' : 'Use full-width layout'">
                 <svg class="icon" aria-hidden="true" x-show="layoutMode === 'wide'"><use href="/assets/icons/minimize.svg#icon"></use></svg>
                 <svg class="icon" aria-hidden="true" x-show="layoutMode === 'centered'"><use href="/assets/icons/maximize.svg#icon"></use></svg>
+              </button>
+              <button class="top-icon" type="button" @click="toggleTheme()" :title="theme === 'light' ? 'Switch to dark' : 'Switch to light'">
+                <svg class="icon" aria-hidden="true" x-show="theme === 'light'"><use href="/assets/icons/moon.svg#icon"></use></svg>
+                <svg class="icon" aria-hidden="true" x-show="theme === 'dark'"><use href="/assets/icons/sun.svg#icon"></use></svg>
               </button>
             </div>
           </div>
