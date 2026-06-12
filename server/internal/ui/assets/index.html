@@ -834,7 +834,8 @@
             <div class="file-loading" x-show="browserFileLoading">Loading file...</div>
             <img class="file-image" x-show="browserFile.isImage" :src="browserFile.isImage ? rawFileURL(browserFile.path) : ''" :alt="browserFile.name" />
             <div class="picker-empty" x-show="browserFile.isPDF">PDF files render best in their own tab — use "Open in new tab".</div>
-            <pre class="file-pre" x-show="!browserFile.isImage && !browserFile.isPDF && !browserFileLoading && !browserFileErr" x-text="browserFileContent"></pre>
+            <div class="file-markdown" x-show="browserFile.isMarkdown && !browserFileLoading && !browserFileErr" x-html="browserFileHTML" @click="markdownClick($event)"></div>
+            <pre class="file-pre" x-show="!browserFile.isImage && !browserFile.isPDF && !browserFile.isMarkdown && !browserFileLoading && !browserFileErr" x-text="browserFileContent"></pre>
           </div>
         </template>
       </div>

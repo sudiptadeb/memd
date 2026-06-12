@@ -2563,6 +2563,147 @@ button.crumb:hover {
   border-radius: var(--radius-sm);
 }
 
+.file-markdown {
+  flex: 1;
+  max-width: 880px;
+  padding: 18px 22px 32px;
+  overflow: auto;
+  color: var(--fg-1);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-overflow-scrolling: touch;
+}
+
+.file-markdown > :first-child {
+  margin-top: 0;
+}
+
+.file-markdown h1,
+.file-markdown h2,
+.file-markdown h3,
+.file-markdown h4,
+.file-markdown h5,
+.file-markdown h6 {
+  margin: 20px 0 8px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.file-markdown h1 {
+  padding-bottom: 6px;
+  font-size: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-markdown h2 {
+  font-size: 17px;
+}
+
+.file-markdown h3 {
+  font-size: 15px;
+}
+
+.file-markdown h4,
+.file-markdown h5,
+.file-markdown h6 {
+  font-size: 14px;
+}
+
+.file-markdown p {
+  margin: 8px 0;
+}
+
+.file-markdown ul,
+.file-markdown ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.file-markdown li {
+  margin: 3px 0;
+}
+
+.file-markdown li > ul,
+.file-markdown li > ol {
+  margin: 3px 0;
+}
+
+.file-markdown code {
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.file-markdown pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.file-markdown pre code {
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: none;
+  border-radius: 0;
+}
+
+.file-markdown .md-frontmatter {
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.file-markdown blockquote {
+  margin: 10px 0;
+  padding: 2px 14px;
+  color: var(--fg-2);
+  border-left: 3px solid var(--border-strong);
+}
+
+.file-markdown hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.file-markdown a {
+  color: var(--accent);
+}
+
+.file-markdown a:hover {
+  text-decoration: underline;
+}
+
+.file-markdown img {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.file-markdown table {
+  margin: 10px 0;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.file-markdown th,
+.file-markdown td {
+  padding: 5px 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+}
+
+.file-markdown th {
+  font-weight: 600;
+  background: var(--surface);
+}
+
 /* Touch screens have no hover state, so per-row affordances stay visible. */
 @media (hover: none) {
   .dir-row .row-open,

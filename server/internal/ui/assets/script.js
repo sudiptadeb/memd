@@ -218,6 +218,227 @@
     });
   }
 
+  function parentPath(path) {
+    const index = path.lastIndexOf("/");
+    return index === -1 ? "" : path.slice(0, index);
+  }
+
+  function baseName(path) {
+    const index = path.lastIndexOf("/");
+    return index === -1 ? path : path.slice(index + 1);
+  }
+
+  // Resolve a relative markdown link against the linking file's folder,
+  // clamping ".." at the directory root.
+  function resolveRelPath(baseDir, rel) {
+    const stack = rel.charAt(0) === "/" ? [] : baseDir.split("/").filter(Boolean);
+    rel.split("/").forEach(function (part) {
+      if (!part || part === ".") return;
+      if (part === "..") {
+        stack.pop();
+      } else {
+        stack.push(part);
+      }
+    });
+    return stack.join("/");
+  }
+
+  function escapeHTML(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Inline markdown -> HTML. Source text is entity-escaped before any tags are
+  // added, so stored memory content can never inject markup of its own.
+  function renderInline(text, opts) {
+    const tokens = [];
+    function stash(html) {
+      tokens.push(html);
+      return "\u0000" + (tokens.length - 1) + "\u0000";
+    }
+    let out = String(text).replace(/\u0000/g, "");
+    out = out.replace(/`([^`]+)`/g, function (_, code) {
+      return stash("<code>" + escapeHTML(code) + "</code>");
+    });
+    out = out.replace(/!\[([^\]]*)\]\(([^()\s]+)\)/g, function (_, alt, src) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(src)) {
+        // Never auto-load remote images from stored memory content.
+        return "[" + alt + "](" + src + ")";
+      }
+      return stash('<img src="' + escapeHTML(opts.imageURL(src)) + '" alt="' + escapeHTML(alt) + '" loading="lazy" />');
+    });
+    out = out.replace(/\[([^\]]+)\]\(([^()\s]+)\)/g, function (_, label, href) {
+      const labelHTML = escapeHTML(label);
+      if (/^https?:\/\//i.test(href)) {
+        return stash('<a href="' + escapeHTML(href) + '" target="_blank" rel="noopener noreferrer">' + labelHTML + "</a>");
+      }
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.charAt(0) === "#") {
+        return stash(labelHTML);
+      }
+      return stash('<a href="#" data-rel="' + escapeHTML(opts.linkPath(href)) + '">' + labelHTML + "</a>");
+    });
+    out = escapeHTML(out);
+    out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    out = out.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    out = out.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    return out.replace(/\u0000(\d+)\u0000/g, function (_, index) {
+      return tokens[Number(index)];
+    });
+  }
+
+  function renderListItems(items, opts) {
+    const tag = items[0].ordered ? "ol" : "ul";
+    let html = "<" + tag + ">";
+    let index = 0;
+    while (index < items.length) {
+      const item = items[index];
+      index += 1;
+      const children = [];
+      while (index < items.length && items[index].indent > item.indent) {
+        children.push(items[index]);
+        index += 1;
+      }
+      html += "<li>" + renderInline(item.text, opts) + (children.length ? renderListItems(children, opts) : "") + "</li>";
+    }
+    return html + "</" + tag + ">";
+  }
+
+  function splitTableRow(line) {
+    return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (cell) {
+      return cell.trim();
+    });
+  }
+
+  // Minimal markdown renderer for the file viewer. The whole source is
+  // escaped and only a fixed tag set is emitted, so markup stored in memory
+  // files cannot run on the UI origin. Fidelity beyond the common constructs
+  // (headings, lists, code, tables, quotes, links, front matter) is not a goal;
+  // the raw bytes stay one click away via "Open in new tab".
+  function renderMarkdown(source, opts) {
+    const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+    const blocks = [];
+    let paragraph = [];
+    let i = 0;
+
+    function flushParagraph() {
+      if (paragraph.length) {
+        blocks.push("<p>" + renderInline(paragraph.join(" "), opts) + "</p>");
+        paragraph = [];
+      }
+    }
+
+    if (lines[0] === "---") {
+      for (let end = 1; end < lines.length; end++) {
+        if (lines[end].trim() === "---") {
+          blocks.push('<pre class="md-frontmatter">' + escapeHTML(lines.slice(1, end).join("\n")) + "</pre>");
+          i = end + 1;
+          break;
+        }
+      }
+    }
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^```/.test(line)) {
+        flushParagraph();
+        const buffer = [];
+        i += 1;
+        while (i < lines.length && !/^```/.test(lines[i])) {
+          buffer.push(lines[i]);
+          i += 1;
+        }
+        i += 1;
+        blocks.push("<pre><code>" + escapeHTML(buffer.join("\n")) + "</code></pre>");
+        continue;
+      }
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        flushParagraph();
+        const level = heading[1].length;
+        blocks.push("<h" + level + ">" + renderInline(heading[2], opts) + "</h" + level + ">");
+        i += 1;
+        continue;
+      }
+      if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+        flushParagraph();
+        blocks.push("<hr />");
+        i += 1;
+        continue;
+      }
+      if (/^\s*>/.test(line)) {
+        flushParagraph();
+        const buffer = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) {
+          buffer.push(lines[i].replace(/^\s*>\s?/, ""));
+          i += 1;
+        }
+        blocks.push("<blockquote>" + renderMarkdown(buffer.join("\n"), opts) + "</blockquote>");
+        continue;
+      }
+      if (/^(\s*)(?:[-*+]|\d+\.)\s+/.test(line)) {
+        flushParagraph();
+        const items = [];
+        while (i < lines.length) {
+          const item = lines[i].match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+          if (item) {
+            items.push({ indent: item[1].length, ordered: /^\d/.test(item[2]), text: item[3] });
+            i += 1;
+            continue;
+          }
+          if (items.length && /^\s+\S/.test(lines[i])) {
+            items[items.length - 1].text += " " + lines[i].trim();
+            i += 1;
+            continue;
+          }
+          break;
+        }
+        blocks.push(renderListItems(items, opts));
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|(\s*:?-+:?\s*\|)+\s*$/.test(lines[i + 1] || "")) {
+        flushParagraph();
+        const head = splitTableRow(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+          rows.push(splitTableRow(lines[i]));
+          i += 1;
+        }
+        blocks.push(
+          "<table><thead><tr>" +
+            head.map(function (cell) { return "<th>" + renderInline(cell, opts) + "</th>"; }).join("") +
+            "</tr></thead><tbody>" +
+            rows.map(function (row) {
+              return "<tr>" + row.map(function (cell) { return "<td>" + renderInline(cell, opts) + "</td>"; }).join("") + "</tr>";
+            }).join("") +
+            "</tbody></table>"
+        );
+        continue;
+      }
+      if (!line.trim()) {
+        flushParagraph();
+        i += 1;
+        continue;
+      }
+      paragraph.push(line.trim());
+      i += 1;
+    }
+    flushParagraph();
+    return blocks.join("\n");
+  }
+
+  function renderMarkdownFile(filePath, source, rawURL) {
+    const baseDir = parentPath(filePath);
+    return renderMarkdown(source, {
+      linkPath: function (href) { return resolveRelPath(baseDir, href); },
+      imageURL: function (src) { return rawURL(resolveRelPath(baseDir, src)); }
+    });
+  }
+
   window.memdApp = function () {
     return {
       sessionChecked: false,
@@ -265,8 +486,10 @@
       browserErr: "",
       browserFile: null,
       browserFileContent: "",
+      browserFileHTML: "",
       browserFileLoading: false,
       browserFileErr: "",
+      routeApplying: false,
       toast: "",
       toastLevel: "info",
       toastTimer: null,
@@ -291,10 +514,12 @@
           await this.loadInvitePreview();
         }
         this.readLoginError();
+        window.addEventListener("hashchange", () => { this.applyBrowserRoute(); });
         await this.checkSession();
         if (this.user) {
           await this.load();
           this.startLogs();
+          await this.applyBrowserRoute();
         }
       },
 
@@ -348,6 +573,7 @@
           this.loginForm = defaultLoginForm();
           await this.load();
           this.startLogs();
+          await this.applyBrowserRoute();
         } catch (error) {
           this.loginForm.err = error.message || "login failed";
         } finally {
@@ -678,6 +904,7 @@
 
       closeSheets() {
         this.sheet = null;
+        this.syncBrowserURL();
       },
 
       closeOverlays() {
@@ -1127,6 +1354,7 @@
         this.browserErr = "";
         this.browserFile = null;
         this.browserFileContent = "";
+        this.browserFileHTML = "";
         this.browserFileErr = "";
         this.sheet = "browse";
         await this.browseFiles("");
@@ -1136,6 +1364,7 @@
         if (!this.browserDir) return;
         this.browserFile = null;
         this.browserFileContent = "";
+        this.browserFileHTML = "";
         this.browserFileErr = "";
         this.browserLoading = true;
         this.browserErr = "";
@@ -1144,10 +1373,65 @@
           const data = await api("/api/directories/" + encodeURIComponent(this.browserDir.id) + "/files" + suffix);
           this.browserPath = data.path || "";
           this.browserEntries = data.entries || [];
+          this.syncBrowserURL();
         } catch (error) {
           this.browserErr = error.message || "listing failed";
         } finally {
           this.browserLoading = false;
+        }
+      },
+
+      // The browse sheet mirrors its state into the URL hash
+      // (#browse=<dir>&path=<folder> or #browse=<dir>&file=<path>) so folder
+      // navigation builds history entries and back/forward walks folders
+      // instead of leaving the app.
+      browserHash() {
+        if (this.sheet !== "browse" || !this.browserDir) return "";
+        const params = new URLSearchParams();
+        params.set("browse", this.browserDir.id);
+        if (this.browserFile) {
+          params.set("file", this.browserFile.path);
+        } else if (this.browserPath) {
+          params.set("path", this.browserPath);
+        }
+        return "#" + params.toString();
+      },
+
+      syncBrowserURL() {
+        if (this.routeApplying) return;
+        const target = this.browserHash();
+        const current = window.location.hash;
+        if (target === current) return;
+        if (!target && !/(^|[#&])browse=/.test(current)) return;
+        window.history.pushState({}, "", window.location.pathname + window.location.search + target);
+      },
+
+      async applyBrowserRoute() {
+        if (!this.user || this.routeApplying) return;
+        const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const dirID = params.get("browse") || "";
+        this.routeApplying = true;
+        try {
+          if (!dirID) {
+            if (this.sheet === "browse") this.closeSheets();
+            return;
+          }
+          const directory = this.directories.find((d) => d.id === dirID);
+          if (!directory) {
+            window.history.replaceState({}, "", window.location.pathname + window.location.search);
+            if (this.sheet === "browse") this.closeSheets();
+            return;
+          }
+          const file = params.get("file") || "";
+          const path = file ? parentPath(file) : (params.get("path") || "");
+          this.browserDir = directory;
+          this.sheet = "browse";
+          await this.browseFiles(path);
+          if (file) {
+            await this.openBrowserFile({ path: file, name: baseName(file) });
+          }
+        } finally {
+          this.routeApplying = false;
         }
       },
 
@@ -1182,15 +1466,22 @@
         return /\.pdf$/i.test(path || "");
       },
 
+      isMarkdownPath(path) {
+        return /\.(md|markdown)$/i.test(path || "");
+      },
+
       async openBrowserFile(entry) {
         this.browserFile = {
           path: entry.path,
           name: entry.name,
           isImage: this.isImagePath(entry.name),
-          isPDF: this.isPDFPath(entry.name)
+          isPDF: this.isPDFPath(entry.name),
+          isMarkdown: this.isMarkdownPath(entry.name)
         };
         this.browserFileContent = "";
+        this.browserFileHTML = "";
         this.browserFileErr = "";
+        this.syncBrowserURL();
         if (this.browserFile.isImage || this.browserFile.isPDF) {
           return;
         }
@@ -1202,6 +1493,9 @@
             throw new Error(payload.error || response.statusText || "read failed");
           }
           this.browserFileContent = await response.text();
+          if (this.browserFile.isMarkdown) {
+            this.browserFileHTML = renderMarkdownFile(this.browserFile.path, this.browserFileContent, (p) => this.rawFileURL(p));
+          }
         } catch (error) {
           this.browserFileErr = error.message || "read failed";
         } finally {
@@ -1209,10 +1503,35 @@
         }
       },
 
+      // Clicks on relative links inside rendered markdown stay inside the
+      // browser: extension-less targets are treated as folders, everything
+      // else opens in the file viewer.
+      markdownClick(event) {
+        const anchor = event.target && event.target.closest ? event.target.closest("a[data-rel]") : null;
+        if (!anchor) return;
+        event.preventDefault();
+        this.openMarkdownLink(anchor.getAttribute("data-rel") || "");
+      },
+
+      async openMarkdownLink(rel) {
+        if (!rel) return;
+        const name = baseName(rel);
+        if (name.indexOf(".") === -1) {
+          await this.browseFiles(rel);
+          return;
+        }
+        if (parentPath(rel) !== this.browserPath) {
+          await this.browseFiles(parentPath(rel));
+        }
+        await this.openBrowserFile({ path: rel, name: name });
+      },
+
       closeBrowserFile() {
         this.browserFile = null;
         this.browserFileContent = "";
+        this.browserFileHTML = "";
         this.browserFileErr = "";
+        this.syncBrowserURL();
       },
 
       copyBrowserFile() {
