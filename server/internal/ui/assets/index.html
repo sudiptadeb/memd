@@ -795,7 +795,7 @@
                   <svg class="icon" aria-hidden="true"><use :href="entry.is_dir ? '/assets/icons/folder.svg#icon' : '/assets/icons/file.svg#icon'"></use></svg>
                   <span class="dir-row-name" x-text="entry.name"></span>
                   <span class="spacer"></span>
-                  <a class="icon-btn row-open" x-show="!entry.is_dir" :href="rawFileURL(entry.path)" target="_blank" rel="noopener" title="Open raw in new tab" @click.stop>
+                  <a class="icon-btn row-open" x-show="!entry.is_dir" :href="openFileURL(entry.path)" target="_blank" rel="noopener" title="Open in new tab" @click.stop>
                     <svg class="icon" aria-hidden="true"><use href="/assets/icons/external-link.svg#icon"></use></svg>
                   </a>
                   <svg class="icon arrow" aria-hidden="true" x-show="entry.is_dir"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
@@ -809,26 +809,18 @@
         <template x-if="browserFile">
           <div class="file-view">
             <div class="file-toolbar">
-              <button class="btn ghost" type="button" @click="closeBrowserFile()">
+              <button class="icon-btn" type="button" @click="closeBrowserFile()" title="Back to files" aria-label="Back to files">
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/corner-left-up.svg#icon"></use></svg>
-                Back
               </button>
               <span class="spacer"></span>
-              <button class="btn ghost" type="button" x-show="!browserFile.isImage && !browserFile.isPDF && browserFileContent" @click="copyBrowserFile()">
+              <button class="icon-btn" type="button" x-show="!browserFile.isImage && !browserFile.isPDF && browserFileContent" @click="copyBrowserFile()" title="Copy contents" aria-label="Copy contents">
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
-                Copy
               </button>
-              <a class="btn ghost" x-show="isRenderablePath(browserFile.path)" :href="renderFileURL(browserFile.path)" target="_blank" rel="noopener" title="Rendered in a sandboxed tab: no scripts, no access to your session">
-                <svg class="icon" aria-hidden="true"><use href="/assets/icons/eye.svg#icon"></use></svg>
-                Open rendered
-              </a>
-              <a class="btn ghost" :href="downloadFileURL(browserFile.path)" :download="browserFile.name">
-                <svg class="icon" aria-hidden="true"><use href="/assets/icons/hard-drive.svg#icon"></use></svg>
-                Download
-              </a>
-              <a class="btn ghost" :href="rawFileURL(browserFile.path)" target="_blank" rel="noopener">
+              <a class="icon-btn" :href="openFileURL(browserFile.path)" target="_blank" rel="noopener" :title="isRenderablePath(browserFile.path) ? 'Open in new tab (rendered in a sandbox: no scripts, no access to your session)' : 'Open in new tab'" aria-label="Open in new tab">
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/external-link.svg#icon"></use></svg>
-                Open raw
+              </a>
+              <a class="icon-btn" :href="downloadFileURL(browserFile.path)" :download="browserFile.name" title="Download" aria-label="Download">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/download.svg#icon"></use></svg>
               </a>
             </div>
             <div class="picker-error" x-show="browserFileErr" x-text="browserFileErr"></div>

@@ -1474,11 +1474,12 @@
         return /\.(html?|svg)$/i.test(path || "");
       },
 
-      // Rendered view: served as real HTML/SVG but under a sandbox CSP, so it
-      // gets an opaque origin with scripts/forms disabled — it can render but
-      // can never act as the signed-in user.
-      renderFileURL(path) {
-        return this.rawFileURL(path) + "&render=1";
+      // Open-in-tab target: HTML/SVG get the rendered view — served as real
+      // markup but under a sandbox CSP, so the document has an opaque origin
+      // with scripts and all network loads disabled and can never act as the
+      // signed-in user. Everything else opens as plain text.
+      openFileURL(path) {
+        return this.isRenderablePath(path) ? this.rawFileURL(path) + "&render=1" : this.rawFileURL(path);
       },
 
       downloadFileURL(path) {

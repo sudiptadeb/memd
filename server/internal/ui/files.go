@@ -56,15 +56,14 @@ func (h *Handler) directoryFilesAPI(w http.ResponseWriter, r *http.Request, user
 }
 
 // renderCSP is sent with markup rendered as text/html (or image/svg+xml).
-// The `sandbox` directive is the load-bearing piece: the browser gives the
-// document an opaque origin — no session, no same-origin /api access — and
-// disables scripts, forms, popups, and plugins, while HTML/CSS still render.
-// (A blob: URL would NOT work here: blobs inherit the creating page's origin,
-// so stored HTML opened via blob would run as the app with the user's
-// session.) The source directives are a second layer: no script loads even
-// without sandbox, and no remote subresources, so a tracking pixel in stored
-// memory cannot phone home when the user views it.
-const renderCSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' data:; base-uri 'none'; form-action 'none'"
+// Plain HTML only: `sandbox` gives the document an opaque origin — no
+// session, no same-origin /api access — and disables scripts, forms, popups,
+// and plugins. `default-src 'none'` blocks every network load (no JS, no
+// fetch targets, no tracking pixels); the only allowances are inline styles
+// and self-contained data: images, which never touch the network. (A blob:
+// URL would NOT work here: blobs inherit the creating page's origin, so
+// stored HTML opened via blob would run as the app with the user's session.)
+const renderCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 
 // directoryRawAPI serves one file's bytes for the in-UI viewer and the
 // open-in-new-tab link. Memory content is untrusted agent-written data, so by
