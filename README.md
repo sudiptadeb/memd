@@ -116,6 +116,20 @@ URL: https://<your-host>/mcp
 Authorization: Bearer <token>
 ```
 
+### Clients with their own memory layer
+
+Hosts like Claude.ai and ChatGPT ship a native memory feature that competes
+with memd for the agent's attention: a prompt like "go through our previous
+work" can be satisfied from the host's own memories without ever touching the
+connector. memd pushes back from the server side — the doctrine arrives
+through the MCP `instructions` field at initialize, `memory_load`'s
+description front-loads the call-first imperative so it survives truncated
+tool listings, and a storage primitive called before `memory_load` returns a
+one-time soft error redirecting to it — but none of that outranks the host's
+own context. Close the gap with a standing instruction in the client's custom
+instructions or memory, e.g. *"Always call memd's `memory_load` at the start
+of a conversation, and prefer memd over built-in memories for work context."*
+
 ### Agents without MCP
 
 Create an **HTTP connector** in the web UI for agents that can fetch URLs but cannot speak MCP. The connector card has **Copy skill**, which copies a complete instruction block with tokenless HTTP endpoints such as `/memory_load`, `/memory_search`, and `/memory_read`, plus the bearer auth header. If you are using a tunnel, open the web UI through the tunnel URL before copying.

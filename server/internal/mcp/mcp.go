@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/logs"
@@ -36,6 +37,18 @@ type Server struct {
 	instructions string
 	serverName   string
 	serverVer    string
+
+	mu    sync.Mutex
+	loads map[string]loadState // connector ID → memory_load tracking for the current client session
+}
+
+// loadState tracks whether a connector's current client session has called
+// memory_load, and whether the one-time before-load nudge already fired.
+// State is in-memory only: each MCP initialize re-arms the guard for a fresh
+// conversation, and a server restart merely lets one nudge fire again.
+type loadState struct {
+	loaded bool
+	nudged bool
 }
 
 func New(reg *registry.Registry, instructions, name, version string) *Server {
@@ -44,6 +57,7 @@ func New(reg *registry.Registry, instructions, name, version string) *Server {
 		instructions: instructions,
 		serverName:   name,
 		serverVer:    version,
+		loads:        map[string]loadState{},
 	}
 }
 
@@ -155,7 +169,11 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
 	}
 }
 
-func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
+func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcResp {
+	// A new initialize marks a new client session: re-arm the load-first
+	// guard so the next conversation gets its own nudge if it skips
+	// memory_load.
+	s.resetLoad(conn.ID)
 	// The instructions field carries the doctrine only (stable, small).
 	// Active memory content arrives via the memory_load tool, which the
 	// doctrine instructs the agent to call as its first action.
@@ -175,6 +193,49 @@ func (s *Server) handleInitialize(_ *registry.Connector, req *rpcReq) *rpcResp {
 			"instructions": s.instructions,
 		},
 	}
+}
+
+// guardedByLoad reports whether a tool reads or mutates memory content and
+// therefore expects memory_load to have run first this session. Introspection
+// tools (memory_directories, memory_status) and the memd_* workflows — whose
+// bodies embed their own memory_load step — stay unguarded.
+func guardedByLoad(name string) bool {
+	switch name {
+	case "memory_search", "memory_read", "memory_list",
+		"memory_write", "memory_move", "memory_delete", "memory_delete_folder":
+		return true
+	}
+	return false
+}
+
+// nudgeBeforeLoad reports, exactly once per session, that a guarded tool was
+// called before memory_load — the caller returns a soft error telling the
+// agent to load first and retry. Later calls pass through, so an agent that
+// ignores the nudge can never livelock on it.
+func (s *Server) nudgeBeforeLoad(connID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.loads[connID]
+	if st.loaded || st.nudged {
+		return false
+	}
+	st.nudged = true
+	s.loads[connID] = st
+	return true
+}
+
+func (s *Server) markLoaded(connID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.loads[connID]
+	st.loaded = true
+	s.loads[connID] = st
+}
+
+func (s *Server) resetLoad(connID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.loads, connID)
 }
 
 // activeMemorySection composes a snapshot of the connector's accessible
@@ -323,9 +384,13 @@ var toolsCatalog = []map[string]any{
 	// read and write memory while executing user requests or workflows.
 	// Users should invoke the memd_* workflow tools (or the equivalent
 	// slash-command prompts), not these.
+	// memory_load deliberately skips the [Agent-internal storage primitive.]
+	// tag the other primitives carry: clients that defer tool loading
+	// truncate descriptions to roughly the first 80 characters, and the
+	// call-first imperative must survive that cut.
 	{
 		"name":        "memory_load",
-		"description": "[Agent-internal storage primitive.] MUST be called once at the start of every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, file listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
+		"description": "CALL THIS FIRST, every conversation, before responding to anything else. Returns your active memory — every accessible directory's description, file listing, and the full contents of its top-level MEMORY.md. Treat its result as memory you already know.",
 		"inputSchema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
@@ -521,12 +586,25 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 	}
 
 	logs.InfoUser(conn.OwnerUserID, "MCP tools/call %s from %q", params.Name, conn.Name)
+	if guardedByLoad(params.Name) && s.nudgeBeforeLoad(conn.ID) {
+		return &rpcResp{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"content": []map[string]any{
+					{"type": "text", "text": "memory_load has not been called in this session — call memory_load first to load active memory, then retry " + params.Name + "."},
+				},
+				"isError": true,
+			},
+		}
+	}
 	var (
 		text  string
 		isErr bool
 	)
 	switch params.Name {
 	case "memory_load":
+		s.markLoaded(conn.ID)
 		text = s.activeMemorySection(conn)
 	case "memory_directories":
 		text = s.toolDirectories(conn)
