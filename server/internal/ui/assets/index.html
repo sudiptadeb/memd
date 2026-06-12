@@ -53,7 +53,11 @@
         <!-- Default flow: single sign-on via the configured identity provider. -->
         <template x-if="oidcEnabled">
           <div class="sso-block">
-            <button class="btn primary login-submit" type="button" @click="ssoLogin()">Continue with SSO</button>
+            <button class="btn primary login-submit" type="button" @click="ssoLogin()" :disabled="ssoRedirecting" :aria-busy="ssoRedirecting ? 'true' : 'false'">
+              <svg class="icon spin" aria-hidden="true" x-show="ssoRedirecting"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+              <span x-text="ssoRedirecting ? 'Taking you to your sign-in provider...' : 'Sign in with your organization'"></span>
+            </button>
+            <div class="login-note sso-note">You will be redirected to your organization's identity provider.</div>
             <button class="linklike" type="button" @click="showLocalLogin = !showLocalLogin" x-text="showLocalLogin ? 'Hide local sign-in' : 'Use a local account instead'"></button>
           </div>
         </template>
@@ -471,6 +475,33 @@
     </div>
 
     <div class="nav-scrim" x-show="user" x-cloak :class="navOpen ? 'open' : ''" @click="closeNav()"></div>
+
+    <!-- Mobile-only quick switcher; the sidebar equivalents live behind the hamburger. -->
+    <nav class="quicknav" x-show="user" x-cloak aria-label="Quick navigation">
+      <button type="button" :class="activeView === 'info' ? 'on' : ''" @click="setView('info')" title="How it works">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/info.svg#icon"></use></svg>
+        <span>Info</span>
+      </button>
+      <button type="button" x-show="user && !user.super_admin" :class="activeView === 'teams' ? 'on' : ''" @click="setView('teams')" title="Teams">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/users.svg#icon"></use></svg>
+        <span>Teams</span>
+        <b x-show="teams.length" x-text="teams.length"></b>
+      </button>
+      <button type="button" :class="activeView === 'directories' ? 'on' : ''" @click="setView('directories')" title="Directories">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
+        <span>Directories</span>
+        <b x-show="directoryCount(activeScope)" x-text="directoryCount(activeScope)"></b>
+      </button>
+      <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
+        <span>Connectors</span>
+        <b x-show="connectorCount(activeScope)" x-text="connectorCount(activeScope)"></b>
+      </button>
+      <button type="button" :class="activeView === 'logs' ? 'on' : ''" @click="setView('logs')" title="Activity">
+        <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+        <span>Activity</span>
+      </button>
+    </nav>
 
     <button class="logs-reopen" type="button" x-show="user && logsHidden && activeView !== 'logs'" x-cloak @click="setLogsHidden(false)" title="Show activity">
       <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>

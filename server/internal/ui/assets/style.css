@@ -708,6 +708,10 @@ a {
   line-height: 1.45;
 }
 
+.sso-note {
+  text-align: center;
+}
+
 .linklike {
   background: none;
   border: none;
@@ -2594,6 +2598,89 @@ button.crumb:hover {
   .file-toolbar .btn {
     flex: 1;
     justify-content: center;
+  }
+}
+
+/* Quick-access bar pinned to the bottom on small screens, so the main views
+   are one tap away without opening the hamburger drawer. Hidden on desktop
+   where the sidebar is always visible. */
+.quicknav {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .quicknav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    display: flex;
+    align-items: stretch;
+    padding: 5px max(8px, env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+
+  .quicknav button {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 7px 2px 5px;
+    color: var(--fg-3);
+    font: inherit;
+    font-size: 10.5px;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+
+  .quicknav button .icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .quicknav button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .quicknav button.on {
+    color: var(--fg-1);
+  }
+
+  .quicknav button.on .icon {
+    color: var(--accent);
+  }
+
+  .quicknav button b {
+    position: absolute;
+    top: 2px;
+    left: calc(50% + 7px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    color: var(--fg-2);
+    font-size: 9.5px;
+    font-weight: 650;
+    background: var(--accent-soft);
+    border-radius: 999px;
+  }
+
+  /* Keep the last of the page content scrollable above the fixed bar. */
+  .main {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
   }
 }
 

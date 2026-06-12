@@ -78,6 +78,7 @@
       user: null,
       oidcEnabled: false,
       showLocalLogin: false,
+      ssoRedirecting: false,
       users: [],
       loading: false,
       loadErr: "",
@@ -90,6 +91,13 @@
       toastTimer: null,
 
       async init() {
+        // Back-navigation from the identity provider restores the page from
+        // bfcache with stale state; reset so the SSO button is usable again.
+        window.addEventListener("pageshow", (event) => {
+          if (event.persisted) {
+            this.ssoRedirecting = false;
+          }
+        });
         this.setTheme(this.theme);
         this.readLoginError();
         await this.checkSession();
@@ -111,6 +119,8 @@
       },
 
       ssoLogin() {
+        if (this.ssoRedirecting) return;
+        this.ssoRedirecting = true;
         window.location.href = "/auth/login";
       },
 
