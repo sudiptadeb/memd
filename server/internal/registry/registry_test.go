@@ -571,54 +571,74 @@ func TestOwnerConnectorDesignationControlsMainAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddDirectoryForUser: %v", err)
 	}
-	conn, err := r.AddConnectorForUser(owner.ID, config.Connector{
-		Name:         "bob-agent",
+	connA, err := r.AddConnectorForUser(owner.ID, config.Connector{
+		Name:         "bob-primary",
 		Kind:         config.ConnectorKindMCP,
 		DirectoryIDs: []string{dirID},
 		Write:        true,
 	})
 	if err != nil {
-		t.Fatalf("AddConnectorForUser: %v", err)
+		t.Fatalf("AddConnectorForUser A: %v", err)
+	}
+	connB, err := r.AddConnectorForUser(owner.ID, config.Connector{
+		Name:         "bob-experiment",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dirID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("AddConnectorForUser B: %v", err)
 	}
 
-	// Without a designation, even the owner's connector works on a branch.
-	views := r.DirectoriesForConnector(&conn)
-	if len(views) != 1 {
-		t.Fatalf("connector views = %+v", views)
+	writeFlush := func(c config.Connector, path string) {
+		t.Helper()
+		views := r.DirectoriesForConnector(&c)
+		if len(views) != 1 {
+			t.Fatalf("connector %s views = %+v", c.Name, views)
+		}
+		if err := views[0].Backend.Write(path, []byte("# x\n"), "memd: "+path); err != nil {
+			t.Fatalf("write %s via %s: %v", path, c.Name, err)
+		}
+		if err := views[0].Backend.Flush(); err != nil {
+			t.Fatalf("flush %s via %s: %v", path, c.Name, err)
+		}
 	}
-	if err := views[0].Backend.Write("memory/branched.md", []byte("# B\n"), "memd: branched"); err != nil {
-		t.Fatalf("branch write: %v", err)
-	}
-	if err := views[0].Backend.Flush(); err != nil {
-		t.Fatalf("branch flush: %v", err)
-	}
-	verifyMain := filepath.Join(tmp, "verify-main-1")
-	gitRun(t, "", "clone", "--branch", "main", remote, verifyMain)
-	if _, err := os.Stat(filepath.Join(verifyMain, "memory", "branched.md")); err == nil {
-		t.Fatal("undesignated owner connector wrote main directly")
+	mainHas := func(label, path string) bool {
+		t.Helper()
+		dir := filepath.Join(tmp, "verify-"+label)
+		gitRun(t, "", "clone", "--branch", "main", remote, dir)
+		_, err := os.Stat(filepath.Join(dir, path))
+		return err == nil
 	}
 
-	// Designating the connector routes it to the directory branch.
-	if _, err := r.UpdateDirectoryOwnerConnectorForActor(owner.ID, dirID, conn.ID); err != nil {
+	// No designation: the owner's own connectors write main directly — same as
+	// a personal directory. (The team/personal distinction is gone.)
+	writeFlush(connA, "memory/default-a.md")
+	if !mainHas("default", "memory/default-a.md") {
+		t.Fatal("undesignated owner connector should write main directly")
+	}
+
+	// Designate connA. Now connB — also the owner's — works on its own branch,
+	// while connA keeps writing main.
+	if _, err := r.UpdateDirectoryOwnerConnectorForActor(owner.ID, dirID, connA.ID); err != nil {
 		t.Fatalf("UpdateDirectoryOwnerConnectorForActor: %v", err)
 	}
-	views = r.DirectoriesForConnector(&conn)
-	if len(views) != 1 {
-		t.Fatalf("connector views after designation = %+v", views)
+	writeFlush(connB, "memory/from-b.md")
+	if mainHas("after-designate", "memory/from-b.md") {
+		t.Fatal("non-designated owner connector wrote main after designation")
 	}
-	if err := views[0].Backend.Write("memory/mainline.md", []byte("# M\n"), "memd: mainline"); err != nil {
-		t.Fatalf("main write: %v", err)
+	branch := "memd/bob-" + connB.ID
+	verifyBranch := filepath.Join(tmp, "verify-branch")
+	gitRun(t, "", "clone", "--branch", branch, remote, verifyBranch)
+	if _, err := os.Stat(filepath.Join(verifyBranch, "memory", "from-b.md")); err != nil {
+		t.Fatalf("connB write missing from its branch %s: %v", branch, err)
 	}
-	if err := views[0].Backend.Flush(); err != nil {
-		t.Fatalf("main flush: %v", err)
-	}
-	verifyMain2 := filepath.Join(tmp, "verify-main-2")
-	gitRun(t, "", "clone", "--branch", "main", remote, verifyMain2)
-	if _, err := os.Stat(filepath.Join(verifyMain2, "memory", "mainline.md")); err != nil {
-		t.Fatalf("designated connector write missing from main: %v", err)
+	writeFlush(connA, "memory/from-a.md")
+	if !mainHas("designated-main", "memory/from-a.md") {
+		t.Fatal("designated connector write missing from main")
 	}
 
-	// A stranger's connector can never be designated.
+	// A teammate's connector branches and can never be designated.
 	stranger, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "eve", Password: "eve-pass"})
 	if err != nil {
 		t.Fatalf("CreateLocalUser stranger: %v", err)
@@ -642,14 +662,19 @@ func TestOwnerConnectorDesignationControlsMainAccess(t *testing.T) {
 		t.Fatal("a non-owner should not be able to designate on someone else's directory")
 	}
 
-	// Deleting the designated connector clears the designation.
-	if err := r.DeleteConnectorForActor(owner.ID, conn.ID); err != nil {
+	// Deleting the designated connector clears the designation, and connB —
+	// previously branching — reverts to writing main directly.
+	if err := r.DeleteConnectorForActor(owner.ID, connA.ID); err != nil {
 		t.Fatalf("DeleteConnectorForActor: %v", err)
 	}
 	for _, d := range r.DirectoriesForUser(owner.ID) {
 		if d.ID == dirID && d.OwnerConnectorID != "" {
 			t.Fatalf("designation not cleared after connector delete: %q", d.OwnerConnectorID)
 		}
+	}
+	writeFlush(connB, "memory/b-after-clear.md")
+	if !mainHas("after-clear", "memory/b-after-clear.md") {
+		t.Fatal("after designation cleared, connB should write main directly again")
 	}
 }
 
