@@ -524,6 +524,135 @@ func TestMemberConnectorWritesToOwnBranch(t *testing.T) {
 	}
 }
 
+func TestOwnerConnectorDesignationControlsMainAccess(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git executable not available")
+	}
+	ctx := context.Background()
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", tmp)
+
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "bob", Password: "bob-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Crew", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+
+	remote := filepath.Join(tmp, "remote.git")
+	gitRun(t, "", "init", "--bare", remote)
+	seed := filepath.Join(tmp, "seed")
+	gitRun(t, "", "clone", remote, seed)
+	gitRun(t, seed, "checkout", "-B", "main")
+	if err := os.WriteFile(filepath.Join(seed, "MEMORY.md"), []byte("# Memory\n"), 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	gitRun(t, seed, "add", "-A")
+	gitRun(t, seed, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "seed")
+	gitRun(t, seed, "push", "-u", "origin", "main")
+	gitRun(t, "", "--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	dirID, err := r.AddDirectoryForUser(owner.ID, config.Directory{
+		Name:    "Shared",
+		TeamID:  team.ID,
+		Backend: "git",
+		Git:     &config.Git{RemoteURL: remote, Branch: "main"},
+	})
+	if err != nil {
+		t.Fatalf("AddDirectoryForUser: %v", err)
+	}
+	conn, err := r.AddConnectorForUser(owner.ID, config.Connector{
+		Name:         "bob-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dirID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("AddConnectorForUser: %v", err)
+	}
+
+	// Without a designation, even the owner's connector works on a branch.
+	views := r.DirectoriesForConnector(&conn)
+	if len(views) != 1 {
+		t.Fatalf("connector views = %+v", views)
+	}
+	if err := views[0].Backend.Write("memory/branched.md", []byte("# B\n"), "memd: branched"); err != nil {
+		t.Fatalf("branch write: %v", err)
+	}
+	if err := views[0].Backend.Flush(); err != nil {
+		t.Fatalf("branch flush: %v", err)
+	}
+	verifyMain := filepath.Join(tmp, "verify-main-1")
+	gitRun(t, "", "clone", "--branch", "main", remote, verifyMain)
+	if _, err := os.Stat(filepath.Join(verifyMain, "memory", "branched.md")); err == nil {
+		t.Fatal("undesignated owner connector wrote main directly")
+	}
+
+	// Designating the connector routes it to the directory branch.
+	if _, err := r.UpdateDirectoryOwnerConnectorForActor(owner.ID, dirID, conn.ID); err != nil {
+		t.Fatalf("UpdateDirectoryOwnerConnectorForActor: %v", err)
+	}
+	views = r.DirectoriesForConnector(&conn)
+	if len(views) != 1 {
+		t.Fatalf("connector views after designation = %+v", views)
+	}
+	if err := views[0].Backend.Write("memory/mainline.md", []byte("# M\n"), "memd: mainline"); err != nil {
+		t.Fatalf("main write: %v", err)
+	}
+	if err := views[0].Backend.Flush(); err != nil {
+		t.Fatalf("main flush: %v", err)
+	}
+	verifyMain2 := filepath.Join(tmp, "verify-main-2")
+	gitRun(t, "", "clone", "--branch", "main", remote, verifyMain2)
+	if _, err := os.Stat(filepath.Join(verifyMain2, "memory", "mainline.md")); err != nil {
+		t.Fatalf("designated connector write missing from main: %v", err)
+	}
+
+	// A stranger's connector can never be designated.
+	stranger, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "eve", Password: "eve-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser stranger: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, stranger.ID, account.RoleAdmin, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember: %v", err)
+	}
+	strangerConn, err := r.AddConnectorForUser(stranger.ID, config.Connector{
+		Name:         "eve-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dirID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("stranger AddConnectorForUser: %v", err)
+	}
+	if _, err := r.UpdateDirectoryOwnerConnectorForActor(owner.ID, dirID, strangerConn.ID); err == nil {
+		t.Fatal("designating another user's connector should fail")
+	}
+	if _, err := r.UpdateDirectoryOwnerConnectorForActor(stranger.ID, dirID, strangerConn.ID); err == nil {
+		t.Fatal("a non-owner should not be able to designate on someone else's directory")
+	}
+
+	// Deleting the designated connector clears the designation.
+	if err := r.DeleteConnectorForActor(owner.ID, conn.ID); err != nil {
+		t.Fatalf("DeleteConnectorForActor: %v", err)
+	}
+	for _, d := range r.DirectoriesForUser(owner.ID) {
+		if d.ID == dirID && d.OwnerConnectorID != "" {
+			t.Fatalf("designation not cleared after connector delete: %q", d.OwnerConnectorID)
+		}
+	}
+}
+
 func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	if dir != "" {

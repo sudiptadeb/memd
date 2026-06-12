@@ -60,9 +60,17 @@ type Config struct {
 
 // Directory describes one memory directory.
 type Directory struct {
-	ID          string    `json:"id"`
-	OwnerUserID string    `json:"owner_user_id,omitempty"`
-	TeamID      string    `json:"team_id,omitempty"`
+	ID          string `json:"id"`
+	OwnerUserID string `json:"owner_user_id,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+
+	// OwnerConnectorID designates the one connector allowed to work directly
+	// on a team git directory's branch (main). It must belong to the same user
+	// as the directory. Every other connector — the owner's included — works
+	// on its own memd/<user>-<connector> branch. Empty means no connector
+	// writes the directory branch directly.
+	OwnerConnectorID string `json:"owner_connector_id,omitempty"`
+
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Backend     string    `json:"backend"` // "local" or "git"
