@@ -403,12 +403,17 @@ func backfillUserProviderID(ctx context.Context, tx *sql.Tx) error {
 	// subquery sees rows already updated in the same statement is
 	// order-dependent, and on databases holding duplicate identities it
 	// assigned the provider id to both rows and failed the unique index below.
+	// The NOT EXISTS keeps the pass idempotent: once a subject's winner is
+	// linked, a later boot must not promote the still-unlinked duplicate into
+	// the same (provider_id, subject) slot.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT v.id FROM users v
 		 WHERE v.provider_id = '' AND v.issuer != '' AND v.subject IS NOT NULL AND v.subject != ''
+		   AND NOT EXISTS (SELECT 1 FROM users w
+		                    WHERE w.provider_id = ? AND w.subject = v.subject)
 		   AND v.id = (SELECT w.id FROM users w
 		                WHERE w.subject = v.subject AND w.provider_id = '' AND w.issuer != ''
-		                ORDER BY w.created_at, w.id LIMIT 1)`)
+		                ORDER BY w.created_at, w.id LIMIT 1)`, settings.ProviderID)
 	if err != nil {
 		return err
 	}
