@@ -24,9 +24,15 @@ import (
 type Connector = config.Connector
 
 // DirectoryView pairs a directory's config with its open backend.
+//
+// CanWrite reports whether the resolving connector may mutate this directory.
+// It is true when the connector's owner owns the directory, or when the
+// directory is team-shared and the owner holds a write-capable team role
+// (owner/admin/member). Viewers get read-only team access.
 type DirectoryView struct {
 	Directory config.Directory
 	Backend   storage.Backend
+	CanWrite  bool
 }
 
 // Registry holds directories + connectors and the open backends behind them.
@@ -228,20 +234,37 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 }
 
 // DirectoriesForConnector returns the directories this connector can access.
+//
+// A connector reaches a directory when its owner owns the directory, or when
+// the directory is team-shared with a team the owner can view. This lets a team
+// member point their own connector at a team directory owned by a teammate;
+// each member keeps a distinct connector (and token), so the activity log
+// attributes every operation to whoever acted. Write access is reported per
+// directory via DirectoryView.CanWrite.
 func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
+	viewTeams, writeTeams, _ := r.teamAccessForUser(c.OwnerUserID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []DirectoryView
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
-			if d.ID != id || d.OwnerUserID != c.OwnerUserID {
+			if d.ID != id {
+				continue
+			}
+			owned := d.OwnerUserID == c.OwnerUserID
+			if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 				continue
 			}
 			b := r.backends[backendKey(d.OwnerUserID, id)]
 			if b == nil {
 				continue
 			}
-			out = append(out, DirectoryView{Directory: d, Backend: b})
+			out = append(out, DirectoryView{
+				Directory: d,
+				Backend:   b,
+				CanWrite:  owned || writeTeams[d.TeamID],
+			})
+			break
 		}
 	}
 	return out
@@ -372,7 +395,7 @@ func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (
 			}
 		}
 	}
-	_, manageTeams := r.teamAccessForUser(actorUserID)
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
 	r.mu.Lock()
 	idx := -1
 	for i, d := range r.cfg.Directories {
@@ -416,7 +439,7 @@ func (r *Registry) DeleteDirectoryForActor(actorUserID, id string) error {
 			return err
 		}
 	}
-	_, manageTeams := r.teamAccessForUser(actorUserID)
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
 	r.mu.Lock()
 	idx := -1
 	var ownerUserID string
@@ -488,9 +511,10 @@ func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = time.Now()
 	}
+	viewTeams, writeTeams, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.Lock()
 	if r.accounts != nil || len(r.cfg.Directories) > 0 {
-		if err := r.validateConnectorDirectoriesLocked(ownerUserID, c.TeamID, c.DirectoryIDs); err != nil {
+		if err := r.validateConnectorDirectoriesLocked(ownerUserID, c.TeamID, c.DirectoryIDs, c.Write, viewTeams, writeTeams); err != nil {
 			r.mu.Unlock()
 			return config.Connector{}, err
 		}
@@ -530,6 +554,7 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
 		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", kind)
 	}
+	viewTeams, writeTeams, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
@@ -542,7 +567,7 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 		r.mu.Unlock()
 		return config.Connector{}, errors.New("connector not found")
 	}
-	if err := r.validateConnectorDirectoriesLocked(ownerUserID, r.cfg.Connectors[idx].TeamID, directoryIDs); err != nil {
+	if err := r.validateConnectorDirectoriesLocked(ownerUserID, r.cfg.Connectors[idx].TeamID, directoryIDs, write, viewTeams, writeTeams); err != nil {
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
@@ -587,7 +612,7 @@ func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, d
 	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
 		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", kind)
 	}
-	_, manageTeams := r.teamAccessForUser(actorUserID)
+	viewTeams, writeTeams, manageTeams := r.teamAccessForUser(actorUserID)
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
@@ -612,7 +637,7 @@ func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, d
 		r.mu.Unlock()
 		return config.Connector{}, account.ErrForbidden
 	}
-	if err := r.validateConnectorDirectoriesLocked(current.OwnerUserID, teamID, directoryIDs); err != nil {
+	if err := r.validateConnectorDirectoriesLocked(current.OwnerUserID, teamID, directoryIDs, write, viewTeams, writeTeams); err != nil {
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
@@ -685,7 +710,7 @@ func (r *Registry) RotateConnectorForActor(actorUserID, id string) (config.Conne
 	if err != nil {
 		return config.Connector{}, err
 	}
-	_, manageTeams := r.teamAccessForUser(actorUserID)
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
@@ -745,7 +770,7 @@ func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
 			return err
 		}
 	}
-	_, manageTeams := r.teamAccessForUser(actorUserID)
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
 	r.mu.Lock()
 	idx := -1
 	var ownerUserID string
@@ -878,7 +903,7 @@ func (r *Registry) replaceUserDataLocked(ownerUserID string, dirs []config.Direc
 }
 
 func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
-	viewTeams, _ := r.teamAccessForUser(ownerUserID)
+	viewTeams, _, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []config.Directory
@@ -895,7 +920,7 @@ func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
 // unknown or not visible to this user. The Backend field is nil when the
 // directory exists but its backend failed to open.
 func (r *Registry) DirectoryViewForUser(userID, id string) *DirectoryView {
-	viewTeams, _ := r.teamAccessForUser(userID)
+	viewTeams, _, _ := r.teamAccessForUser(userID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, d := range r.cfg.Directories {
@@ -911,7 +936,7 @@ func (r *Registry) DirectoryViewForUser(userID, id string) *DirectoryView {
 }
 
 func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
-	viewTeams, _ := r.teamAccessForUser(ownerUserID)
+	viewTeams, _, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []config.Connector
@@ -923,34 +948,64 @@ func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
 	return out
 }
 
-func (r *Registry) teamAccessForUser(userID string) (map[string]bool, map[string]bool) {
-	view := map[string]bool{}
-	manage := map[string]bool{}
+// teamAccessForUser returns three team-ID sets for a user:
+//
+//   - view:   every team the user belongs to (any role) — read access.
+//   - write:  teams where the user may mutate shared data (owner/admin/member).
+//   - manage: teams the user administers (owner/admin) — settings, membership,
+//     and (re)scoping directories/connectors.
+//
+// Viewers appear in view but not write or manage.
+func (r *Registry) teamAccessForUser(userID string) (view, write, manage map[string]bool) {
+	view = map[string]bool{}
+	write = map[string]bool{}
+	manage = map[string]bool{}
 	if r.accounts == nil || userID == "" {
-		return view, manage
+		return view, write, manage
 	}
 	teams, err := r.accounts.ListTeamsForUser(context.Background(), userID)
 	if err != nil {
-		return view, manage
+		return view, write, manage
 	}
 	for _, team := range teams {
 		view[team.ID] = true
-		if team.Role == account.RoleOwner || team.Role == account.RoleAdmin {
+		switch team.Role {
+		case account.RoleOwner, account.RoleAdmin:
+			write[team.ID] = true
 			manage[team.ID] = true
+		case account.RoleMember:
+			write[team.ID] = true
 		}
 	}
-	return view, manage
+	return view, write, manage
 }
 
-func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string, directoryIDs []string) error {
+// validateConnectorDirectoriesLocked checks that every directory a connector
+// references is reachable by ownerUserID — either owned outright, or team-shared
+// with a team the owner can view. When the connector itself is team-scoped
+// (teamID != ""), each directory must belong to that same team. A writable
+// connector may only reference directories the owner can write (owned, or a
+// write-capable team role); referencing a read-only team directory from a
+// write connector is rejected up front rather than silently downgraded.
+//
+// viewTeams/writeTeams are the owner's team-access sets, resolved by the caller
+// before acquiring the lock so this method performs no I/O.
+func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string, directoryIDs []string, write bool, viewTeams, writeTeams map[string]bool) error {
 	for _, did := range directoryIDs {
 		found := false
 		for _, d := range r.cfg.Directories {
-			if d.ID != did || d.OwnerUserID != ownerUserID {
+			if d.ID != did {
+				continue
+			}
+			owned := d.OwnerUserID == ownerUserID
+			if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 				continue
 			}
 			if teamID != "" && d.TeamID != teamID {
 				return fmt.Errorf("directory %s is not in connector team scope", did)
+			}
+			if write && !owned && !writeTeams[d.TeamID] {
+				return fmt.Errorf("you have read-only access to directory %s", did)
 			}
 			found = true
 			break

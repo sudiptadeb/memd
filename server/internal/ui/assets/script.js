@@ -721,33 +721,47 @@
       },
 
       directoryCount(scope) {
-        const wanted = scope === "personal" ? "" : (scope || "");
-        return this.directories.filter((directory) => (directory.team_id || "") === wanted).length;
+        if (scope === "personal") {
+          return this.directories.filter((directory) => directory.owned).length;
+        }
+        return this.directories.filter((directory) => (directory.team_id || "") === scope).length;
       },
 
       connectorCount(scope) {
-        const wanted = scope === "personal" ? "" : (scope || "");
-        return this.connectors.filter((connector) => (connector.team_id || "") === wanted).length;
+        if (scope === "personal") {
+          return this.connectors.filter((connector) => connector.owned && !connector.team_id).length;
+        }
+        return this.connectors.filter((connector) => (connector.team_id || "") === scope).length;
       },
 
+      // Personal shows everything you own — including a directory you own that is
+      // shared with a team, so marking a directory "team" no longer makes it
+      // vanish from your own view. A team space shows everything shared with that
+      // team, including teammates' directories you can use.
       visibleDirectories() {
         if (this.activeScope === "personal") {
-          return this.directories.filter((directory) => !directory.team_id);
+          return this.directories.filter((directory) => directory.owned);
         }
         return this.directories.filter((directory) => directory.team_id === this.activeScope);
       },
 
       visibleConnectors() {
         if (this.activeScope === "personal") {
-          return this.connectors.filter((connector) => !connector.team_id);
+          return this.connectors.filter((connector) => connector.owned && !connector.team_id);
         }
         return this.connectors.filter((connector) => connector.team_id === this.activeScope);
       },
 
+      // Directories a connector may reference. A team-scoped connector is limited
+      // to that team's directories; a personal connector may reference anything
+      // you can attach — your own directories plus any team directory you have
+      // write access to (so a member can build their own connector against a
+      // teammate's shared directory).
       attachableDirectories(teamID) {
         const scope = teamID || "";
         return this.directories.filter((directory) => {
           if (!directory.can_attach) return false;
+          if (scope === "") return true;
           return (directory.team_id || "") === scope;
         });
       },

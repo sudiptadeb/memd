@@ -319,6 +319,107 @@ func TestTeamScopedDirectoriesVisibleToMembers(t *testing.T) {
 	}
 }
 
+func TestMemberConnectorOnTeamDirectory(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "member", Password: "member-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	viewer, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "viewer", Password: "viewer-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser viewer: %v", err)
+	}
+	stranger, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "stranger", Password: "stranger-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser stranger: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, member.ID, account.RoleMember, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember member: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, viewer.ID, account.RoleViewer, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember viewer: %v", err)
+	}
+	dir := config.Directory{
+		ID:        "dir1",
+		TeamID:    team.ID,
+		Name:      "Shared",
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	}
+	if err := store.UpsertUserDirectory(ctx, owner.ID, dir); err != nil {
+		t.Fatalf("UpsertUserDirectory: %v", err)
+	}
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	// A member can create their own (personal) connector against the teammate's
+	// shared directory, and it serves with write access.
+	memberConn, err := r.AddConnectorForUser(member.ID, config.Connector{
+		Name:         "member-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("member AddConnectorForUser: %v", err)
+	}
+	if memberConn.OwnerUserID != member.ID || memberConn.TeamID != "" {
+		t.Fatalf("member connector = %+v, want owned by member, no team scope", memberConn)
+	}
+	views := r.DirectoriesForConnector(&memberConn)
+	if len(views) != 1 || views[0].Directory.ID != dir.ID {
+		t.Fatalf("member connector dirs = %+v, want shared dir", views)
+	}
+	if !views[0].CanWrite {
+		t.Fatalf("member should have write access to shared dir")
+	}
+
+	// A viewer can attach the shared directory read-only, but not with write.
+	viewerConn, err := r.AddConnectorForUser(viewer.ID, config.Connector{
+		Name:         "viewer-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        false,
+	})
+	if err != nil {
+		t.Fatalf("viewer read-only AddConnectorForUser: %v", err)
+	}
+	vviews := r.DirectoriesForConnector(&viewerConn)
+	if len(vviews) != 1 || vviews[0].CanWrite {
+		t.Fatalf("viewer connector dirs = %+v, want read-only access", vviews)
+	}
+	if _, err := r.AddConnectorForUser(viewer.ID, config.Connector{
+		Name:         "viewer-writer",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        true,
+	}); err == nil {
+		t.Fatal("viewer should not be able to create a write connector on a shared dir")
+	}
+
+	// A non-member cannot reference the shared directory at all.
+	if _, err := r.AddConnectorForUser(stranger.ID, config.Connector{
+		Name:         "stranger-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        false,
+	}); err == nil {
+		t.Fatal("non-member should not be able to reference a team directory")
+	}
+}
+
 func openRegistryTestStore(t *testing.T) *account.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "memd.db")

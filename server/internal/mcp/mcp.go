@@ -665,6 +665,9 @@ func (s *Server) toolWrite(conn *registry.Connector, args json.RawMessage) (stri
 	if d == nil {
 		return "directory not accessible: " + a.DirectoryID, true
 	}
+	if !d.CanWrite {
+		return "directory is read-only for you: " + a.DirectoryID, true
+	}
 	if err := d.Backend.Write(a.Path, []byte(a.Content), a.Message); err != nil {
 		return err.Error(), true
 	}
@@ -695,6 +698,9 @@ func (s *Server) toolMove(conn *registry.Connector, args json.RawMessage) (strin
 	if d == nil {
 		return "directory not accessible: " + a.DirectoryID, true
 	}
+	if !d.CanWrite {
+		return "directory is read-only for you: " + a.DirectoryID, true
+	}
 	if err := d.Backend.Move(a.Src, a.Dst, a.Message); err != nil {
 		return err.Error(), true
 	}
@@ -717,6 +723,9 @@ func (s *Server) toolDelete(conn *registry.Connector, args json.RawMessage) (str
 	if d == nil {
 		return "directory not accessible: " + a.DirectoryID, true
 	}
+	if !d.CanWrite {
+		return "directory is read-only for you: " + a.DirectoryID, true
+	}
 	if err := d.Backend.Delete(a.Path, a.Message); err != nil {
 		return err.Error(), true
 	}
@@ -738,6 +747,9 @@ func (s *Server) toolDeleteFolder(conn *registry.Connector, args json.RawMessage
 	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
 	if d == nil {
 		return "directory not accessible: " + a.DirectoryID, true
+	}
+	if !d.CanWrite {
+		return "directory is read-only for you: " + a.DirectoryID, true
 	}
 	if err := d.Backend.DeleteFolder(a.Path, a.Message); err != nil {
 		return err.Error(), true
