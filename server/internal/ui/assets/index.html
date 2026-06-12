@@ -325,10 +325,10 @@
                   </div>
                   <div class="card-desc" x-show="directory.description" x-text="directory.description"></div>
                   <code class="card-path" x-text="directory.detail"></code>
-                  <div class="card-row" x-show="directory.owned && directory.team_id && directory.backend === 'git'">
-                    <span class="field-label" title="On a team git directory every connector works on its own branch. The main connector is the one connector allowed to write the directory branch directly.">Main connector</span>
+                  <div class="card-row" x-show="directory.owned && directory.backend === 'git'">
+                    <span class="field-label" title="Pick the one connector that writes this directory's branch (main) directly. Every other connector works on its own branch. Leave as default to let your own connectors write main and everyone else branch.">Main connector</span>
                     <select class="mini-select" aria-label="Main-branch connector" :value="directory.owner_connector_id || ''" @change="setDirectoryOwnerConnector(directory, $event.target.value)">
-                      <option value="">None — all connectors use branches</option>
+                      <option value="">Default — my connectors write main, others branch</option>
                       <template x-for="connector in ownConnectorsForDirectory(directory)" :key="connector.id">
                         <option :value="connector.id" x-text="connector.name"></option>
                       </template>
