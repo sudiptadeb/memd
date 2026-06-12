@@ -175,6 +175,19 @@ owners, admins, and members can write; viewers are read-only. Connector serving
 stays strict: an MCP/HTTP token only reaches the directory IDs saved on that
 connector, and only those the connector's owner is still entitled to.
 
+For **git-backed** team directories, a teammate's connector never pushes to the
+directory's branch. Each connector gets its own branch
+(`memd/<username>-<connector-id>`) forked from the directory branch, and every
+commit on it is authored as that member. The branch tracks the directory
+branch — fresh upstream commits are merged in on each flush, preferring the
+member's pending edits on conflicting hunks — so members keep seeing the shared
+truth while their own changes wait on their branch. Merging a connector branch
+back (via your Git host's PR/MR flow, or a plain `git merge`) is how its edits
+reach the team; reads through a member connector never bump file stats, so
+connector branches contain only real edits. Local-backend team directories have
+no branches: members read and write the shared folder directly, with the same
+role-based write gating.
+
 ## Self-Organising Memory
 
 memd doesn't just store — it manages. Five workflows, each named after a real-world activity. They appear as slash commands (`/<connector>:reorganise`, etc.) in clients that surface MCP prompts, and as `memd_*` tools in every client:

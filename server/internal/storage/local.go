@@ -27,6 +27,12 @@ type Local struct {
 	// reached via a symlink (e.g. /tmp → /private/tmp on macOS) still works.
 	root     string
 	rootEval string
+
+	// skipReadStats makes Read behave like ReadRaw: no last_read_at /
+	// access_count bump, no write-back. Per-connector git branch clones set
+	// this so read-only sessions don't dirty the branch with stat churn that
+	// would pollute the eventual review diff.
+	skipReadStats bool
 }
 
 func NewLocal(root string) (*Local, error) {
@@ -111,6 +117,9 @@ func (l *Local) Read(path string) ([]byte, error) {
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, err
+	}
+	if l.skipReadStats {
+		return data, nil
 	}
 	p, managed := parseManagedPage(path, data)
 	if !managed {

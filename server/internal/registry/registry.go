@@ -42,6 +42,14 @@ type Registry struct {
 	persistent bool
 	accounts   *account.Store
 	backends   map[string]storage.Backend // directory ID → backend
+
+	// branchBackends holds per-connector git clones for team directories a
+	// connector reaches without owning: each one works on its own branch
+	// (memd/<username>-<connectorID>) with commits authored as the connector's
+	// owner, so a shared directory gets reviewable, attributable history
+	// instead of anonymous writes to the directory branch. Keyed by
+	// branchBackendKey; populated lazily on first connector access.
+	branchBackends map[string]storage.Backend
 }
 
 // NewPersistent loads config.json from disk and opens every directory's backend.
@@ -244,8 +252,8 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	viewTeams, writeTeams, _ := r.teamAccessForUser(c.OwnerUserID)
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	var out []DirectoryView
+	var pending []config.Directory // git team dirs needing a branch backend
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
 			if d.ID != id {
@@ -255,19 +263,146 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 			if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 				continue
 			}
-			b := r.backends[backendKey(d.OwnerUserID, id)]
-			if b == nil {
-				continue
+			view := DirectoryView{Directory: d, CanWrite: owned || writeTeams[d.TeamID]}
+			if !owned && d.Backend == "git" {
+				// Team git directory reached by a non-owner: serve it through
+				// this connector's own branch clone so every commit is on the
+				// connector's branch, authored as the connector's owner, and
+				// the directory branch only changes by merging that branch.
+				if b := r.branchBackends[branchBackendKey(d, c)]; b != nil {
+					view.Backend = b
+					out = append(out, view)
+				} else {
+					pending = append(pending, d)
+				}
+				break
 			}
-			out = append(out, DirectoryView{
-				Directory: d,
-				Backend:   b,
-				CanWrite:  owned || writeTeams[d.TeamID],
-			})
+			if b := r.backends[backendKey(d.OwnerUserID, id)]; b != nil {
+				view.Backend = b
+				out = append(out, view)
+			}
 			break
 		}
 	}
+	r.mu.RUnlock()
+
+	// Open missing branch clones outside the lock: the first access clones the
+	// remote, which is slow and must not block unrelated registry calls.
+	for _, d := range pending {
+		b := r.openBranchBackendCached(d, c)
+		if b == nil {
+			continue
+		}
+		out = append(out, DirectoryView{
+			Directory: d,
+			Backend:   b,
+			CanWrite:  writeTeams[d.TeamID],
+		})
+	}
 	return out
+}
+
+// openBranchBackendCached returns the per-connector branch backend for a team
+// git directory, opening (cloning) it on first use. Returns nil when the
+// backend cannot be opened; the next access retries.
+func (r *Registry) openBranchBackendCached(d config.Directory, c *Connector) storage.Backend {
+	key := branchBackendKey(d, c)
+	b, err := r.openBranchBackend(d, c)
+	if err != nil {
+		logs.Error("branch clone for directory %q connector %q failed: %v", d.Name, c.Name, err)
+		return nil
+	}
+	r.mu.Lock()
+	if existing := r.branchBackends[key]; existing != nil {
+		// Another request opened it concurrently; keep the first one.
+		r.mu.Unlock()
+		_ = b.Close()
+		return existing
+	}
+	if r.branchBackends == nil {
+		r.branchBackends = map[string]storage.Backend{}
+	}
+	r.branchBackends[key] = b
+	r.mu.Unlock()
+	return b
+}
+
+// openBranchBackend builds a dedicated git clone for one (directory, connector)
+// pair: its own workdir, a memd/<username>-<connectorID> branch forked from the
+// directory's branch, commits authored as the connector's owner, and read-stat
+// bumping disabled so read-only sessions never dirty the branch.
+func (r *Registry) openBranchBackend(d config.Directory, c *Connector) (storage.Backend, error) {
+	if d.Git == nil {
+		return nil, errors.New("git directory missing config")
+	}
+	if !safePathSegment(d.ID) || !safePathSegment(c.OwnerUserID) || !safePathSegment(c.ID) {
+		return nil, errors.New("cannot derive a branch workdir path")
+	}
+	authorName, authorEmail, branchUser := r.connectorAuthor(c)
+	workdirs, err := config.WorkdirsRoot()
+	if err != nil {
+		return nil, err
+	}
+	return storage.NewGit(storage.GitConfig{
+		// Separate clone per (directory, connector-owner, connector).
+		WorkDir:          filepath.Join(workdirs, d.ID+"--"+c.OwnerUserID+"--"+c.ID),
+		RemoteURL:        d.Git.RemoteURL,
+		Branch:           "memd/" + branchUser + "-" + c.ID,
+		BaseBranch:       d.Git.Branch,
+		BasePath:         d.Git.BasePath,
+		AuthorName:       authorName,
+		AuthorEmail:      authorEmail,
+		AuthUsername:     d.Git.AuthUsername,
+		AuthToken:        d.Git.AuthToken,
+		SSHKeyPath:       d.Git.SSHKeyPath,
+		WaitForWrites:    parseDurationOrZero(d.Git.WaitForWrites),
+		SaveEvery:        parseDurationOrZero(d.Git.SaveEvery),
+		DisableReadStats: true,
+	})
+}
+
+// connectorAuthor resolves the commit identity for a connector's branch clone:
+// the owner's display name (or username) as author, their account email when
+// present, and a branch-name-safe slug of the username.
+func (r *Registry) connectorAuthor(c *Connector) (name, email, branchUser string) {
+	name = "memd"
+	branchUser = "user"
+	if r.accounts != nil {
+		if user, err := r.accounts.UserByID(context.Background(), c.OwnerUserID); err == nil {
+			if user.DisplayName != "" {
+				name = user.DisplayName
+			} else if user.Username != "" {
+				name = user.Username
+			}
+			email = user.Email
+			if slug := branchSlug(user.Username); slug != "" {
+				branchUser = slug
+			}
+		}
+	}
+	if email == "" {
+		email = branchUser + "@memd.local"
+	}
+	return name, email, branchUser
+}
+
+// branchSlug reduces a username to characters that are always valid in a git
+// branch name segment.
+func branchSlug(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case b.Len() > 0 && !strings.HasSuffix(b.String(), "-"):
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func branchBackendKey(d config.Directory, c *Connector) string {
+	return d.OwnerUserID + "\x00" + d.ID + "\x00" + c.OwnerUserID + "\x00" + c.ID
 }
 
 // DirectoryForConnector returns one specific directory if the connector has access.
@@ -367,6 +502,9 @@ func (r *Registry) DeleteDirectoryForUser(ownerUserID, id string) error {
 		_ = b.Close()
 	}
 	delete(r.backends, backendKey(ownerUserID, id))
+	r.closeBranchBackendsLocked(func(parts []string) bool {
+		return parts[0] == ownerUserID && parts[1] == id
+	})
 	r.cfg.Directories = append(r.cfg.Directories[:idx], r.cfg.Directories[idx+1:]...)
 	for i := range r.cfg.Connectors {
 		if r.cfg.Connectors[i].OwnerUserID == ownerUserID {
@@ -461,6 +599,9 @@ func (r *Registry) DeleteDirectoryForActor(actorUserID, id string) error {
 		_ = b.Close()
 	}
 	delete(r.backends, backendKey(ownerUserID, id))
+	r.closeBranchBackendsLocked(func(parts []string) bool {
+		return parts[0] == ownerUserID && parts[1] == id
+	})
 	r.cfg.Directories = append(r.cfg.Directories[:idx], r.cfg.Directories[idx+1:]...)
 	for i := range r.cfg.Connectors {
 		if r.cfg.Connectors[i].OwnerUserID == ownerUserID {
@@ -757,6 +898,9 @@ func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 		return errors.New("connector not found")
 	}
 	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
+	r.closeBranchBackendsLocked(func(parts []string) bool {
+		return parts[2] == ownerUserID && parts[3] == id
+	})
 	r.mu.Unlock()
 	if r.accounts != nil {
 		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
@@ -789,6 +933,9 @@ func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
 		return errors.New("connector not found")
 	}
 	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
+	r.closeBranchBackendsLocked(func(parts []string) bool {
+		return parts[2] == ownerUserID && parts[3] == id
+	})
 	r.mu.Unlock()
 	if r.accounts != nil {
 		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
@@ -1030,6 +1177,21 @@ func removeString(list []string, target string) []string {
 	return out
 }
 
+// closeBranchBackendsLocked closes and removes every per-connector branch
+// backend whose key matches. The key layout is
+// dirOwner \x00 dirID \x00 connOwner \x00 connID; match receives those parts.
+// Caller must hold r.mu.
+func (r *Registry) closeBranchBackendsLocked(match func(parts []string) bool) {
+	for key, b := range r.branchBackends {
+		parts := strings.Split(key, "\x00")
+		if len(parts) != 4 || !match(parts) {
+			continue
+		}
+		_ = b.Close()
+		delete(r.branchBackends, key)
+	}
+}
+
 // Close flushes and closes every open backend. Safe to call once at server
 // shutdown.
 func (r *Registry) Close() error {
@@ -1038,6 +1200,10 @@ func (r *Registry) Close() error {
 	for id, b := range r.backends {
 		_ = b.Close()
 		delete(r.backends, id)
+	}
+	for id, b := range r.branchBackends {
+		_ = b.Close()
+		delete(r.branchBackends, id)
 	}
 	return nil
 }

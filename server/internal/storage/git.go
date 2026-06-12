@@ -90,6 +90,7 @@ type Git struct {
 	basePath     string
 	remoteURL    string
 	branch       string
+	baseBranch   string
 	authorName   string
 	authorEmail  string
 	authUsername string
@@ -125,6 +126,18 @@ type GitConfig struct {
 	SSHKeyPath    string
 	WaitForWrites time.Duration
 	SaveEvery     time.Duration
+
+	// BaseBranch turns Branch into a work branch: the clone forks Branch from
+	// BaseBranch when it doesn't exist yet, and every flush merges fresh
+	// BaseBranch commits into Branch (preferring the work branch's side on
+	// conflicting hunks). Used for per-connector branches on team directories,
+	// where Branch is the connector's branch and BaseBranch is the directory's
+	// configured branch. Empty means Branch is the directory branch itself.
+	BaseBranch string
+
+	// DisableReadStats stops Read from bumping managed file stats. Set on
+	// per-connector branch clones so reads never dirty the branch.
+	DisableReadStats bool
 }
 
 func NewGit(cfg GitConfig) (*Git, error) {
@@ -149,6 +162,10 @@ func NewGit(cfg GitConfig) (*Git, error) {
 		return nil, err
 	}
 
+	if err := g.syncBase(); err != nil {
+		g.lastError = err.Error()
+	}
+
 	root := filepath.Join(g.workdir, g.basePath)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
@@ -157,6 +174,7 @@ func NewGit(cfg GitConfig) (*Git, error) {
 	if err != nil {
 		return nil, err
 	}
+	local.skipReadStats = cfg.DisableReadStats
 	g.local = local
 	g.lastSync = time.Now()
 
@@ -179,6 +197,9 @@ func newGitFromConfig(cfg GitConfig) (*Git, error) {
 	if err := validateBranch(strings.TrimSpace(cfg.Branch)); err != nil {
 		return nil, err
 	}
+	if err := validateBranch(strings.TrimSpace(cfg.BaseBranch)); err != nil {
+		return nil, err
+	}
 	authUsername := strings.TrimSpace(cfg.AuthUsername)
 	if authUsername == "" {
 		authUsername = urlUser
@@ -196,6 +217,7 @@ func newGitFromConfig(cfg GitConfig) (*Git, error) {
 		basePath:      strings.TrimPrefix(cfg.BasePath, "/"),
 		remoteURL:     remoteURL,
 		branch:        cfg.Branch,
+		baseBranch:    strings.TrimSpace(cfg.BaseBranch),
 		authorName:    cfg.AuthorName,
 		authorEmail:   cfg.AuthorEmail,
 		authUsername:  authUsername,
@@ -207,6 +229,9 @@ func newGitFromConfig(cfg GitConfig) (*Git, error) {
 	}
 	if g.branch == "" {
 		g.branch = "main"
+	}
+	if g.baseBranch == g.branch {
+		g.baseBranch = ""
 	}
 	if g.authorName == "" {
 		g.authorName = "memd"
@@ -240,7 +265,7 @@ func (g *Git) clone() error {
 		if err2 != nil {
 			return fmt.Errorf("clone: %s", strings.TrimSpace(string(out2)))
 		}
-		if err := g.runQuiet("checkout", "-B", g.branch); err != nil {
+		if err := g.checkoutBranchFromBase(); err != nil {
 			return err
 		}
 		_ = out
@@ -324,7 +349,44 @@ func (g *Git) checkoutConfiguredBranch() error {
 		}
 		return g.runQuiet("checkout", "-B", g.branch, "FETCH_HEAD")
 	}
+	return g.checkoutBranchFromBase()
+}
+
+// checkoutBranchFromBase creates the configured branch. When a base branch is
+// configured (per-connector work branches), the new branch forks from the
+// remote base so it starts at the directory's current content; otherwise it
+// forks from whatever HEAD the clone left behind.
+func (g *Git) checkoutBranchFromBase() error {
+	if g.baseBranch != "" {
+		if err := g.runQuiet("fetch", "origin", g.baseBranch); err == nil {
+			return g.runQuiet("checkout", "-B", g.branch, "FETCH_HEAD")
+		}
+	}
 	return g.runQuiet("checkout", "-B", g.branch)
+}
+
+// syncBase folds fresh base-branch commits into the work branch so long-lived
+// connector branches keep seeing the directory's merged truth. Conflicting
+// hunks keep the work branch's side (-X ours): a member's pending edits are
+// never silently overwritten — review happens when the branch is merged back.
+// No-op without a base branch. Failures are soft: the merge is aborted and the
+// branch continues on its current base.
+func (g *Git) syncBase() error {
+	if g.baseBranch == "" {
+		return nil
+	}
+	if err := g.runQuiet("fetch", "origin", g.baseBranch); err != nil {
+		return err
+	}
+	if err := g.runQuiet(
+		"-c", "user.name="+g.authorName,
+		"-c", "user.email="+g.authorEmail,
+		"merge", "--no-edit", "-X", "ours", "FETCH_HEAD",
+	); err != nil {
+		_ = g.runQuiet("merge", "--abort")
+		return fmt.Errorf("merge %s into %s: %w", g.baseBranch, g.branch, err)
+	}
+	return nil
 }
 
 func (g *Git) syncRemote() error {
@@ -517,19 +579,25 @@ func (g *Git) flushDirty(defaultMsg string) error {
 		g.lastError = err.Error()
 		return err
 	}
-	commitErr := g.runQuiet(
-		"-c", "user.name="+g.authorName,
-		"-c", "user.email="+g.authorEmail,
-		"commit", "-m", msg,
-	)
-	if commitErr != nil {
-		if strings.Contains(commitErr.Error(), "nothing to commit") ||
-			strings.Contains(commitErr.Error(), "no changes added to commit") {
-			commitErr = nil
-		} else {
-			g.lastError = commitErr.Error()
-			return commitErr
+	// `git commit` with a clean index exits 1 with its explanation on stdout,
+	// which runQuiet doesn't capture — so check for staged changes explicitly
+	// instead of pattern-matching the commit error. diff --cached --quiet
+	// exits non-zero exactly when something is staged.
+	if g.runQuiet("diff", "--cached", "--quiet") != nil {
+		if err := g.runQuiet(
+			"-c", "user.name="+g.authorName,
+			"-c", "user.email="+g.authorEmail,
+			"commit", "-m", msg,
+		); err != nil {
+			g.lastError = err.Error()
+			return err
 		}
+	}
+	// Refresh the work branch from its base now that the tree is clean. Soft
+	// failure: a conflicted or unreachable base must not block pushing the
+	// member's own commits.
+	if err := g.syncBase(); err != nil {
+		logs.Error("git base sync for %s failed: %v", redactRemoteURL(g.remoteURL), err)
 	}
 	if err := g.runQuiet("push", "-u", "origin", g.branch); err != nil {
 		firstPushErr := err
