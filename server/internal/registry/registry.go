@@ -253,7 +253,7 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	viewTeams, writeTeams, _ := r.teamAccessForUser(c.OwnerUserID)
 	r.mu.RLock()
 	var out []DirectoryView
-	var pending []DirectoryView // git team dirs needing a branch backend
+	var pending []DirectoryView // git dirs needing a per-connector branch backend
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
 			if d.ID != id {
@@ -264,14 +264,18 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 				continue
 			}
 			view := DirectoryView{Directory: d, CanWrite: owned || writeTeams[d.TeamID]}
-			// Team git directory: every connector works on its own branch —
-			// the owner's connectors included — so every commit is on a
-			// connector branch, authored as whoever acted, and the directory
-			// branch only changes by merging. The one exception is the
-			// directory's designated owner connector, which works on the
-			// directory branch directly.
+			// On a git directory the branch (main) is written directly only by
+			// the designated main connector, or — when none is designated — by
+			// the owner's own connectors. Every other connector works on its
+			// own branch, so its commits are attributable and the directory
+			// branch changes only by merging. This is uniform for personal and
+			// team directories: the rule is about ownership and designation, not
+			// team scope. (Local directories have no branches; all connectors
+			// share the folder.)
 			designated := owned && d.OwnerConnectorID != "" && d.OwnerConnectorID == c.ID
-			if d.Backend == "git" && d.TeamID != "" && !designated {
+			ownerDefault := owned && d.OwnerConnectorID == ""
+			writesMainBranch := designated || ownerDefault
+			if d.Backend == "git" && !writesMainBranch {
 				if b := r.branchBackends[branchBackendKey(d, c)]; b != nil {
 					view.Backend = b
 					out = append(out, view)
@@ -613,15 +617,13 @@ func (r *Registry) UpdateDirectoryOwnerConnectorForActor(actorUserID, id, connec
 			r.mu.Unlock()
 			return config.Directory{}, errors.New("connector not found or not yours")
 		}
-		// The designated connector now works on the directory branch; its old
-		// branch clone (if any) must not keep flushing in the background.
-		r.closeBranchBackendsLocked(func(parts []string) bool {
-			return parts[0] == actorUserID && parts[1] == id && parts[2] == actorUserID && parts[3] == connectorID
-		})
 	}
 	current := r.cfg.Directories[idx]
 	current.OwnerConnectorID = connectorID
 	r.cfg.Directories[idx] = current
+	// Designation changed: which connectors branch shifts, so drop every
+	// cached branch clone for this directory; they re-open under the new rule.
+	r.closeBranchBackendsForDirLocked(actorUserID, id)
 	r.mu.Unlock()
 	if r.accounts != nil {
 		if err := r.accounts.UpsertUserDirectory(context.Background(), current.OwnerUserID, current); err != nil {
@@ -964,11 +966,14 @@ func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 		return parts[2] == ownerUserID && parts[3] == id
 	})
 	// Clear any owner-connector designation pointing at the deleted connector.
+	// Clearing it changes which connectors branch, so drop the directory's
+	// cached branch clones too; they re-open under the new rule.
 	var cleared []config.Directory
 	for i, d := range r.cfg.Directories {
 		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
 			r.cfg.Directories[i].OwnerConnectorID = ""
 			cleared = append(cleared, r.cfg.Directories[i])
+			r.closeBranchBackendsForDirLocked(d.OwnerUserID, d.ID)
 		}
 	}
 	r.mu.Unlock()
@@ -1012,11 +1017,14 @@ func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
 		return parts[2] == ownerUserID && parts[3] == id
 	})
 	// Clear any owner-connector designation pointing at the deleted connector.
+	// Clearing it changes which connectors branch, so drop the directory's
+	// cached branch clones too; they re-open under the new rule.
 	var cleared []config.Directory
 	for i, d := range r.cfg.Directories {
 		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
 			r.cfg.Directories[i].OwnerConnectorID = ""
 			cleared = append(cleared, r.cfg.Directories[i])
+			r.closeBranchBackendsForDirLocked(d.OwnerUserID, d.ID)
 		}
 	}
 	r.mu.Unlock()
@@ -1263,6 +1271,17 @@ func removeString(list []string, target string) []string {
 		}
 	}
 	return out
+}
+
+// closeBranchBackendsForDirLocked drops every cached branch clone for one
+// directory. Call it whenever the directory's main-connector designation
+// changes: which connectors branch (and which write the directory branch)
+// shifts, so stale clones must not keep flushing to their branches in the
+// background. Survivors re-open lazily under the new rule. Caller holds r.mu.
+func (r *Registry) closeBranchBackendsForDirLocked(dirOwnerUserID, dirID string) {
+	r.closeBranchBackendsLocked(func(parts []string) bool {
+		return parts[0] == dirOwnerUserID && parts[1] == dirID
+	})
 }
 
 // closeBranchBackendsLocked closes and removes every per-connector branch

@@ -64,11 +64,12 @@ type Directory struct {
 	OwnerUserID string `json:"owner_user_id,omitempty"`
 	TeamID      string `json:"team_id,omitempty"`
 
-	// OwnerConnectorID designates the one connector allowed to work directly
-	// on a team git directory's branch (main). It must belong to the same user
-	// as the directory. Every other connector — the owner's included — works
-	// on its own memd/<user>-<connector> branch. Empty means no connector
-	// writes the directory branch directly.
+	// OwnerConnectorID designates the one connector allowed to work directly on
+	// a git directory's branch (main); every other connector works on its own
+	// memd/<user>-<connector> branch. It must belong to the directory's owner.
+	// Empty means no designation: the owner's own connectors write the
+	// directory branch directly and everyone else branches. Applies to personal
+	// and team directories alike.
 	OwnerConnectorID string `json:"owner_connector_id,omitempty"`
 
 	Name        string    `json:"name"`
