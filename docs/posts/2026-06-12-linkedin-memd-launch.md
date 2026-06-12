@@ -2,13 +2,13 @@
 
 Draft for announcing memd's public home and inviting people to use it.
 
-## Copy-paste version (Unicode bold hook, LinkedIn composer)
+## Copy-paste version (Unicode bold, LinkedIn composer)
 
 𝗘𝘃𝗲𝗿𝘆 𝗔𝗜 𝘁𝗼𝗼𝗹 𝗜 𝘂𝘀𝗲 𝘀𝗵𝗶𝗽𝗽𝗲𝗱 𝗶𝘁𝘀 𝗼𝘄𝗻 𝗺𝗲𝗺𝗼𝗿𝘆 𝗳𝗲𝗮𝘁𝘂𝗿𝗲 𝗶𝗻 𝘁𝗵𝗲 𝗽𝗮𝘀𝘁 𝘆𝗲𝗮𝗿.
 
 ChatGPT remembers things about me now. So does Claude, in a format ChatGPT will never see. What I teach one agent is invisible to the next, and the more agents I run, the worse it gets.
 
-The consensus answer is to wait for the vendors to integrate with each other. I built the opposite: memd, a small Go server that treats memory as plain files. Markdown in a folder, or in a private Git repo you control. memd serves those files over MCP, so Claude Code, Codex CLI, Cursor and ChatGPT all read and write the same memory. Teach it once, every agent knows it.
+The consensus answer is to wait for the vendors to integrate with each other. I built the opposite: 𝗺𝗲𝗺𝗱, a small Go server that treats memory as plain files. Markdown in a folder, or in a private Git repo you control. memd serves those files over MCP, so Claude Code, Codex CLI, Cursor and ChatGPT all read and write the same memory. 𝗧𝗲𝗮𝗰𝗵 𝗶𝘁 𝗼𝗻𝗰𝗲, 𝗲𝘃𝗲𝗿𝘆 𝗮𝗴𝗲𝗻𝘁 𝗸𝗻𝗼𝘄𝘀 𝗶𝘁.
 
 It doesn't just store. Five workflows keep the memory organised, named after what they actually do... dream cements what got used this session and fades what didn't, housekeep fixes dangling links and drift. A whole session of edits lands as one clean git commit, so you can review or revert anything the agent does.
 
@@ -29,6 +29,12 @@ It doesn't just store. Five workflows keep the memory organised, named after wha
 I've run my own work and personal memory on it for weeks. This post was drafted by an agent reading from that memory.
 
 memd now lives at memd.debkosh.com, the source is MIT licensed at github.com/sudiptadeb/memd. If you run more than one AI agent and you're tired of repeating yourself, give it a look. Feedback welcome, especially the critical kind.
+
+## Image
+
+Attach `2026-06-12-linkedin-memd-card.png` (1200x627 at 2x, on-brand with `docs/assets/memd.svg`: four agent tiles converging on the cream memd hub, tagline, URL pill). Vector source: `2026-06-12-linkedin-memd-card.svg`.
+
+Bold-formatting notes: URLs are left plain because Unicode bold characters break LinkedIn's auto-linking. Bolded segments are the hook line, the first `memd` mention, and "Teach it once, every agent knows it."
 
 ## Pre-publish checklist
 
