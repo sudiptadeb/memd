@@ -175,24 +175,32 @@ owners, admins, and members can write; viewers are read-only. Connector serving
 stays strict: an MCP/HTTP token only reaches the directory IDs saved on that
 connector, and only those the connector's owner is still entitled to.
 
-For **git-backed** team directories, no connector pushes to the directory's
-branch by default — the owner's connectors included. Each connector gets its
-own branch (`memd/<username>-<connector-id>`) forked from the directory branch,
-and every commit on it is authored as the human behind that connector. The
-branch tracks the directory branch — fresh upstream commits are merged in on
-each flush, preferring the connector's pending edits on conflicting hunks — so
-everyone keeps seeing the shared truth while their own changes wait on their
-branch. Merging a connector branch back (via your Git host's PR/MR flow, or a
-plain `git merge`) is how its edits reach the team; reads through a connector
-branch never bump file stats, so the branches contain only real edits.
+For **git-backed** directories — personal or team, the rule is the same — a
+connector either writes the directory's branch (main) directly or works on its
+own branch (`memd/<username>-<connector-id>`). Branch commits are authored as
+the human behind the connector, and the branch tracks the directory branch:
+fresh upstream commits merge in on each flush (preferring the connector's
+pending edits on conflicting hunks), so everyone keeps seeing the shared truth
+while their own changes wait on their branch. Merging a connector branch back
+(via your Git host's PR/MR flow, or a plain `git merge`) is how its edits reach
+the directory branch; reads through a connector branch never bump file stats, so
+the branches contain only real edits.
 
-The owner can designate one of their own connectors as the directory's **main
-connector** (directory card → *Main connector*). That single connector works on
-the directory branch directly — useful for a curator agent that merges and
-tidies. The designation is restricted to a connector owned by the directory's
-owner; a teammate's token can never write the directory branch. Local-backend
-team directories have no branches: members read and write the shared folder
-directly, with the same role-based write gating.
+Who writes the directory branch directly:
+
+- **No main connector set (default):** the directory owner's own connectors
+  write the branch directly; everyone else (teammates on a shared directory)
+  works on their own branch.
+- **A main connector is set:** that one connector writes the branch directly and
+  *every* other connector — the owner's included — works on its own branch.
+  Pick it on the directory card → *Main connector*. It's handy for a single
+  curator agent that merges and tidies, on a personal directory with several
+  agents just as much as on a team one.
+
+The main connector must belong to the directory's owner, so a teammate's token
+can never write the directory branch. Local-backend directories have no
+branches: all connectors read and write the shared folder directly, with
+role-based write gating on team directories.
 
 ## Self-Organising Memory
 
