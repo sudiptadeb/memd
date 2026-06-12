@@ -272,6 +272,23 @@ func TestNormalizeGitDirectoryAuthStripsInlineCredentials(t *testing.T) {
 	}
 }
 
+// Embedded assets have no modtime, so without explicit revalidation headers
+// browsers keep stale CSS/JS across deploys.
+func TestUIAndAssetsRequireRevalidation(t *testing.T) {
+	accounts := openTestAccountStore(t)
+	mux, _ := newTestUI(t, accounts)
+	for _, target := range []string{"/", "/assets/style.css", "/assets/script.js"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", target, rec.Code)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("%s Cache-Control = %q, want no-cache", target, got)
+		}
+	}
+}
+
 func openTestAccountStore(t *testing.T) *account.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "memd.db")
