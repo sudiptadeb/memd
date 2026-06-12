@@ -2391,6 +2391,15 @@ section {
 
   .card-head {
     flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* Keep the name and badges together on the first line and move the
+     action cluster (Browse / team select / delete) to its own row instead
+     of wrapping mid-control. Connector heads only hold badges and the
+     expand chevron, so they keep the single-line flow. */
+  .card:not(.connector-card) .card-head .spacer {
+    flex-basis: 100%;
   }
 
   .user-card .card-head .btn {
@@ -2420,6 +2429,11 @@ section {
   .created-link {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  /* In the stacked layout the 116px flex-basis would become the height. */
+  .inline-form .compact-input {
+    flex-basis: auto !important;
   }
 
   .invite-grid {
