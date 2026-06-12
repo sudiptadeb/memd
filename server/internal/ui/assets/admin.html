@@ -39,7 +39,11 @@
 
         <template x-if="oidcEnabled">
           <div class="sso-block">
-            <button class="btn primary login-submit" type="button" @click="ssoLogin()">Continue with SSO</button>
+            <button class="btn primary login-submit" type="button" @click="ssoLogin()" :disabled="ssoRedirecting" :aria-busy="ssoRedirecting ? 'true' : 'false'">
+              <svg class="icon spin" aria-hidden="true" x-show="ssoRedirecting"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+              <span x-text="ssoRedirecting ? 'Taking you to your sign-in provider...' : 'Sign in with your organization'"></span>
+            </button>
+            <div class="login-note sso-note">You will be redirected to your organization's identity provider.</div>
             <button class="linklike" type="button" @click="showLocalLogin = !showLocalLogin" x-text="showLocalLogin ? 'Hide local sign-in' : 'Use a local account instead'"></button>
           </div>
         </template>

@@ -224,6 +224,7 @@
       user: null,
       oidcEnabled: false,
       showLocalLogin: false,
+      ssoRedirecting: false,
       loading: true,
       loadErr: "",
       inviteToken: "",
@@ -275,6 +276,13 @@
       logsTimer: null,
 
       async init() {
+        // Back-navigation from the identity provider restores the page from
+        // bfcache with stale state; reset so the SSO button is usable again.
+        window.addEventListener("pageshow", (event) => {
+          if (event.persisted) {
+            this.ssoRedirecting = false;
+          }
+        });
         this.setTheme(this.theme);
         this.setLayout(this.layoutMode);
         this.setLogsWidth(this.logsWidth);
@@ -318,6 +326,8 @@
       },
 
       ssoLogin() {
+        if (this.ssoRedirecting) return;
+        this.ssoRedirecting = true;
         window.location.href = "/auth/login";
       },
 
