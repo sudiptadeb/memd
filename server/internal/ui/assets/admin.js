@@ -65,11 +65,16 @@
       redirect_uri: "",
       scopes: "",
       post_logout_redirect_uri: "",
+      replace_provider: false,
       active: false,
       err: "",
       msg: "",
       saving: false
     };
+  }
+
+  function defaultRelinkForm() {
+    return { from_issuer: "", err: "", msg: "", submitting: false };
   }
 
   window.memdAdminApp = function () {
@@ -85,6 +90,7 @@
       loginForm: defaultLoginForm(),
       userForm: defaultUserForm(),
       oidcForm: defaultOIDCForm(),
+      relinkForm: defaultRelinkForm(),
       theme: resolveTheme(),
       sheet: null,
       toast: "",
@@ -213,13 +219,21 @@
         this.oidcForm.err = "";
         this.oidcForm.msg = "";
         this.oidcForm.saving = true;
+        if (this.oidcForm.replace_provider) {
+          const warning = "Replace the identity provider? Every existing SSO account is unlinked and the next sign-in creates a fresh account. Only do this when switching to a genuinely different IdP.";
+          if (!window.confirm(warning)) {
+            this.oidcForm.saving = false;
+            return;
+          }
+        }
         const body = {
           enabled: this.oidcForm.enabled,
           issuer_url: this.oidcForm.issuer_url,
           client_id: this.oidcForm.client_id,
           redirect_uri: this.oidcForm.redirect_uri,
           scopes: this.oidcForm.scopes,
-          post_logout_redirect_uri: this.oidcForm.post_logout_redirect_uri
+          post_logout_redirect_uri: this.oidcForm.post_logout_redirect_uri,
+          replace_provider: this.oidcForm.replace_provider
         };
         // Only send the secret when the admin typed a new one; otherwise keep
         // the stored value untouched.
@@ -334,6 +348,49 @@
 
       userDisplayName(target) {
         return target.display_name || target.username;
+      },
+
+      get hasOrphanedSSOUsers() {
+        return this.users.some(function (target) { return target.sso_orphan; });
+      },
+
+      async relinkSSOUsers() {
+        this.relinkForm.err = "";
+        this.relinkForm.msg = "";
+        this.relinkForm.submitting = true;
+        try {
+          const data = await api("/api/admin/oidc/relink", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from_issuer: this.relinkForm.from_issuer })
+          });
+          const skipped = data.skipped || [];
+          let msg = "Re-linked " + (data.adopted || 0) + " account(s).";
+          if (skipped.length) {
+            msg += " Skipped (subject already taken — unlink the duplicate first): " + skipped.join(", ");
+          }
+          this.relinkForm.msg = msg;
+          await this.loadUsers();
+        } catch (error) {
+          this.relinkForm.err = error.message || "re-link failed";
+        } finally {
+          this.relinkForm.submitting = false;
+        }
+      },
+
+      async unlinkSSO(target) {
+        const warning = "Unlink SSO from " + target.username + "? The account can no longer sign in through the identity provider" +
+          (target.sso_linked ? " and its identity slot is freed for another account." : ".");
+        if (!window.confirm(warning)) {
+          return;
+        }
+        try {
+          await api("/api/admin/users/" + encodeURIComponent(target.id) + "/unlink-oidc", { method: "POST" });
+          this.showToast("SSO identity unlinked");
+          await this.loadUsers();
+        } catch (error) {
+          window.alert(error.message || "unlink failed");
+        }
       }
     };
   };

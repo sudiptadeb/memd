@@ -1083,6 +1083,7 @@
           await this.load();
         } catch (error) {
           window.alert("Could not delete directory: " + (error.message || "request failed"));
+          await this.load().catch(function () {});
         }
       },
 
@@ -1144,6 +1145,7 @@
           await this.load();
         } catch (error) {
           window.alert(error.message || "rotate failed");
+          await this.load().catch(function () {});
         }
       },
 
@@ -1156,6 +1158,7 @@
           await this.load();
         } catch (error) {
           window.alert("Could not delete connector: " + (error.message || "request failed"));
+          await this.load().catch(function () {});
         }
       },
 

@@ -722,16 +722,51 @@ func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (
 			return config.Connector{}, err
 		}
 	}
-	r.cfg.Connectors = append(r.cfg.Connectors, c)
-	r.mu.Unlock()
 	if r.accounts != nil {
+		// Persist before exposing the connector in memory, so a failed write
+		// cannot leave a phantom connector that exists only until restart.
+		r.mu.Unlock()
 		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, c); err != nil {
 			return config.Connector{}, err
 		}
-	} else if err := r.save(); err != nil {
+		r.mu.Lock()
+		r.cfg.Connectors = append(r.cfg.Connectors, c)
+		r.mu.Unlock()
+		return c, nil
+	}
+	r.cfg.Connectors = append(r.cfg.Connectors, c)
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		r.dropConnectorFromMemory(ownerUserID, c.ID)
 		return config.Connector{}, err
 	}
 	return c, nil
+}
+
+// dropConnectorFromMemory removes an optimistically added connector after its
+// persist failed, keeping memory consistent with storage.
+func (r *Registry) dropConnectorFromMemory(ownerUserID, id string) {
+	r.mu.Lock()
+	for i, c := range r.cfg.Connectors {
+		if c.ID == id && c.OwnerUserID == ownerUserID {
+			r.cfg.Connectors = append(r.cfg.Connectors[:i], r.cfg.Connectors[i+1:]...)
+			break
+		}
+	}
+	r.mu.Unlock()
+}
+
+// storeConnectorInMemory writes back a connector that was just persisted,
+// matching by id and owner.
+func (r *Registry) storeConnectorInMemory(updated config.Connector) {
+	r.mu.Lock()
+	for i, c := range r.cfg.Connectors {
+		if c.ID == updated.ID && c.OwnerUserID == updated.OwnerUserID {
+			r.cfg.Connectors[i] = updated
+			break
+		}
+	}
+	r.mu.Unlock()
 }
 
 // UpdateConnector edits a connector's name, kind, directory access, and
@@ -774,17 +809,25 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
-	r.cfg.Connectors[idx].Name = name
-	r.cfg.Connectors[idx].Kind = kind
-	r.cfg.Connectors[idx].DirectoryIDs = append([]string(nil), directoryIDs...)
-	r.cfg.Connectors[idx].Write = write
 	updated := r.cfg.Connectors[idx]
-	r.mu.Unlock()
+	updated.Name = name
+	updated.Kind = kind
+	updated.DirectoryIDs = append([]string(nil), directoryIDs...)
+	updated.Write = write
 	if r.accounts != nil {
+		// Persist first; memory only reflects writes that actually landed.
+		r.mu.Unlock()
 		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, updated); err != nil {
 			return config.Connector{}, err
 		}
-	} else if err := r.save(); err != nil {
+		r.storeConnectorInMemory(updated)
+		return updated, nil
+	}
+	prev := r.cfg.Connectors[idx]
+	r.cfg.Connectors[idx] = updated
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		r.storeConnectorInMemory(prev)
 		return config.Connector{}, err
 	}
 	return updated, nil
@@ -844,18 +887,25 @@ func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, d
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
+	prev := current
 	current.Name = name
 	current.Kind = kind
 	current.TeamID = teamID
 	current.DirectoryIDs = append([]string(nil), directoryIDs...)
 	current.Write = write
-	r.cfg.Connectors[idx] = current
-	r.mu.Unlock()
 	if r.accounts != nil {
+		// Persist first; memory only reflects writes that actually landed.
+		r.mu.Unlock()
 		if err := r.accounts.UpsertUserConnector(context.Background(), current.OwnerUserID, current); err != nil {
 			return config.Connector{}, err
 		}
-	} else if err := r.save(); err != nil {
+		r.storeConnectorInMemory(current)
+		return current, nil
+	}
+	r.cfg.Connectors[idx] = current
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		r.storeConnectorInMemory(prev)
 		return config.Connector{}, err
 	}
 	return current, nil
@@ -890,14 +940,23 @@ func (r *Registry) RotateConnectorForUser(ownerUserID, id string) (config.Connec
 		r.mu.Unlock()
 		return config.Connector{}, errors.New("connector not found")
 	}
-	r.cfg.Connectors[idx].Token = tok
-	updated := r.cfg.Connectors[idx]
-	r.mu.Unlock()
+	prev := r.cfg.Connectors[idx]
+	updated := prev
+	updated.Token = tok
 	if r.accounts != nil {
+		// Persist first: the old token must keep working unless the new one
+		// actually landed in storage.
+		r.mu.Unlock()
 		if err := r.accounts.UpsertUserConnector(context.Background(), ownerUserID, updated); err != nil {
 			return config.Connector{}, err
 		}
-	} else if err := r.save(); err != nil {
+		r.storeConnectorInMemory(updated)
+		return updated, nil
+	}
+	r.cfg.Connectors[idx] = updated
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		r.storeConnectorInMemory(prev)
 		return config.Connector{}, err
 	}
 	return updated, nil
@@ -929,14 +988,23 @@ func (r *Registry) RotateConnectorForActor(actorUserID, id string) (config.Conne
 		r.mu.Unlock()
 		return config.Connector{}, errors.New("connector not found")
 	}
-	r.cfg.Connectors[idx].Token = tok
-	updated := r.cfg.Connectors[idx]
-	r.mu.Unlock()
+	prev := r.cfg.Connectors[idx]
+	updated := prev
+	updated.Token = tok
 	if r.accounts != nil {
+		// Persist first: the old token must keep working unless the new one
+		// actually landed in storage.
+		r.mu.Unlock()
 		if err := r.accounts.UpsertUserConnector(context.Background(), updated.OwnerUserID, updated); err != nil {
 			return config.Connector{}, err
 		}
-	} else if err := r.save(); err != nil {
+		r.storeConnectorInMemory(updated)
+		return updated, nil
+	}
+	r.cfg.Connectors[idx] = updated
+	r.mu.Unlock()
+	if err := r.save(); err != nil {
+		r.storeConnectorInMemory(prev)
 		return config.Connector{}, err
 	}
 	return updated, nil
@@ -948,22 +1016,51 @@ func (r *Registry) DeleteConnector(id string) error {
 
 func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 	r.mu.Lock()
-	idx := -1
-	for i, c := range r.cfg.Connectors {
+	found := false
+	for _, c := range r.cfg.Connectors {
 		if c.ID == id && c.OwnerUserID == ownerUserID {
-			idx = i
+			found = true
 			break
 		}
 	}
-	if idx < 0 {
-		r.mu.Unlock()
+	r.mu.Unlock()
+	if !found {
 		return errors.New("connector not found")
 	}
-	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
+	// Delete from storage first; a connector missing there (e.g. one that never
+	// persisted) still gets removed from memory below.
+	if r.accounts != nil {
+		if err := r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id); err != nil && !errors.Is(err, account.ErrNotFound) {
+			return err
+		}
+	}
+	cleared := r.removeConnectorFromMemory(ownerUserID, id)
+	if r.accounts != nil {
+		for _, d := range cleared {
+			if err := r.accounts.UpsertUserDirectory(context.Background(), d.OwnerUserID, d); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return r.save()
+}
+
+// removeConnectorFromMemory removes the connector, closes its branch backends,
+// and clears any owner-connector designation pointing at it. It returns the
+// directories whose designation was cleared so callers can persist them.
+func (r *Registry) removeConnectorFromMemory(ownerUserID, id string) []config.Directory {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, c := range r.cfg.Connectors {
+		if c.ID == id && c.OwnerUserID == ownerUserID {
+			r.cfg.Connectors = append(r.cfg.Connectors[:i], r.cfg.Connectors[i+1:]...)
+			break
+		}
+	}
 	r.closeBranchBackendsLocked(func(parts []string) bool {
 		return parts[2] == ownerUserID && parts[3] == id
 	})
-	// Clear any owner-connector designation pointing at the deleted connector.
 	var cleared []config.Directory
 	for i, d := range r.cfg.Directories {
 		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
@@ -971,16 +1068,7 @@ func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 			cleared = append(cleared, r.cfg.Directories[i])
 		}
 	}
-	r.mu.Unlock()
-	if r.accounts != nil {
-		for _, d := range cleared {
-			if err := r.accounts.UpsertUserDirectory(context.Background(), d.OwnerUserID, d); err != nil {
-				return err
-			}
-		}
-		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
-	}
-	return r.save()
+	return cleared
 }
 
 func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
@@ -1007,26 +1095,22 @@ func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
 		r.mu.Unlock()
 		return errors.New("connector not found")
 	}
-	r.cfg.Connectors = append(r.cfg.Connectors[:idx], r.cfg.Connectors[idx+1:]...)
-	r.closeBranchBackendsLocked(func(parts []string) bool {
-		return parts[2] == ownerUserID && parts[3] == id
-	})
-	// Clear any owner-connector designation pointing at the deleted connector.
-	var cleared []config.Directory
-	for i, d := range r.cfg.Directories {
-		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
-			r.cfg.Directories[i].OwnerConnectorID = ""
-			cleared = append(cleared, r.cfg.Directories[i])
+	r.mu.Unlock()
+	// Delete from storage first; a connector missing there (e.g. one that never
+	// persisted) still gets removed from memory below.
+	if r.accounts != nil {
+		if err := r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id); err != nil && !errors.Is(err, account.ErrNotFound) {
+			return err
 		}
 	}
-	r.mu.Unlock()
+	cleared := r.removeConnectorFromMemory(ownerUserID, id)
 	if r.accounts != nil {
 		for _, d := range cleared {
 			if err := r.accounts.UpsertUserDirectory(context.Background(), d.OwnerUserID, d); err != nil {
 				return err
 			}
 		}
-		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
+		return nil
 	}
 	return r.save()
 }

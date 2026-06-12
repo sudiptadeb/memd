@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 6
+const latestSchemaVersion = 7
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -104,12 +104,16 @@ var schemaStatements = []string{
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (owner_user_id, id)
 	)`,
+	// directory_owner_user_id is the directory's owner, which differs from the
+	// connector's owner when a team member attaches a teammate's shared
+	// directory.
 	`CREATE TABLE IF NOT EXISTS user_connector_directories (
 		owner_user_id TEXT NOT NULL,
 		connector_id TEXT NOT NULL,
 		directory_id TEXT NOT NULL,
+		directory_owner_user_id TEXT NOT NULL,
 		PRIMARY KEY (owner_user_id, connector_id, directory_id),
 		FOREIGN KEY (owner_user_id, connector_id) REFERENCES user_connectors(owner_user_id, id) ON DELETE CASCADE,
-		FOREIGN KEY (owner_user_id, directory_id) REFERENCES user_directories(owner_user_id, id) ON DELETE CASCADE
+		FOREIGN KEY (directory_owner_user_id, directory_id) REFERENCES user_directories(owner_user_id, id) ON DELETE CASCADE
 	)`,
 }

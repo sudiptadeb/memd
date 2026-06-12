@@ -669,12 +669,13 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 func openRegistryTestStore(t *testing.T) *account.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "memd.db")
-	store, err := account.Open(context.Background(), account.DBConfig{
-		Driver:     "sqlite",
-		DSN:        "file:" + path,
-		Source:     "test",
-		SQLitePath: path,
-	})
+	// Use the production DSN so pragmas (foreign_keys in particular) match the
+	// real deployment — a bare file: DSN once masked an FK violation here.
+	cfg, err := account.ParseDatabaseURL("sqlite://" + path)
+	if err != nil {
+		t.Fatalf("account.ParseDatabaseURL: %v", err)
+	}
+	store, err := account.Open(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("account.Open: %v", err)
 	}

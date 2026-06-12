@@ -61,6 +61,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/users", h.requireSuperAdmin(h.adminUsersAPI))
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
 	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))
+	mux.HandleFunc("/api/admin/oidc/relink", h.requireSuperAdmin(h.adminOIDCRelinkAPI))
 	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))
 	mux.HandleFunc("/api/teams/", h.requireUser(h.teamAPI))
 	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
@@ -463,7 +464,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logs.ErrorUser(user.ID, "add connector %q failed: %v", body.Name, err)
-		httpErr(w, http.StatusBadRequest, err)
+		httpErr(w, statusForAccountError(err), err)
 		return
 	}
 	logs.InfoUser(user.ID, "added connector %q (id=%s, kind=%s, %d directories, write=%v)", body.Name, c.ID, c.EffectiveKind(), len(body.DirectoryIDs), body.Write)
@@ -486,7 +487,8 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case action == "" && r.Method == http.MethodDelete:
 		if err := h.reg.DeleteConnectorForActor(user.ID, id); err != nil {
-			httpErr(w, http.StatusBadRequest, err)
+			logs.ErrorUser(user.ID, "delete connector id=%s failed: %v", id, err)
+			httpErr(w, statusForAccountError(err), err)
 			return
 		}
 		logs.InfoUser(user.ID, "deleted connector id=%s", id)
@@ -505,7 +507,8 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		c, err := h.reg.UpdateConnectorForActor(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.Write, body.TeamID)
 		if err != nil {
-			httpErr(w, http.StatusBadRequest, err)
+			logs.ErrorUser(user.ID, "update connector id=%s failed: %v", id, err)
+			httpErr(w, statusForAccountError(err), err)
 			return
 		}
 		logs.InfoUser(user.ID, "updated connector %q (id=%s, kind=%s, %d directories, write=%v)", c.Name, id, c.EffectiveKind(), len(c.DirectoryIDs), c.Write)

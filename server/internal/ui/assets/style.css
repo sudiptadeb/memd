@@ -748,6 +748,21 @@ a {
   justify-content: flex-end;
 }
 
+.relink-form {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.relink-row {
+  display: flex;
+  gap: 8px;
+}
+
+.relink-row .input {
+  flex: 1;
+}
+
 .ok-msg {
   color: var(--success, #2e7d32);
   font-size: 12.5px;

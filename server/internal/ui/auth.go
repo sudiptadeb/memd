@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/memd/server/internal/logs"
 )
 
 type sessionUser struct {
@@ -219,6 +220,13 @@ func (h *Handler) adminUserAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case action == "unlink-oidc" && r.Method == http.MethodPost:
+		if err := h.accounts.UnlinkUserOIDC(r.Context(), id); err != nil {
+			httpErr(w, statusForAccountError(err), err)
+			return
+		}
+		logs.Info("super admin unlinked SSO identity from user id=%s", id)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case action == "password" && r.Method == http.MethodPost:
 		var body struct {
 			Password string `json:"password"`
@@ -277,6 +285,10 @@ type userViewData struct {
 	SuperAdmin  bool   `json:"super_admin"`
 	CreatedAt   string `json:"created_at"`
 	LastLoginAt string `json:"last_login_at,omitempty"`
+	// SSO identity, for admin display and the unlink action.
+	SSOLinked bool   `json:"sso_linked"`
+	SSOOrphan bool   `json:"sso_orphan,omitempty"` // has an issuer but no provider slot
+	Issuer    string `json:"issuer,omitempty"`
 }
 
 func userViews(users []account.User) []userViewData {
@@ -298,6 +310,11 @@ func userView(user account.User) userViewData {
 	}
 	if user.LastLoginAt != nil {
 		out.LastLoginAt = user.LastLoginAt.Format("2006-01-02 15:04 MST")
+	}
+	if user.Subject != "" {
+		out.SSOLinked = user.ProviderID != ""
+		out.SSOOrphan = user.ProviderID == "" && user.Issuer != ""
+		out.Issuer = user.Issuer
 	}
 	return out
 }
