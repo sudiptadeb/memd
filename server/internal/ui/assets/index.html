@@ -54,11 +54,17 @@
     </header>
 
     <main class="login-shell" x-show="sessionChecked && !user" x-cloak>
-      <div class="login-panel">
-        <div class="login-head">
-          <span class="eyebrow">memd</span>
-          <h1>Sign in</h1>
-        </div>
+      <div class="login-hero">
+        <img class="logo logo-light" src="/assets/logo-light.png" alt="memd" />
+        <img class="logo logo-dark" src="/assets/logo-dark.png" alt="memd" />
+        <h1>Unified, file-first memory for AI agents</h1>
+        <p class="login-tagline">Your memory lives as plain files you control — a folder on disk or a private Git repo. memd serves it to Claude Code, Codex, Cursor, and every other agent that speaks MCP, so what you teach one agent, they all remember.</p>
+        <ul class="login-points">
+          <li><svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>Plain files, yours</li>
+          <li><svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>One URL per agent</li>
+          <li><svg class="icon" aria-hidden="true"><use href="/assets/icons/git-branch.svg#icon"></use></svg>Local folder or Git</li>
+        </ul>
+
         <div class="invite-callout" x-show="invitePreview || inviteErr" x-cloak>
           <div class="label" x-text="invitePreview ? ('Join ' + invitePreview.team_name) : 'Team invite'"></div>
           <div class="sub" x-text="invitePreview ? (invitePreview.valid ? ('Role: ' + roleLabel(invitePreview.role)) : (invitePreview.error || 'This invite is no longer valid.')) : inviteErr"></div>
@@ -69,19 +75,19 @@
         <!-- Default flow: single sign-on via the configured identity provider. -->
         <template x-if="oidcEnabled">
           <div class="sso-block">
-            <button class="btn primary login-submit" type="button" @click="ssoLogin()" :disabled="ssoRedirecting" :aria-busy="ssoRedirecting ? 'true' : 'false'">
+            <button class="btn primary login-cta" type="button" @click="ssoLogin()" :disabled="ssoRedirecting" :aria-busy="ssoRedirecting ? 'true' : 'false'">
               <svg class="icon spin" aria-hidden="true" x-show="ssoRedirecting"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
-              <span x-text="ssoRedirecting ? 'Taking you to your sign-in provider...' : 'Sign in with your organization'"></span>
+              <span x-text="ssoRedirecting ? 'Taking you to your sign-in provider...' : 'Log in'"></span>
             </button>
-            <div class="login-note sso-note">You will be redirected to your organization's identity provider.</div>
-            <button class="linklike" type="button" @click="showLocalLogin = !showLocalLogin" x-text="showLocalLogin ? 'Hide local sign-in' : 'Use a local account instead'"></button>
+            <div class="login-note sso-note">You'll be taken to your sign-in provider and brought right back.</div>
+            <button class="linklike" type="button" @click="showLocalLogin = !showLocalLogin" x-text="showLocalLogin ? 'Hide local log-in' : 'Use a local account instead'"></button>
           </div>
         </template>
 
         <!-- Backup: local accounts created by a super admin. No self-signup. -->
         <form class="local-login" @submit.prevent="login()" x-show="showLocalLogin" x-cloak>
           <div class="login-note" x-show="oidcEnabled" x-cloak>
-            Local sign-in is a backup for accounts a super admin created. You cannot create an account here.
+            Local log-in is a backup for accounts a super admin created. You cannot create an account here.
           </div>
           <div class="field">
             <label class="field-label">Username</label>
@@ -91,7 +97,7 @@
             <label class="field-label">Password</label>
             <input class="input" x-model="loginForm.password" type="password" autocomplete="current-password" required />
           </div>
-          <button class="btn login-submit" :class="oidcEnabled ? 'secondary' : 'primary'" type="submit" :disabled="loginForm.submitting">Sign in</button>
+          <button class="btn login-cta" :class="oidcEnabled ? 'secondary' : 'primary'" type="submit" :disabled="loginForm.submitting">Log in</button>
         </form>
       </div>
     </main>
