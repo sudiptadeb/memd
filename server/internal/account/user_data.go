@@ -358,9 +358,26 @@ func upsertUserConnector(ctx context.Context, tx *sql.Tx, ownerUserID string, c 
 		return err
 	}
 	for _, id := range c.DirectoryIDs {
+		// A connector may attach the owner's own directories or directories a
+		// teammate shares through a team the owner belongs to; resolve which
+		// user actually owns each one so the foreign key holds either way.
+		var dirOwner string
+		err := tx.QueryRowContext(ctx, `
+			SELECT d.owner_user_id FROM user_directories d
+			 WHERE d.id = ?
+			   AND (d.owner_user_id = ?
+			        OR d.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))
+			 ORDER BY (d.owner_user_id = ?) DESC
+			 LIMIT 1`, id, ownerUserID, ownerUserID, ownerUserID).Scan(&dirOwner)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("directory %s is not accessible: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_connector_directories(owner_user_id, connector_id, directory_id)
-			VALUES (?, ?, ?)`, ownerUserID, c.ID, id); err != nil {
+			INSERT INTO user_connector_directories(owner_user_id, connector_id, directory_id, directory_owner_user_id)
+			VALUES (?, ?, ?, ?)`, ownerUserID, c.ID, id, dirOwner); err != nil {
 			return err
 		}
 	}

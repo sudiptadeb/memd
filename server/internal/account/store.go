@@ -53,7 +53,8 @@ type User struct {
 	Username          string
 	DisplayName       string
 	Email             string
-	Issuer            string // OIDC `iss`; empty for local-only accounts
+	ProviderID        string // stable provider-slot key; empty for local-only accounts
+	Issuer            string // OIDC `iss` at last login, display/audit only
 	Subject           string // OIDC `sub`; empty for local-only accounts
 	Disabled          bool
 	CreatedAt         time.Time
@@ -65,7 +66,7 @@ type User struct {
 
 // userColumns is the canonical projection used to populate a User via scanUser.
 // Keep the ordering in sync with scanUser.
-const userColumns = `u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject,
+const userColumns = `u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject, u.provider_id,
 	       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END`
 
 const userJoin = `FROM users u
@@ -263,10 +264,19 @@ func (s *Store) Init(ctx context.Context) error {
 	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureConnectorDirectoryOwnerColumn(ctx, tx); err != nil {
+		return err
+	}
+	if err := backfillUserProviderID(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_users_subject`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users(issuer, subject) WHERE subject IS NOT NULL AND subject != ''`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_users_oidc_identity`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_provider_identity ON users(provider_id, subject) WHERE subject IS NOT NULL AND subject != '' AND provider_id != ''`); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)`, latestSchemaVersion, nowString()); err != nil {
@@ -298,7 +308,92 @@ func ensureUserColumns(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
+	if !cols["provider_id"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ensureConnectorDirectoryOwnerColumn rebuilds user_connector_directories so
+// each row carries the directory's owner. Before this, the foreign key assumed
+// the connector owner also owned every attached directory, which rejected
+// connectors that include a teammate's shared directory. SQLite cannot alter a
+// foreign key in place, so the table is rebuilt; all pre-existing rows are
+// self-owned by definition (cross-owner rows could never be inserted).
+func ensureConnectorDirectoryOwnerColumn(ctx context.Context, tx *sql.Tx) error {
+	cols, err := tableColumns(ctx, tx, "user_connector_directories")
+	if err != nil {
+		return err
+	}
+	if cols["directory_owner_user_id"] {
+		return nil
+	}
+	stmts := []string{
+		`CREATE TABLE user_connector_directories_v7 (
+			owner_user_id TEXT NOT NULL,
+			connector_id TEXT NOT NULL,
+			directory_id TEXT NOT NULL,
+			directory_owner_user_id TEXT NOT NULL,
+			PRIMARY KEY (owner_user_id, connector_id, directory_id),
+			FOREIGN KEY (owner_user_id, connector_id) REFERENCES user_connectors(owner_user_id, id) ON DELETE CASCADE,
+			FOREIGN KEY (directory_owner_user_id, directory_id) REFERENCES user_directories(owner_user_id, id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO user_connector_directories_v7(owner_user_id, connector_id, directory_id, directory_owner_user_id)
+		 SELECT owner_user_id, connector_id, directory_id, owner_user_id FROM user_connector_directories`,
+		`DROP TABLE user_connector_directories`,
+		`ALTER TABLE user_connector_directories_v7 RENAME TO user_connector_directories`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// backfillUserProviderID introduces the provider-slot identity key. OIDC users
+// were previously keyed on (issuer URL, subject), so renaming the IdP's domain
+// orphaned every account. A stable provider id is minted once for the
+// configured provider and adopted by existing OIDC users; from then on the
+// issuer URL is display/audit data only. When two users share a subject (an
+// orphan plus its accidental re-provision), the oldest account — the one that
+// accumulated data — wins the identity; the newer duplicate is left unlinked
+// for the admin to disable.
+func backfillUserProviderID(ctx context.Context, tx *sql.Tx) error {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key = ?`, settingKeyOIDC).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var settings OIDCSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return err
+	}
+	if settings.IssuerURL == "" {
+		return nil
+	}
+	if settings.ProviderID == "" {
+		settings.ProviderID = newID("idp")
+		data, err := json.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE app_settings SET value = ?, updated_at = ? WHERE key = ?`, string(data), nowString(), settingKeyOIDC); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE users SET provider_id = ?
+		 WHERE provider_id = '' AND issuer != '' AND subject IS NOT NULL AND subject != ''
+		   AND id = (SELECT v.id FROM users v
+		              WHERE v.subject = users.subject AND v.provider_id = '' AND v.issuer != ''
+		              ORDER BY v.created_at, v.id LIMIT 1)`, settings.ProviderID)
+	return err
 }
 
 func ensureUserDirectoryColumns(ctx context.Context, tx *sql.Tx) error {
@@ -520,7 +615,7 @@ func (s *Store) AuthenticateLocal(ctx context.Context, username, password string
 		return User{}, ErrNotInitialized
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject, u.password_hash,
+		SELECT u.id, u.username, u.display_name, u.disabled, u.created_at, u.updated_at, u.password_changed_at, u.last_login_at, u.email, u.issuer, u.subject, u.provider_id, u.password_hash,
 		       CASE WHEN sa.user_id IS NULL THEN 0 ELSE 1 END
 		  FROM users u
 		  LEFT JOIN super_admins sa ON sa.user_id = u.id
@@ -769,7 +864,7 @@ func scanUser(row userScanner) (User, error) {
 	var disabled, superAdmin int
 	var created, updated, changed string
 	var last, subject sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &superAdmin); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &u.ProviderID, &superAdmin); err != nil {
 		return User{}, err
 	}
 	u.Disabled = disabled != 0
@@ -787,7 +882,7 @@ func scanUserWithHash(row userScanner) (User, string, error) {
 	var disabled, superAdmin int
 	var created, updated, changed, hash string
 	var last, subject sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &hash, &superAdmin); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &disabled, &created, &updated, &changed, &last, &u.Email, &u.Issuer, &subject, &u.ProviderID, &hash, &superAdmin); err != nil {
 		return User{}, "", err
 	}
 	u.Disabled = disabled != 0

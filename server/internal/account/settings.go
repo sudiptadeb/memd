@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 const settingKeyOIDC = "oidc"
@@ -14,7 +15,12 @@ const settingKeyOIDC = "oidc"
 // running provider (env vars only seed it on first boot). The client secret is
 // stored here alongside the other control-plane secrets in memd.db.
 type OIDCSettings struct {
-	Enabled               bool   `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// ProviderID is the stable identity boundary for this provider slot. It is
+	// minted once and survives issuer-URL edits, so users stay linked when the
+	// same IdP moves to a new domain. Replacing the provider with a genuinely
+	// different IdP mints a new id (and with it, fresh accounts).
+	ProviderID            string `json:"provider_id,omitempty"`
 	IssuerURL             string `json:"issuer_url"`
 	ClientID              string `json:"client_id"`
 	ClientSecret          string `json:"client_secret"`
@@ -41,8 +47,13 @@ func (s *Store) GetOIDCSettings(ctx context.Context) (OIDCSettings, bool, error)
 	return cfg, true, nil
 }
 
-// SaveOIDCSettings persists the OIDC settings.
+// SaveOIDCSettings persists the OIDC settings, minting a provider id on first
+// save. Callers updating an existing configuration must carry the stored
+// ProviderID forward (or deliberately clear it to start a fresh provider).
 func (s *Store) SaveOIDCSettings(ctx context.Context, cfg OIDCSettings) error {
+	if cfg.ProviderID == "" && strings.TrimSpace(cfg.IssuerURL) != "" {
+		cfg.ProviderID = newID("idp")
+	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return err

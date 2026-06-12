@@ -86,7 +86,14 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings, _, err := h.accounts.GetOIDCSettings(r.Context())
+	if err != nil || settings.ProviderID == "" {
+		logs.Error("oidc settings unavailable during callback: %v", err)
+		h.loginError(w, r, "could not complete sign-in")
+		return
+	}
 	user, err := h.accounts.UpsertOIDCUser(r.Context(), account.OIDCIdentity{
+		ProviderID:        settings.ProviderID,
 		Issuer:            tokens.Identity.Issuer,
 		Subject:           tokens.Identity.Subject,
 		Email:             tokens.Identity.Email,

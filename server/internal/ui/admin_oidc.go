@@ -52,13 +52,18 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 		RedirectURI           string  `json:"redirect_uri"`
 		Scopes                string  `json:"scopes"`
 		PostLogoutRedirectURI string  `json:"post_logout_redirect_uri"`
+		// ReplaceProvider mints a new provider id: existing SSO users stop
+		// matching and sign-ins provision fresh accounts. Leave false when the
+		// same IdP merely moves to a new issuer URL — users then stay linked.
+		ReplaceProvider bool `json:"replace_provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
 
-	// Start from the stored settings so an omitted client secret is preserved.
+	// Start from the stored settings so an omitted client secret — and the
+	// provider id that keys user identities — are preserved.
 	current, _, err := h.accounts.GetOIDCSettings(r.Context())
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err)
@@ -66,6 +71,7 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := account.OIDCSettings{
 		Enabled:               body.Enabled,
+		ProviderID:            current.ProviderID,
 		IssuerURL:             strings.TrimSpace(body.IssuerURL),
 		ClientID:              strings.TrimSpace(body.ClientID),
 		ClientSecret:          current.ClientSecret,
@@ -75,6 +81,9 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ClientSecret != nil {
 		settings.ClientSecret = *body.ClientSecret
+	}
+	if body.ReplaceProvider {
+		settings.ProviderID = "" // SaveOIDCSettings mints a fresh one
 	}
 
 	if !settings.Enabled {
@@ -103,8 +112,52 @@ func (h *Handler) updateOIDC(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	logs.Info("oidc configured by super admin (issuer=%s)", settings.IssuerURL)
-	writeJSON(w, http.StatusOK, map[string]any{"oidc": viewFromSettings(settings, true)})
+	if body.ReplaceProvider {
+		logs.Info("oidc provider replaced by super admin (issuer=%s): existing SSO users are unlinked", settings.IssuerURL)
+	} else {
+		logs.Info("oidc configured by super admin (issuer=%s)", settings.IssuerURL)
+	}
+	saved, _, err := h.accounts.GetOIDCSettings(r.Context())
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"oidc": viewFromSettings(saved, true)})
+}
+
+// adminOIDCRelinkAPI adopts orphaned SSO users — accounts whose recorded issuer
+// no longer matches any provider — into the currently configured provider.
+// This repairs accounts stranded by an issuer-URL change that predates
+// provider-slot keying. Subjects already taken under the current provider are
+// skipped and reported so the admin can unlink or disable the duplicate first.
+func (h *Handler) adminOIDCRelinkAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		FromIssuer string `json:"from_issuer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	settings, ok, err := h.accounts.GetOIDCSettings(r.Context())
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok || settings.ProviderID == "" {
+		httpErr(w, http.StatusBadRequest, errors.New("no OIDC provider is configured"))
+		return
+	}
+	adopted, skipped, err := h.accounts.AdoptOIDCUsersIntoProvider(r.Context(), settings.ProviderID, body.FromIssuer)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err)
+		return
+	}
+	logs.Info("oidc relink from issuer %s: %d adopted, %d skipped", body.FromIssuer, adopted, len(skipped))
+	writeJSON(w, http.StatusOK, map[string]any{"adopted": adopted, "skipped": skipped})
 }
 
 // configFromSettings maps the persisted settings to a normalized oidc.Config.

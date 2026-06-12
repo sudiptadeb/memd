@@ -99,7 +99,7 @@
             <div class="field">
               <label class="field-label">Issuer URL<span class="req">*</span></label>
               <input class="input" x-model="oidcForm.issuer_url" placeholder="https://idp.example.com/realms/memd" />
-              <div class="field-hint">Discovery base. memd fetches <code>/.well-known/openid-configuration</code>.</div>
+              <div class="field-hint">Discovery base. memd fetches <code>/.well-known/openid-configuration</code>. Changing the URL of the <em>same</em> provider keeps everyone signed up — accounts are not keyed to the URL.</div>
             </div>
             <div class="field">
               <label class="field-label">Redirect URI<span class="req">*</span></label>
@@ -125,11 +125,32 @@
             </div>
           </div>
 
+          <label class="toggle-row" x-show="oidcForm.enabled" x-cloak @click.prevent="oidcForm.replace_provider = !oidcForm.replace_provider">
+            <div class="label">
+              This is a different identity provider
+              <div class="sub">Only check when switching to a genuinely new IdP: existing SSO accounts are unlinked and sign-ins start fresh. Leave off when the same IdP moves to a new URL.</div>
+            </div>
+            <div class="toggle" :class="oidcForm.replace_provider ? 'on' : ''"></div>
+          </label>
+
           <span class="err" x-text="oidcForm.err" x-show="oidcForm.err"></span>
           <span class="ok-msg" x-text="oidcForm.msg" x-show="oidcForm.msg" x-cloak></span>
 
           <div class="oidc-actions">
             <button class="btn primary" type="submit" :disabled="oidcForm.saving" x-text="oidcForm.saving ? 'Saving…' : 'Save SSO settings'"></button>
+          </div>
+        </form>
+
+        <form class="oidc-form relink-form" x-show="hasOrphanedSSOUsers" x-cloak @submit.prevent="relinkSSOUsers()">
+          <div class="field">
+            <label class="field-label">Re-link stranded SSO accounts</label>
+            <div class="field-hint">Some accounts were signed up through an issuer URL that is no longer configured. If that was this same provider under its old URL, re-link them so those people keep their data on next sign-in.</div>
+            <div class="relink-row">
+              <input class="input" x-model="relinkForm.from_issuer" placeholder="https://old-idp.example.com" required />
+              <button class="btn secondary" type="submit" :disabled="relinkForm.submitting">Re-link</button>
+            </div>
+            <span class="err" x-text="relinkForm.err" x-show="relinkForm.err"></span>
+            <span class="ok-msg" x-text="relinkForm.msg" x-show="relinkForm.msg" x-cloak></span>
           </div>
         </form>
       </section>
@@ -173,8 +194,11 @@
                   <div class="card-meta" x-text="target.username"></div>
                 </div>
                 <span class="dot accent" x-show="target.super_admin">super admin</span>
+                <span class="dot" x-show="target.sso_linked" :title="target.issuer">SSO</span>
+                <span class="dot danger" x-show="target.sso_orphan" :title="'Signed up via ' + target.issuer + ', which is no longer configured'">SSO orphan</span>
                 <span class="dot danger" x-show="target.disabled">disabled</span>
                 <span class="spacer"></span>
+                <button class="btn ghost" type="button" x-show="target.sso_linked || target.sso_orphan" @click="unlinkSSO(target)">Unlink SSO</button>
                 <button class="btn ghost" type="button" @click="resetPassword(target)">Reset password</button>
                 <button class="btn" :class="target.disabled ? 'secondary' : 'danger'" type="button" @click="toggleDisabled(target)" x-text="target.disabled ? 'Enable' : 'Disable'"></button>
               </div>
