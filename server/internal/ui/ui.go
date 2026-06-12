@@ -51,7 +51,7 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.index)
 	mux.HandleFunc("/admin", h.adminIndex)
-	mux.Handle("/assets/", http.FileServer(http.FS(fsys)))
+	mux.Handle("/assets/", noCache(http.FileServer(http.FS(fsys))))
 	mux.HandleFunc("/api/session", h.sessionAPI)
 	mux.HandleFunc("/api/auth/login", h.loginAPI)
 	mux.HandleFunc("/api/auth/logout", h.logoutAPI)
@@ -71,6 +71,16 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/connectors/", h.requireUser(h.connectorAPI))
 	mux.HandleFunc("/api/browse", h.requireUser(h.browseAPI))
 	mux.HandleFunc("/api/logs", h.requireUser(h.logsAPI))
+}
+
+// noCache forces browsers and intermediaries to revalidate on every use.
+// Embedded assets carry no modtime, so without this there is no validator at
+// all and clients keep stale CSS/JS across deploys until a manual hard reload.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 type pageData struct {
@@ -119,6 +129,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
 }
 
@@ -133,6 +144,7 @@ func (h *Handler) adminIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
 }
 
