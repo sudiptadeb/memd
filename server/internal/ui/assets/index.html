@@ -818,9 +818,17 @@
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
                 Copy
               </button>
+              <a class="btn ghost" x-show="isRenderablePath(browserFile.path)" :href="renderFileURL(browserFile.path)" target="_blank" rel="noopener" title="Rendered in a sandboxed tab: no scripts, no access to your session">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/eye.svg#icon"></use></svg>
+                Open rendered
+              </a>
+              <a class="btn ghost" :href="downloadFileURL(browserFile.path)" :download="browserFile.name">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/hard-drive.svg#icon"></use></svg>
+                Download
+              </a>
               <a class="btn ghost" :href="rawFileURL(browserFile.path)" target="_blank" rel="noopener">
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/external-link.svg#icon"></use></svg>
-                Open in new tab
+                Open raw
               </a>
             </div>
             <div class="picker-error" x-show="browserFileErr" x-text="browserFileErr"></div>

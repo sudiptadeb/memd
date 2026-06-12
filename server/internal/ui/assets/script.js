@@ -1470,6 +1470,21 @@
         return /\.(md|markdown)$/i.test(path || "");
       },
 
+      isRenderablePath(path) {
+        return /\.(html?|svg)$/i.test(path || "");
+      },
+
+      // Rendered view: served as real HTML/SVG but under a sandbox CSP, so it
+      // gets an opaque origin with scripts/forms disabled — it can render but
+      // can never act as the signed-in user.
+      renderFileURL(path) {
+        return this.rawFileURL(path) + "&render=1";
+      },
+
+      downloadFileURL(path) {
+        return this.rawFileURL(path) + "&download=1";
+      },
+
       async openBrowserFile(entry) {
         this.browserFile = {
           path: entry.path,

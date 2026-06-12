@@ -146,6 +146,47 @@ func TestDirectoryRawAPIServesPlainTextOnly(t *testing.T) {
 	}
 }
 
+func TestDirectoryRawAPIRenderAndDownloadModes(t *testing.T) {
+	mux, handler, user, dirID := newFilesFixture(t)
+
+	// Rendered HTML must come back sandboxed: opaque origin, no scripts, no
+	// remote subresources. allow-same-origin or allow-scripts here would be a
+	// stored XSS, so pin the exact policy.
+	rec := filesGet(t, mux, handler, user, "/api/directories/"+dirID+"/raw?path=evil.html&render=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("render status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("render Content-Type = %q", got)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "sandbox;") && !strings.HasPrefix(csp, "sandbox") {
+		t.Fatalf("render CSP missing sandbox: %q", csp)
+	}
+	if strings.Contains(csp, "allow-same-origin") || strings.Contains(csp, "allow-scripts") {
+		t.Fatalf("render CSP must not relax the sandbox: %q", csp)
+	}
+	if !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("render CSP missing default-src 'none': %q", csp)
+	}
+
+	// render=1 is only honored for renderable markup; everything else stays
+	// plain text.
+	rec = filesGet(t, mux, handler, user, "/api/directories/"+dirID+"/raw?path=MEMORY.md&render=1")
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("render on .md Content-Type = %q, want text/plain", got)
+	}
+
+	// download=1 forces an attachment and never renders, even for HTML.
+	rec = filesGet(t, mux, handler, user, "/api/directories/"+dirID+"/raw?path=evil.html&download=1&render=1")
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
+		t.Fatalf("download Content-Disposition = %q", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("download Content-Type = %q, want text/plain", got)
+	}
+}
+
 func TestDirectoryFilesAPIRejectsTraversalAndStrangers(t *testing.T) {
 	mux, handler, user, dirID := newFilesFixture(t)
 
