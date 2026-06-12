@@ -252,7 +252,9 @@ func TestInitUpgradesV6ConnectorDirectories(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memd.db")
 	dsn := sqliteDSNForPath(path)
 
-	raw, err := sql.Open("sqlite", dsn)
+	// Seed over a pragma-less connection, as builds from the FK-off era did —
+	// that is how orphaned mappings got into real databases.
+	raw, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -325,6 +327,14 @@ func TestInitUpgradesV6ConnectorDirectories(t *testing.T) {
 		   VALUES ('usr_owner', 'conn1', 'Agent', 'mcp', 'tok_1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO user_connector_directories(owner_user_id, connector_id, directory_id)
 		   VALUES ('usr_owner', 'conn1', 'dir1')`,
+		// Orphaned mappings from an era without enforced foreign keys: the
+		// rebuild must drop these instead of aborting startup. The old table
+		// enforces FKs only on connections with the pragma set, so plain
+		// inserts here go through.
+		`INSERT INTO user_connector_directories(owner_user_id, connector_id, directory_id)
+		   VALUES ('usr_owner', 'conn_gone', 'dir1')`,
+		`INSERT INTO user_connector_directories(owner_user_id, connector_id, directory_id)
+		   VALUES ('usr_owner', 'conn1', 'dir_gone')`,
 	}
 	for _, s := range stmts {
 		if _, err := raw.ExecContext(ctx, s); err != nil {

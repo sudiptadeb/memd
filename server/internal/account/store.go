@@ -340,8 +340,18 @@ func ensureConnectorDirectoryOwnerColumn(ctx context.Context, tx *sql.Tx) error 
 			FOREIGN KEY (owner_user_id, connector_id) REFERENCES user_connectors(owner_user_id, id) ON DELETE CASCADE,
 			FOREIGN KEY (directory_owner_user_id, directory_id) REFERENCES user_directories(owner_user_id, id) ON DELETE CASCADE
 		)`,
+		// Copy only rows that still satisfy referential integrity: databases
+		// that ever ran without enforced foreign keys can hold orphaned
+		// mappings, and re-inserting one would fail the new constraints and
+		// abort startup. Orphans reference deleted connectors/directories, so
+		// dropping them is the correct outcome.
 		`INSERT INTO user_connector_directories_v7(owner_user_id, connector_id, directory_id, directory_owner_user_id)
-		 SELECT owner_user_id, connector_id, directory_id, owner_user_id FROM user_connector_directories`,
+		 SELECT s.owner_user_id, s.connector_id, s.directory_id, s.owner_user_id
+		   FROM user_connector_directories s
+		  WHERE EXISTS (SELECT 1 FROM user_connectors c
+		                 WHERE c.owner_user_id = s.owner_user_id AND c.id = s.connector_id)
+		    AND EXISTS (SELECT 1 FROM user_directories d
+		                 WHERE d.owner_user_id = s.owner_user_id AND d.id = s.directory_id)`,
 		`DROP TABLE user_connector_directories`,
 		`ALTER TABLE user_connector_directories_v7 RENAME TO user_connector_directories`,
 	}
