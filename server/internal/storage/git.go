@@ -356,6 +356,7 @@ func (g *Git) remoteBranchExists() (bool, error) {
 func (g *Git) List() ([]string, error)                  { return g.local.List() }
 func (g *Git) ListPath(path string) ([]DirEntry, error) { return g.local.ListPath(path) }
 func (g *Git) Read(path string) ([]byte, error)         { return g.local.Read(path) }
+func (g *Git) ReadRaw(path string) ([]byte, error)      { return g.local.ReadRaw(path) }
 func (g *Git) Search(q string, l int) ([]Hit, error)    { return g.local.Search(q, l) }
 
 // Move renames src to dst in the working copy and arms the debounce

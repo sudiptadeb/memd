@@ -890,6 +890,26 @@ func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
 	return out
 }
 
+// DirectoryViewForUser returns one directory plus its open backend when the
+// user owns it or has team view access. Returns nil when the directory is
+// unknown or not visible to this user. The Backend field is nil when the
+// directory exists but its backend failed to open.
+func (r *Registry) DirectoryViewForUser(userID, id string) *DirectoryView {
+	viewTeams, _ := r.teamAccessForUser(userID)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, d := range r.cfg.Directories {
+		if d.ID != id {
+			continue
+		}
+		if d.OwnerUserID != userID && (d.TeamID == "" || !viewTeams[d.TeamID]) {
+			continue
+		}
+		return &DirectoryView{Directory: d, Backend: r.backends[backendKey(d.OwnerUserID, d.ID)]}
+	}
+	return nil
+}
+
 func (r *Registry) ConnectorsForUser(ownerUserID string) []config.Connector {
 	viewTeams, _ := r.teamAccessForUser(ownerUserID)
 	r.mu.RLock()
