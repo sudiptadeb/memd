@@ -429,3 +429,19 @@ to, or adjust repository rules.
 - Team invite URLs are join credentials until they expire, are revoked, or hit their max-use count.
 - `memd.db` and exported user-data JSON can hold connector tokens and Git PATs.
   Be deliberate before syncing or sharing them.
+
+### Connector hygiene
+
+- **One connector per agent.** Scope each connector to only the directories that
+  agent needs, so a leaked token has the smallest possible blast radius.
+- **Least privilege.** Leave write disabled unless the agent genuinely curates the
+  directory. A read-only connector cannot delete, overwrite, or be poisoned into
+  trusted memory by a prompt injection.
+- **Read-only for shared reference.** Make team-scoped and shared reference
+  directories available through read-only connectors; a poisoned write in a shared
+  directory becomes trusted memory for everyone who reads it later.
+- **Rotate on compromise.** If a machine holding a connector token is compromised,
+  rotate the token (web UI **Rotate token** or `POST /api/connectors/{id}/rotate`);
+  the old URL stops authenticating immediately.
+- **Treat connector URLs as passwords.** The token in the path or bearer header
+  *is* the auth — keep it out of shared logs, screenshots, and chats.

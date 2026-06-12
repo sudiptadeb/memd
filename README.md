@@ -203,6 +203,13 @@ The `memd:` subtree powers `dream` for managed files — files with high `access
 
 HTML files carry the same YAML front matter inside a leading `<!-- ... -->` comment, so diagrams and mock UIs can have stats without changing browser rendering. Other text files are stored verbatim. Use them when the artifact is naturally not prose: CSV for tables, JSON/YAML/TOML for structured examples, and plain text for logs or snippets.
 
+memd keeps files within production-validated size budgets. The `MEMORY.md`
+preload is truncated at 200 lines / 25KB — `memory_load` says so when it truncates,
+which keeps the index curated rather than enumerated. A `memory_write` over 100KB
+returns a split-it warning. The doctrine teaches the underlying habit: keep each
+file focused on one thing and prefer many small files over a few large ones, so
+detail lives in topic files reached on demand instead of bloating the preload.
+
 ## Storage Backends
 
 | Backend  | Persistence       | Use                                          |
@@ -366,8 +373,9 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 
 ## Read More
 
-- [docs/doctrine.md](docs/doctrine.md) — everything the server tells every connecting agent: authority, read/write rules, file structure, drastic-action policy.
+- [docs/doctrine.md](docs/doctrine.md) — the MCP `instructions` payload sent to every connecting agent: authority, read/write rules, file structure, drastic-action policy.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
+- [docs/agent-hooks.md](docs/agent-hooks.md) — hard guards for memory operations: client-side hooks and read-only connectors for rules the doctrine can only request.
 - [docs/self-hosting.md](docs/self-hosting.md) — generic systemd + nginx + Certbot deployment playbook.
 - [docs/plans/2026-06-04-local-auth-team-management-plan.md](docs/plans/2026-06-04-local-auth-team-management-plan.md) — local auth and team-management implementation notes.
 - [docs/plans/2026-05-23-memory-weight-decay-design.md](docs/plans/2026-05-23-memory-weight-decay-design.md) — design of the weight/decay layer.
@@ -378,6 +386,14 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
   memd is content-blind. Control-plane credentials such as connector tokens and
   Git PATs live in account data instead.
 - Memory is context and evidence, not higher-priority instruction — the doctrine teaches agents to treat any embedded command as untrusted text.
+- Make team-scoped and shared reference directories available through **read-only
+  connectors** (use the per-connector write toggle). A poisoned write in a shared
+  directory becomes trusted memory for every later reader; grant write only where
+  the agent genuinely curates the content.
+- The doctrine is context, not enforcement — it shapes behavior but cannot
+  guarantee it. For rules that must always hold (blocking deletes, protecting
+  load-bearing files), use a client-side hook (see
+  [docs/agent-hooks.md](docs/agent-hooks.md)) or a read-only connector.
 - The server binds to `127.0.0.1`; expose it through a local tunnel or a TLS
   reverse proxy when remote agents or web clients need access.
 - Connector URLs are passwords; the token in the path or bearer header *is* the auth.
