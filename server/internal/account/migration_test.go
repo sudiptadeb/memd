@@ -484,4 +484,28 @@ func TestInitBackfillsProviderIDPreferringOldestAccount(t *testing.T) {
 	if dup.ProviderID != "" {
 		t.Fatalf("duplicate should stay unlinked, got provider %q", dup.ProviderID)
 	}
+
+	// Regression: a service restart runs Init again. With the winner already
+	// linked, the backfill once promoted the still-unlinked duplicate into the
+	// same (provider_id, subject) slot, tripping the unique index and
+	// crash-looping the server. The second Init must be a no-op.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	store2, err := Open(ctx, DBConfig{Driver: "sqlite", DSN: dsn, Source: "test", SQLitePath: path})
+	if err != nil {
+		t.Fatalf("Open (restart): %v", err)
+	}
+	t.Cleanup(func() { _ = store2.Close() })
+	if err := store2.Init(ctx); err != nil {
+		t.Fatalf("Init (restart) must be idempotent with a lingering duplicate: %v", err)
+	}
+	user, err = store2.UserByOIDCIdentity(ctx, upgraded.ProviderID, "sub|sd")
+	if err != nil || user.ID != "usr_original" {
+		t.Fatalf("identity after restart: user=%+v err=%v, want usr_original", user, err)
+	}
+	dup, err = store2.UserByID(ctx, "usr_dup")
+	if err != nil || dup.ProviderID != "" {
+		t.Fatalf("duplicate after restart: provider=%q err=%v, want unlinked", dup.ProviderID, err)
+	}
 }

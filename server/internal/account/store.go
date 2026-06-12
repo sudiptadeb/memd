@@ -397,12 +397,18 @@ func backfillUserProviderID(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
+	// NOT EXISTS keeps this idempotent: once a subject's winner is linked, a
+	// later boot must not promote the still-unlinked duplicate into the same
+	// (provider_id, subject) slot — that collides with the unique index and
+	// crash-loops the server on every restart.
 	_, err = tx.ExecContext(ctx, `
 		UPDATE users SET provider_id = ?
 		 WHERE provider_id = '' AND issuer != '' AND subject IS NOT NULL AND subject != ''
+		   AND NOT EXISTS (SELECT 1 FROM users w
+		                    WHERE w.provider_id = ? AND w.subject = users.subject)
 		   AND id = (SELECT v.id FROM users v
 		              WHERE v.subject = users.subject AND v.provider_id = '' AND v.issuer != ''
-		              ORDER BY v.created_at, v.id LIMIT 1)`, settings.ProviderID)
+		              ORDER BY v.created_at, v.id LIMIT 1)`, settings.ProviderID, settings.ProviderID)
 	return err
 }
 
