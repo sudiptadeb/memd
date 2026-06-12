@@ -17,6 +17,28 @@
       </a>
       <div class="brand-sub">Local memory server for AI agents</div>
       <span class="spacer"></span>
+      <!-- Mobile-only quick switcher in the otherwise empty middle of the top
+           bar; the sidebar equivalents live behind the hamburger. -->
+      <nav class="quicknav" x-show="user" x-cloak aria-label="Quick navigation">
+        <button type="button" :class="activeView === 'info' ? 'on' : ''" @click="setView('info')" title="How it works" aria-label="How it works">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/info.svg#icon"></use></svg>
+        </button>
+        <button type="button" x-show="user && !user.super_admin" :class="activeView === 'teams' ? 'on' : ''" @click="setView('teams')" title="Teams" aria-label="Teams">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/users.svg#icon"></use></svg>
+          <b x-show="teams.length" x-text="teams.length"></b>
+        </button>
+        <button type="button" :class="activeView === 'directories' ? 'on' : ''" @click="setView('directories')" title="Directories" aria-label="Directories">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
+          <b x-show="directoryCount(activeScope)" x-text="directoryCount(activeScope)"></b>
+        </button>
+        <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors" aria-label="Connectors">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
+          <b x-show="connectorCount(activeScope)" x-text="connectorCount(activeScope)"></b>
+        </button>
+        <button type="button" :class="activeView === 'logs' ? 'on' : ''" @click="setView('logs')" title="Activity" aria-label="Activity">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
+        </button>
+      </nav>
       <a class="top-link" href="/admin" x-show="user && user.super_admin" x-cloak>Admin</a>
       <span class="bind" x-show="user" x-cloak x-text="location.host">127.0.0.1</span>
       <div class="user-pill" x-show="user" x-cloak>
@@ -36,34 +58,6 @@
         <svg class="icon" aria-hidden="true" x-show="navOpen"><use href="/assets/icons/x.svg#icon"></use></svg>
       </button>
     </header>
-
-    <!-- Mobile-only quick switcher under the top bar; the sidebar equivalents
-         live behind the hamburger. -->
-    <nav class="quicknav" x-show="user" x-cloak aria-label="Quick navigation">
-      <button type="button" :class="activeView === 'info' ? 'on' : ''" @click="setView('info')" title="How it works">
-        <svg class="icon" aria-hidden="true"><use href="/assets/icons/info.svg#icon"></use></svg>
-        <span>Info</span>
-      </button>
-      <button type="button" x-show="user && !user.super_admin" :class="activeView === 'teams' ? 'on' : ''" @click="setView('teams')" title="Teams">
-        <svg class="icon" aria-hidden="true"><use href="/assets/icons/users.svg#icon"></use></svg>
-        <span>Teams</span>
-        <b x-show="teams.length" x-text="teams.length"></b>
-      </button>
-      <button type="button" :class="activeView === 'directories' ? 'on' : ''" @click="setView('directories')" title="Directories">
-        <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
-        <span>Directories</span>
-        <b x-show="directoryCount(activeScope)" x-text="directoryCount(activeScope)"></b>
-      </button>
-      <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors">
-        <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
-        <span>Connectors</span>
-        <b x-show="connectorCount(activeScope)" x-text="connectorCount(activeScope)"></b>
-      </button>
-      <button type="button" :class="activeView === 'logs' ? 'on' : ''" @click="setView('logs')" title="Activity">
-        <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
-        <span>Activity</span>
-      </button>
-    </nav>
 
     <main class="login-shell" x-show="sessionChecked && !user" x-cloak>
       <div class="login-panel">
