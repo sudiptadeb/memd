@@ -257,6 +257,15 @@
       pickerEntries: [],
       pickerParent: "",
       pickerErr: "",
+      browserDir: null,
+      browserPath: "",
+      browserEntries: [],
+      browserLoading: false,
+      browserErr: "",
+      browserFile: null,
+      browserFileContent: "",
+      browserFileLoading: false,
+      browserFileErr: "",
       toast: "",
       toastLevel: "info",
       toastTimer: null,
@@ -1099,6 +1108,105 @@
         } catch (error) {
           window.alert(error.message || "import failed");
         }
+      },
+
+      async openBrowser(directory) {
+        this.browserDir = directory;
+        this.browserPath = "";
+        this.browserEntries = [];
+        this.browserErr = "";
+        this.browserFile = null;
+        this.browserFileContent = "";
+        this.browserFileErr = "";
+        this.sheet = "browse";
+        await this.browseFiles("");
+      },
+
+      async browseFiles(path) {
+        if (!this.browserDir) return;
+        this.browserFile = null;
+        this.browserFileContent = "";
+        this.browserFileErr = "";
+        this.browserLoading = true;
+        this.browserErr = "";
+        try {
+          const suffix = path ? "?path=" + encodeURIComponent(path) : "";
+          const data = await api("/api/directories/" + encodeURIComponent(this.browserDir.id) + "/files" + suffix);
+          this.browserPath = data.path || "";
+          this.browserEntries = data.entries || [];
+        } catch (error) {
+          this.browserErr = error.message || "listing failed";
+        } finally {
+          this.browserLoading = false;
+        }
+      },
+
+      browserCrumbs() {
+        const crumbs = [{ label: this.browserDir ? this.browserDir.name : "root", path: "" }];
+        if (!this.browserPath) return crumbs;
+        let acc = "";
+        this.browserPath.split("/").filter(Boolean).forEach(function (part) {
+          acc = acc ? acc + "/" + part : part;
+          crumbs.push({ label: part, path: acc });
+        });
+        return crumbs;
+      },
+
+      browserParent() {
+        if (this.browserFile) return this.browserPath;
+        if (!this.browserPath) return null;
+        const index = this.browserPath.lastIndexOf("/");
+        return index === -1 ? "" : this.browserPath.slice(0, index);
+      },
+
+      rawFileURL(path) {
+        if (!this.browserDir) return "";
+        return "/api/directories/" + encodeURIComponent(this.browserDir.id) + "/raw?path=" + encodeURIComponent(path);
+      },
+
+      isImagePath(path) {
+        return /\.(png|jpe?g|gif|webp)$/i.test(path || "");
+      },
+
+      isPDFPath(path) {
+        return /\.pdf$/i.test(path || "");
+      },
+
+      async openBrowserFile(entry) {
+        this.browserFile = {
+          path: entry.path,
+          name: entry.name,
+          isImage: this.isImagePath(entry.name),
+          isPDF: this.isPDFPath(entry.name)
+        };
+        this.browserFileContent = "";
+        this.browserFileErr = "";
+        if (this.browserFile.isImage || this.browserFile.isPDF) {
+          return;
+        }
+        this.browserFileLoading = true;
+        try {
+          const response = await fetch(this.rawFileURL(entry.path), { cache: "no-store" });
+          if (!response.ok) {
+            const payload = await response.json().catch(function () { return {}; });
+            throw new Error(payload.error || response.statusText || "read failed");
+          }
+          this.browserFileContent = await response.text();
+        } catch (error) {
+          this.browserFileErr = error.message || "read failed";
+        } finally {
+          this.browserFileLoading = false;
+        }
+      },
+
+      closeBrowserFile() {
+        this.browserFile = null;
+        this.browserFileContent = "";
+        this.browserFileErr = "";
+      },
+
+      copyBrowserFile() {
+        this.copy(this.browserFileContent, "File copied");
       },
 
       async openPicker() {

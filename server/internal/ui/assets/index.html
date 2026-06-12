@@ -285,6 +285,10 @@
                     <span class="dot accent" x-show="directory.team_id" x-text="directory.team_name || teamName(directory.team_id)"></span>
                     <span class="dot" :class="directory.error ? 'danger' : 'success'" :title="directory.error || (directory.backend + ' reachable')" x-text="directory.backend"></span>
                     <span class="spacer"></span>
+                    <button class="btn ghost" type="button" x-show="!directory.error" @click="openBrowser(directory)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
+                      Browse
+                    </button>
                     <select class="mini-select" aria-label="Move directory to team" x-show="directory.can_manage && manageableTeams().length" :value="directory.team_id || ''" @change="setDirectoryTeam(directory, $event.target.value)">
                       <option value="">Personal</option>
                       <template x-for="team in manageableTeams()" :key="team.id">
@@ -726,6 +730,83 @@
         <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
         <button class="btn primary" type="submit" form="add-dir-form" :disabled="dirForm.submitting">Add directory</button>
       </footer>
+    </aside>
+
+    <aside class="sheet wide-sheet browse-sheet" :class="sheet === 'browse' ? 'open' : ''" :aria-hidden="sheet !== 'browse'" :inert="sheet !== 'browse'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3 x-text="browserDir ? browserDir.name : 'Directory'"></h3>
+          <div class="sub">Browse the files this directory serves to agents.</div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <nav class="browse-crumbs" aria-label="Current path">
+        <template x-for="(crumb, index) in browserCrumbs()" :key="crumb.path">
+          <span class="crumb-wrap">
+            <svg class="icon crumb-sep" aria-hidden="true" x-show="index > 0"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
+            <button class="crumb" type="button" :class="(!browserFile && index === browserCrumbs().length - 1) ? 'current' : ''" @click="browseFiles(crumb.path)" x-text="crumb.label"></button>
+          </span>
+        </template>
+        <span class="crumb-wrap" x-show="browserFile">
+          <svg class="icon crumb-sep" aria-hidden="true"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
+          <span class="crumb current" x-text="browserFile ? browserFile.name : ''"></span>
+        </span>
+      </nav>
+
+      <div class="sheet-body browse-body">
+        <template x-if="!browserFile">
+          <div class="browse-listing">
+            <div class="picker-error" x-show="browserErr" x-text="browserErr"></div>
+            <div class="dir-rows browse-rows">
+              <div class="dir-row up" x-show="browserParent() !== null" @click="browseFiles(browserParent())">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/corner-left-up.svg#icon"></use></svg>
+                .. (up)
+              </div>
+              <template x-for="entry in browserEntries" :key="entry.path">
+                <div class="dir-row" role="button" tabindex="0" @click="entry.is_dir ? browseFiles(entry.path) : openBrowserFile(entry)" @keydown.enter.prevent="entry.is_dir ? browseFiles(entry.path) : openBrowserFile(entry)">
+                  <svg class="icon" aria-hidden="true"><use :href="entry.is_dir ? '/assets/icons/folder.svg#icon' : '/assets/icons/file.svg#icon'"></use></svg>
+                  <span class="dir-row-name" x-text="entry.name"></span>
+                  <span class="spacer"></span>
+                  <a class="icon-btn row-open" x-show="!entry.is_dir" :href="rawFileURL(entry.path)" target="_blank" rel="noopener" title="Open raw in new tab" @click.stop>
+                    <svg class="icon" aria-hidden="true"><use href="/assets/icons/external-link.svg#icon"></use></svg>
+                  </a>
+                  <svg class="icon arrow" aria-hidden="true" x-show="entry.is_dir"><use href="/assets/icons/chevron-right.svg#icon"></use></svg>
+                </div>
+              </template>
+              <div class="picker-empty" x-show="!browserLoading && !browserEntries.length && !browserErr">(empty folder)</div>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="browserFile">
+          <div class="file-view">
+            <div class="file-toolbar">
+              <button class="btn ghost" type="button" @click="closeBrowserFile()">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/corner-left-up.svg#icon"></use></svg>
+                Back
+              </button>
+              <span class="spacer"></span>
+              <button class="btn ghost" type="button" x-show="!browserFile.isImage && !browserFile.isPDF && browserFileContent" @click="copyBrowserFile()">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/copy.svg#icon"></use></svg>
+                Copy
+              </button>
+              <a class="btn ghost" :href="rawFileURL(browserFile.path)" target="_blank" rel="noopener">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/external-link.svg#icon"></use></svg>
+                Open in new tab
+              </a>
+            </div>
+            <div class="picker-error" x-show="browserFileErr" x-text="browserFileErr"></div>
+            <div class="file-loading" x-show="browserFileLoading">Loading file...</div>
+            <img class="file-image" x-show="browserFile.isImage" :src="browserFile.isImage ? rawFileURL(browserFile.path) : ''" :alt="browserFile.name" />
+            <div class="picker-empty" x-show="browserFile.isPDF">PDF files render best in their own tab — use "Open in new tab".</div>
+            <pre class="file-pre" x-show="!browserFile.isImage && !browserFile.isPDF && !browserFileLoading && !browserFileErr" x-text="browserFileContent"></pre>
+          </div>
+        </template>
+      </div>
     </aside>
 
     <aside class="sheet" :class="sheet === 'conn' ? 'open' : ''" :aria-hidden="sheet !== 'conn'" :inert="sheet !== 'conn'" @keydown.escape.stop="closeSheets()">

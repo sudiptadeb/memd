@@ -89,6 +89,18 @@ func (l *Local) List() ([]string, error) {
 // access_count, writes the updated file back through to disk, and returns
 // the rendered bytes (so the agent sees the current stats). Other files
 // pass through untouched.
+// ReadRaw returns the file bytes exactly as stored, without updating the
+// managed access stats or writing anything back.
+func (l *Local) ReadRaw(path string) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	abs, err := l.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(abs)
+}
+
 func (l *Local) Read(path string) ([]byte, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

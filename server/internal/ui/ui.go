@@ -336,7 +336,23 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusUnauthorized, fmt.Errorf("not authenticated"))
 		return
 	}
-	id := r.URL.Path[len("/api/directories/"):]
+	tail := r.URL.Path[len("/api/directories/"):]
+	id, action, _ := strings.Cut(tail, "/")
+	if r.Method == http.MethodGet {
+		switch action {
+		case "files":
+			h.directoryFilesAPI(w, r, user, id)
+		case "raw":
+			h.directoryRawAPI(w, r, user, id)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
+	if action != "" {
+		http.NotFound(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodDelete:
 		if err := h.reg.DeleteDirectoryForActor(user.ID, id); err != nil {

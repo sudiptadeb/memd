@@ -14,6 +14,12 @@ type Backend interface {
 	ListPath(path string) ([]DirEntry, error)
 
 	Read(path string) ([]byte, error)
+
+	// ReadRaw returns the file bytes verbatim without touching the managed
+	// `memd:` access stats. Used by the UI file viewer: a human peeking at a
+	// file must not skew agent access counts or trigger backend writes.
+	ReadRaw(path string) ([]byte, error)
+
 	Write(path string, content []byte, message string) error
 
 	// Move renames src to dst inside the directory. Both paths are
