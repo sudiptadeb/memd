@@ -2742,60 +2742,56 @@ button.crumb:hover {
   }
 }
 
-/* Quick-access bar pinned to the bottom on small screens, so the main views
-   are one tap away without opening the hamburger drawer. Hidden on desktop
-   where the sidebar is always visible. */
+/* Quick-access tab strip under the top bar on small screens, so the main
+   views are one tap away without opening the hamburger drawer. Hidden on
+   desktop where the sidebar is always visible. */
 .quicknav {
   display: none;
 }
 
 @media (max-width: 920px) {
   .quicknav {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 40;
     display: flex;
-    align-items: stretch;
-    padding: 5px max(8px, env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    gap: 4px;
+    align-items: center;
+    padding: 6px 10px;
+    overflow-x: auto;
     background: var(--surface);
-    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .quicknav::-webkit-scrollbar {
+    display: none;
   }
 
   .quicknav button {
-    position: relative;
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: 3px;
+    display: inline-flex;
+    flex-shrink: 0;
+    gap: 6px;
     align-items: center;
-    justify-content: center;
-    min-width: 0;
-    padding: 7px 2px 5px;
-    color: var(--fg-3);
-    font: inherit;
-    font-size: 10.5px;
+    min-height: 32px;
+    padding: 0 11px;
+    color: var(--fg-2);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
     background: none;
     border: 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-pill);
     cursor: pointer;
   }
 
   .quicknav button .icon {
-    width: 18px;
-    height: 18px;
-  }
-
-  .quicknav button span {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    width: 14px;
+    height: 14px;
   }
 
   .quicknav button.on {
     color: var(--fg-1);
+    background: var(--surface-2);
   }
 
   .quicknav button.on .icon {
@@ -2803,25 +2799,17 @@ button.crumb:hover {
   }
 
   .quicknav button b {
-    position: absolute;
-    top: 2px;
-    left: calc(50% + 7px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 15px;
-    height: 15px;
-    padding: 0 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
     color: var(--fg-2);
-    font-size: 9.5px;
+    font-size: 10px;
     font-weight: 650;
     background: var(--accent-soft);
-    border-radius: 999px;
-  }
-
-  /* Keep the last of the page content scrollable above the fixed bar. */
-  .main {
-    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+    border-radius: var(--radius-pill);
   }
 }
 
