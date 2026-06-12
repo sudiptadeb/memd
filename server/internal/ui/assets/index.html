@@ -215,6 +215,36 @@
             </div>
           </div>
 
+          <div class="get-started" x-show="showGetStarted" x-cloak>
+            <div class="get-started-head">
+              <h3>Get started</h3>
+              <span class="spacer"></span>
+              <button class="btn ghost" type="button" @click="dismissOnboarding()">Dismiss</button>
+            </div>
+            <ol class="get-started-steps">
+              <li x-show="sharedDirectories().length">
+                <strong>Shared memory is already waiting for you.</strong>
+                <span x-text="sharedDirectories().length === 1
+                  ? 'A teammate shared the directory “' + sharedDirectories()[0].name + '” with you. You can serve it to your agent right away.'
+                  : 'Teammates shared ' + sharedDirectories().length + ' directories with you. You can serve them to your agent right away.'"></span>
+              </li>
+              <li x-show="!directories.length">
+                <strong>Add a directory.</strong>
+                A folder or git repository where your memory files live.
+                <button class="btn secondary btn-inline" type="button" @click="openSheet('dir')">New directory</button>
+              </li>
+              <li>
+                <strong>Create a connector.</strong>
+                A scoped URL your agent uses to reach the directories you pick — choose which ones, and whether the agent may write.
+                <button class="btn primary btn-inline" type="button" @click="openSheet('conn')">New connector</button>
+              </li>
+              <li>
+                <strong>Paste the connector URL into your agent.</strong>
+                In Claude Code: <code>claude mcp add --transport http memd "&lt;connector URL&gt;"</code>. Any other MCP client takes the same URL in its server settings. From the next conversation on, the agent loads and updates memory on its own.
+              </li>
+            </ol>
+          </div>
+
           <div class="info-grid">
             <article class="info-card">
               <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg></div>

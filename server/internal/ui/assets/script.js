@@ -644,6 +644,7 @@
           this.teams = results[2].teams || [];
           this.normalizeView();
           this.normalizeScope();
+          this.maybeShowOnboarding();
         } catch (error) {
           if (error.status === 401) {
             this.user = null;
@@ -660,6 +661,38 @@
           this.activeScope = "personal";
         }
         storageSet("memd-scope", this.activeScope);
+      },
+
+      // --- Onboarding: a first login with no connectors lands on "How it
+      // works" with a guided checklist, until the user creates a connector or
+      // dismisses it. ---
+
+      onboardingKey() {
+        return this.user ? "memd-onboarded-" + this.user.id : "memd-onboarded";
+      },
+
+      get showGetStarted() {
+        return Boolean(this.user) && !this.connectors.length;
+      },
+
+      sharedDirectories() {
+        const self = this;
+        return this.directories.filter(function (directory) {
+          return directory.team_id && directory.owner_user_id && self.user && directory.owner_user_id !== self.user.id;
+        });
+      },
+
+      maybeShowOnboarding() {
+        if (!this.showGetStarted || storageGet(this.onboardingKey(), "") === "1") {
+          return;
+        }
+        this.activeView = "info";
+        storageSet("memd-view", this.activeView);
+      },
+
+      dismissOnboarding() {
+        storageSet(this.onboardingKey(), "1");
+        this.setView("directories");
       },
 
       normalizeView() {
@@ -1102,6 +1135,7 @@
               write: this.connForm.write
             })
           });
+          storageSet(this.onboardingKey(), "1");
           this.closeSheets();
           await this.load();
         } catch (error) {
