@@ -442,6 +442,15 @@ func TestInitBackfillsProviderIDPreferringOldestAccount(t *testing.T) {
 		   VALUES ('usr_original', 'sudipta', 'sudipta', 's@example.com', 'https://accounts.example.com', 'sub|sd', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO users(id, username, username_norm, email, issuer, subject, created_at, updated_at, password_changed_at)
 		   VALUES ('usr_dup', 'sudipta-2', 'sudipta-2', 's@example.com', 'https://auth.custom-domain.com', 'sub|sd', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+		// The production incident also held an *exact* duplicate identity —
+		// same issuer AND subject — possible because the v6 unique index had
+		// never been created on that database. The one-winner selection must
+		// hold for this pair too, deterministically, or the new unique index
+		// fails and the server cannot boot.
+		`INSERT INTO users(id, username, username_norm, email, issuer, subject, created_at, updated_at, password_changed_at)
+		   VALUES ('usr_exact_a', 'ada', 'ada', 'a@example.com', 'https://auth.custom-domain.com', 'sub|ada', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z')`,
+		`INSERT INTO users(id, username, username_norm, email, issuer, subject, created_at, updated_at, password_changed_at)
+		   VALUES ('usr_exact_b', 'ada-2', 'ada-2', 'a@example.com', 'https://auth.custom-domain.com', 'sub|ada', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
 	}
 	for _, s := range stmts {
 		if _, err := raw.ExecContext(ctx, s); err != nil {
@@ -483,5 +492,19 @@ func TestInitBackfillsProviderIDPreferringOldestAccount(t *testing.T) {
 	}
 	if dup.ProviderID != "" {
 		t.Fatalf("duplicate should stay unlinked, got provider %q", dup.ProviderID)
+	}
+	exactWinner, err := store.UserByOIDCIdentity(ctx, upgraded.ProviderID, "sub|ada")
+	if err != nil {
+		t.Fatalf("UserByOIDCIdentity(exact pair): %v", err)
+	}
+	if exactWinner.ID != "usr_exact_a" {
+		t.Fatalf("exact-duplicate identity went to %s, want usr_exact_a", exactWinner.ID)
+	}
+	exactDup, err := store.UserByID(ctx, "usr_exact_b")
+	if err != nil {
+		t.Fatalf("UserByID(usr_exact_b): %v", err)
+	}
+	if exactDup.ProviderID != "" {
+		t.Fatalf("exact duplicate should stay unlinked, got provider %q", exactDup.ProviderID)
 	}
 }
