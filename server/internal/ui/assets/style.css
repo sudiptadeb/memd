@@ -2543,8 +2543,18 @@ button.crumb:hover {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  padding: 10px 14px;
+  padding: 6px 14px;
   border-bottom: 1px solid var(--border);
+}
+
+.file-toolbar .icon-btn {
+  width: 34px;
+  height: 34px;
+}
+
+.file-toolbar .icon-btn .icon {
+  width: 16px;
+  height: 16px;
 }
 
 .file-loading {
@@ -2746,11 +2756,6 @@ button.crumb:hover {
 
   .browse-crumbs {
     padding: 8px 12px;
-  }
-
-  .file-toolbar .btn {
-    flex: 1;
-    justify-content: center;
   }
 }
 
