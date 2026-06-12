@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -418,6 +419,122 @@ func TestMemberConnectorOnTeamDirectory(t *testing.T) {
 	}); err == nil {
 		t.Fatal("non-member should not be able to reference a team directory")
 	}
+}
+
+func TestMemberConnectorWritesToOwnBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git executable not available")
+	}
+	ctx := context.Background()
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", tmp)
+
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "alice", Password: "alice-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, member.ID, account.RoleMember, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember: %v", err)
+	}
+
+	remote := filepath.Join(tmp, "remote.git")
+	gitRun(t, "", "init", "--bare", remote)
+	seed := filepath.Join(tmp, "seed")
+	gitRun(t, "", "clone", remote, seed)
+	gitRun(t, seed, "checkout", "-B", "main")
+	if err := os.WriteFile(filepath.Join(seed, "MEMORY.md"), []byte("# Memory\n"), 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	gitRun(t, seed, "add", "-A")
+	gitRun(t, seed, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "seed")
+	gitRun(t, seed, "push", "-u", "origin", "main")
+	gitRun(t, "", "--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	dirID, err := r.AddDirectoryForUser(owner.ID, config.Directory{
+		Name:    "Shared",
+		TeamID:  team.ID,
+		Backend: "git",
+		Git:     &config.Git{RemoteURL: remote, Branch: "main"},
+	})
+	if err != nil {
+		t.Fatalf("AddDirectoryForUser: %v", err)
+	}
+	conn, err := r.AddConnectorForUser(member.ID, config.Connector{
+		Name:         "alice-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dirID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("AddConnectorForUser: %v", err)
+	}
+
+	views := r.DirectoriesForConnector(&conn)
+	if len(views) != 1 || !views[0].CanWrite {
+		t.Fatalf("connector views = %+v, want one writable dir", views)
+	}
+	if err := views[0].Backend.Write("memory/alice.md", []byte("# Alice\n"), "memd: alice note"); err != nil {
+		t.Fatalf("branch write: %v", err)
+	}
+	if err := views[0].Backend.Flush(); err != nil {
+		t.Fatalf("branch flush: %v", err)
+	}
+
+	branch := "memd/alice-" + conn.ID
+	verify := filepath.Join(tmp, "verify")
+	gitRun(t, "", "clone", "--branch", branch, remote, verify)
+	if _, err := os.Stat(filepath.Join(verify, "memory", "alice.md")); err != nil {
+		t.Fatalf("file missing from connector branch %s: %v", branch, err)
+	}
+	author := strings.TrimSpace(gitRun(t, verify, "log", "-1", "--format=%an"))
+	if author != "alice" {
+		t.Fatalf("commit author = %q, want alice", author)
+	}
+
+	// main only has the seed content: the member's write didn't touch it.
+	verifyMain := filepath.Join(tmp, "verify-main")
+	gitRun(t, "", "clone", "--branch", "main", remote, verifyMain)
+	if _, err := os.Stat(filepath.Join(verifyMain, "memory", "alice.md")); err == nil {
+		t.Fatal("member write leaked onto main")
+	}
+
+	// The owner's own view still serves the primary main-branch backend.
+	ownerView := r.DirectoryViewForUser(owner.ID, dirID)
+	if ownerView == nil || ownerView.Backend == nil {
+		t.Fatal("owner view missing")
+	}
+	if ownerView.Backend == views[0].Backend {
+		t.Fatal("owner and member should get distinct backends")
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out)
 }
 
 func openRegistryTestStore(t *testing.T) *account.Store {
