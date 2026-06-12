@@ -397,13 +397,42 @@ func backfillUserProviderID(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `
-		UPDATE users SET provider_id = ?
-		 WHERE provider_id = '' AND issuer != '' AND subject IS NOT NULL AND subject != ''
-		   AND id = (SELECT v.id FROM users v
-		              WHERE v.subject = users.subject AND v.provider_id = '' AND v.issuer != ''
-		              ORDER BY v.created_at, v.id LIMIT 1)`, settings.ProviderID)
-	return err
+	// Pick one winner per subject — the oldest account, the one that
+	// accumulated data — with a standalone SELECT, then update by explicit id.
+	// A single UPDATE with a correlated subquery is not safe here: whether the
+	// subquery sees rows already updated in the same statement is
+	// order-dependent, and on databases holding duplicate identities it
+	// assigned the provider id to both rows and failed the unique index below.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT v.id FROM users v
+		 WHERE v.provider_id = '' AND v.issuer != '' AND v.subject IS NOT NULL AND v.subject != ''
+		   AND v.id = (SELECT w.id FROM users w
+		                WHERE w.subject = v.subject AND w.provider_id = '' AND w.issuer != ''
+		                ORDER BY w.created_at, w.id LIMIT 1)`)
+	if err != nil {
+		return err
+	}
+	var winners []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		winners = append(winners, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range winners {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET provider_id = ? WHERE id = ?`, settings.ProviderID, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureUserDirectoryColumns(ctx context.Context, tx *sql.Tx) error {
