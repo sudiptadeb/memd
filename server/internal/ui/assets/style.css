@@ -573,6 +573,75 @@ a {
   padding: 32px 18px;
 }
 
+/* Landing-style login for the main app. The admin page keeps the compact
+   .login-panel card below. */
+.login-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  width: min(100%, 480px);
+  text-align: center;
+}
+
+.login-hero .logo {
+  height: 34px;
+}
+
+.login-hero h1 {
+  color: var(--fg-1);
+  font-size: clamp(23px, 6vw, 27px);
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+}
+
+.login-tagline {
+  max-width: 46ch;
+  color: var(--fg-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.login-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 2px 0 6px;
+  list-style: none;
+}
+
+.login-points li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.login-points .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.login-cta {
+  justify-content: center;
+  width: min(100%, 300px);
+  min-height: 42px;
+  font-size: 14px;
+}
+
+.login-hero .invite-callout,
+.login-hero .local-login {
+  width: min(100%, 320px);
+  text-align: left;
+}
+
 .login-panel {
   display: flex;
   flex-direction: column;
