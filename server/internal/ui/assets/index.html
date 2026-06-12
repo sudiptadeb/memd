@@ -26,11 +26,11 @@
         </button>
         <button type="button" :class="activeView === 'directories' ? 'on' : ''" @click="setView('directories')" title="Directories" aria-label="Directories">
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
-          <b x-show="directoryCount(activeScope)" x-text="directoryCount(activeScope)"></b>
+          <b x-show="directories.length" x-text="directories.length"></b>
         </button>
         <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors" aria-label="Connectors">
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
-          <b x-show="connectorCount(activeScope)" x-text="connectorCount(activeScope)"></b>
+          <b x-show="connectors.length" x-text="connectors.length"></b>
         </button>
       </nav>
       <a class="top-link" href="/admin" x-show="user && user.super_admin" x-cloak>Admin</a>
@@ -123,34 +123,18 @@
             <button class="nav-item" type="button" :class="activeView === 'directories' ? 'on' : ''" @click="setView('directories')" title="Directories">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
               <span>Directories</span>
-              <b x-text="directoryCount(activeScope)"></b>
+              <b x-text="directories.length"></b>
             </button>
             <button class="nav-item" type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
               <span>Connectors</span>
-              <b x-text="connectorCount(activeScope)"></b>
+              <b x-text="connectors.length"></b>
             </button>
             <button class="nav-item logs-nav-item" type="button" :class="activeView === 'logs' ? 'on' : ''" @click="setView('logs')" title="Activity">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg>
               <span>Activity</span>
               <b x-text="entries.length"></b>
             </button>
-          </div>
-
-          <div class="sidebar-group spaces-group" x-show="user && !user.super_admin" x-cloak>
-            <div class="sidebar-label">Spaces</div>
-            <button class="space-item" type="button" :class="activeScope === 'personal' ? 'on' : ''" @click="setScope('personal')" title="Personal">
-              <span class="space-mark"></span>
-              <span>Personal</span>
-              <b x-text="directoryCount('personal')"></b>
-            </button>
-            <template x-for="team in teams" :key="team.id">
-              <button class="space-item" type="button" :class="activeScope === team.id ? 'on' : ''" @click="setScope(team.id)" :title="team.name">
-                <span class="space-mark team"></span>
-                <span x-text="team.name"></span>
-                <b x-text="directoryCount(team.id)"></b>
-              </button>
-            </template>
           </div>
 
           <div class="sidebar-group mobile-account" x-show="user" x-cloak>
@@ -173,11 +157,6 @@
             </div>
           </div>
         </nav>
-
-        <div class="sidebar-foot">
-          <span>Scope</span>
-          <strong x-text="activeScopeLabel()"></strong>
-        </div>
       </aside>
 
       <main class="main">
@@ -259,7 +238,7 @@
             <article class="info-card">
               <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/users.svg#icon"></use></svg></div>
               <h3>Teams</h3>
-              <p>Shared spaces where admins can mark directories and connectors for team access.</p>
+              <p>Share selected directories and connectors with people you invite. Shared items show the team name.</p>
             </article>
             <article class="info-card">
               <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/activity.svg#icon"></use></svg></div>
@@ -316,10 +295,9 @@
         <section class="app-section" x-show="activeView === 'directories' && !loading && !loadErr" x-cloak>
           <div class="section-head">
             <div class="titles">
-              <h2>Directories <span class="count" x-text="visibleDirectories().length"></span></h2>
-              <span class="desc">Folders on this machine, or a git repo, that memd can serve to connected agents.</span>
+              <h2>Directories <span class="count" x-text="directories.length"></span></h2>
+              <span class="desc">Folders on this machine, or a git repo, that memd can serve to connected agents. Directories shared through a team show the team name.</span>
             </div>
-            <span class="scope-chip" x-text="activeScopeLabel()"></span>
             <span class="spacer"></span>
             <input class="hidden-file" type="file" x-ref="userDataImport" accept="application/json,.json" @change="importUserData($event)" />
             <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="exportUserData()">Export data</button>
@@ -330,9 +308,9 @@
             </button>
           </div>
 
-          <template x-if="visibleDirectories().length">
+          <template x-if="directories.length">
             <div class="cards">
-              <template x-for="directory in visibleDirectories()" :key="directory.id">
+              <template x-for="directory in sortedDirectories()" :key="directory.id">
                 <article class="card" :class="directory.error ? 'error-card' : ''">
                   <div class="card-head">
                     <div class="card-name" x-text="directory.name"></div>
@@ -343,10 +321,10 @@
                       <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
                       Browse
                     </button>
-                    <select class="mini-select" aria-label="Move directory to team" x-show="directory.can_manage && manageableTeams().length" :value="directory.team_id || ''" @change="setDirectoryTeam(directory, $event.target.value)">
-                      <option value="">Personal</option>
+                    <select class="mini-select" aria-label="Share directory with team" x-show="directory.can_manage && manageableTeams().length" @change="setDirectoryTeam(directory, $event.target.value)">
+                      <option value="" :selected="!directory.team_id">Personal</option>
                       <template x-for="team in manageableTeams()" :key="team.id">
-                        <option :value="team.id" x-text="team.name"></option>
+                        <option :value="team.id" :selected="directory.team_id === team.id" x-text="team.name"></option>
                       </template>
                     </select>
                     <button class="icon-btn danger" type="button" x-show="directory.can_manage" title="Delete directory" @click="deleteDirectory(directory)">
@@ -357,10 +335,10 @@
                   <code class="card-path" x-text="directory.detail"></code>
                   <div class="card-row" x-show="directory.owned && directory.backend === 'git'">
                     <span class="field-label" title="Pick the one connector that writes this directory's branch (main) directly. Every other connector works on its own branch. Leave as default to let your own connectors write main and everyone else branch.">Main connector</span>
-                    <select class="mini-select" aria-label="Main-branch connector" :value="directory.owner_connector_id || ''" @change="setDirectoryOwnerConnector(directory, $event.target.value)">
-                      <option value="">Default — my connectors write main, others branch</option>
+                    <select class="mini-select" aria-label="Main-branch connector" @change="setDirectoryOwnerConnector(directory, $event.target.value)">
+                      <option value="" :selected="!directory.owner_connector_id">Default — my connectors write main, others branch</option>
                       <template x-for="connector in ownConnectorsForDirectory(directory)" :key="connector.id">
-                        <option :value="connector.id" x-text="connector.name"></option>
+                        <option :value="connector.id" :selected="directory.owner_connector_id === connector.id" x-text="connector.name"></option>
                       </template>
                     </select>
                   </div>
@@ -373,7 +351,7 @@
             </div>
           </template>
 
-          <template x-if="!visibleDirectories().length">
+          <template x-if="!directories.length">
             <div class="empty">
               <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg></div>
               <h4>No directories yet</h4>
@@ -389,20 +367,19 @@
         <section class="app-section" x-show="activeView === 'connectors' && !loading && !loadErr" x-cloak>
           <div class="section-head">
             <div class="titles">
-              <h2>Connectors <span class="count" x-text="visibleConnectors().length"></span></h2>
+              <h2>Connectors <span class="count" x-text="connectors.length"></span></h2>
               <span class="desc">Each connector is one URL scoped to selected directories and optional write access.</span>
             </div>
-            <span class="scope-chip" x-text="activeScopeLabel()"></span>
             <span class="spacer"></span>
-            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories(activeScope === 'personal' ? '' : activeScope).length" :title="attachableDirectories(activeScope === 'personal' ? '' : activeScope).length ? '' : 'Add a directory first'">
+            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories('').length" :title="attachableDirectories('').length ? '' : 'Add a directory first'">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
               Add connector
             </button>
           </div>
 
-          <template x-if="visibleConnectors().length">
+          <template x-if="connectors.length">
             <div class="cards">
-              <template x-for="connector in visibleConnectors()" :key="connector.id">
+              <template x-for="connector in sortedConnectors()" :key="connector.id">
                 <article class="card connector-card" :class="connector.expanded ? 'expanded' : ''" @click="toggleConnectorExpand(connector)" @keydown.enter.prevent="toggleConnectorExpand(connector)" @keydown.space.prevent="toggleConnectorExpand(connector)" tabindex="0" role="button" :aria-expanded="connector.expanded ? 'true' : 'false'">
                   <div class="card-head">
                     <span class="card-name" x-text="connector.name"></span>
@@ -467,16 +444,16 @@
             </div>
           </template>
 
-          <template x-if="!visibleConnectors().length">
+          <template x-if="!connectors.length">
             <div class="empty">
               <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg></div>
               <h4>No connectors yet</h4>
               <p>A connector issues a URL an agent can use to reach memd. Each one is scoped to specific directories.</p>
-              <button class="btn primary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories(activeScope === 'personal' ? '' : activeScope).length">
+              <button class="btn primary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories('').length">
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
                 Add your first connector
               </button>
-              <p class="empty-note" x-show="!attachableDirectories(activeScope === 'personal' ? '' : activeScope).length">Add a directory first.</p>
+              <p class="empty-note" x-show="!attachableDirectories('').length">Add a directory first.</p>
             </div>
           </template>
         </section>
@@ -546,7 +523,7 @@
       <header class="sheet-head">
         <div>
           <h3>New team</h3>
-          <div class="sub">Create a shared space for directories and connectors.</div>
+          <div class="sub">Invite people and share selected directories with them.</div>
         </div>
         <span class="spacer"></span>
         <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
@@ -680,13 +657,14 @@
         </div>
 
         <div class="field" x-show="manageableTeams().length">
-          <label class="field-label">Scope</label>
+          <label class="field-label">Share with team</label>
           <select class="input" x-model="dirForm.team_id">
-            <option value="">Personal</option>
+            <option value="">Personal — only you</option>
             <template x-for="team in manageableTeams()" :key="team.id">
               <option :value="team.id" x-text="team.name"></option>
             </template>
           </select>
+          <div class="field-hint">Team members can use shared directories with their own connectors. You can change this later on the directory card.</div>
         </div>
 
         <div class="field">
@@ -893,13 +871,14 @@
         </div>
 
         <div class="field" x-show="manageableTeams().length">
-          <label class="field-label">Scope</label>
-          <select class="input" :value="connForm.team_id" @change="setConnectorTeam(connForm, $event.target.value)">
-            <option value="">Personal</option>
+          <label class="field-label">Share with team</label>
+          <select class="input" @change="setConnectorTeam(connForm, $event.target.value)">
+            <option value="" :selected="!connForm.team_id">Personal — only you</option>
             <template x-for="team in manageableTeams()" :key="team.id">
-              <option :value="team.id" x-text="team.name"></option>
+              <option :value="team.id" :selected="connForm.team_id === team.id" x-text="team.name"></option>
             </template>
           </select>
+          <div class="field-hint">A team connector is visible to the team and limited to that team's directories.</div>
         </div>
 
         <div class="field">
@@ -971,13 +950,14 @@
         </div>
 
         <div class="field" x-show="manageableTeams().length">
-          <label class="field-label">Scope</label>
-          <select class="input" :value="editForm.team_id" @change="setConnectorTeam(editForm, $event.target.value)">
-            <option value="">Personal</option>
+          <label class="field-label">Share with team</label>
+          <select class="input" @change="setConnectorTeam(editForm, $event.target.value)">
+            <option value="" :selected="!editForm.team_id">Personal — only you</option>
             <template x-for="team in manageableTeams()" :key="team.id">
-              <option :value="team.id" x-text="team.name"></option>
+              <option :value="team.id" :selected="editForm.team_id === team.id" x-text="team.name"></option>
             </template>
           </select>
+          <div class="field-hint">A team connector is visible to the team and limited to that team's directories.</div>
         </div>
 
         <div class="field">

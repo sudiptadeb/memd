@@ -456,7 +456,6 @@
       connectors: [],
       teams: [],
       activeView: storageGet("memd-view", "directories"),
-      activeScope: storageGet("memd-scope", "personal"),
       navOpen: false,
       loginForm: defaultLoginForm(),
       theme: resolveTheme(),
@@ -643,7 +642,6 @@
           });
           this.teams = results[2].teams || [];
           this.normalizeView();
-          this.normalizeScope();
           this.maybeShowOnboarding();
         } catch (error) {
           if (error.status === 401) {
@@ -654,13 +652,6 @@
         } finally {
           this.loading = false;
         }
-      },
-
-      normalizeScope() {
-        if (this.activeScope !== "personal" && !this.teams.some((team) => team.id === this.activeScope)) {
-          this.activeScope = "personal";
-        }
-        storageSet("memd-scope", this.activeScope);
       },
 
       // --- Onboarding: a first login with no connectors lands on "How it
@@ -712,12 +703,6 @@
         this.closeNavIfMobile();
       },
 
-      setScope(scope) {
-        this.activeScope = scope || "personal";
-        this.normalizeScope();
-        this.closeNavIfMobile();
-      },
-
       isMobileNav() {
         return window.matchMedia && window.matchMedia("(max-width: 920px)").matches;
       },
@@ -736,10 +721,6 @@
         }
       },
 
-      activeTeam() {
-        return this.teams.find((team) => team.id === this.activeScope) || null;
-      },
-
       manageableTeams() {
         return this.teams.filter((team) => team.can_manage);
       },
@@ -749,40 +730,29 @@
         return team ? team.name : "";
       },
 
-      activeScopeLabel() {
-        return this.activeScope === "personal" ? "Personal" : (this.teamName(this.activeScope) || "Team");
+      // Everything you can use, in one list: personal items first, then
+      // team-shared items grouped per team. The team badge on each card is
+      // what tells personal and shared items apart.
+      sortedDirectories() {
+        return this.sortByTeam(this.directories);
       },
 
-      directoryCount(scope) {
-        if (scope === "personal") {
-          return this.directories.filter((directory) => directory.owned).length;
-        }
-        return this.directories.filter((directory) => (directory.team_id || "") === scope).length;
+      sortedConnectors() {
+        return this.sortByTeam(this.connectors);
       },
 
-      connectorCount(scope) {
-        if (scope === "personal") {
-          return this.connectors.filter((connector) => connector.owned && !connector.team_id).length;
-        }
-        return this.connectors.filter((connector) => (connector.team_id || "") === scope).length;
-      },
-
-      // Personal shows everything you own — including a directory you own that is
-      // shared with a team, so marking a directory "team" no longer makes it
-      // vanish from your own view. A team space shows everything shared with that
-      // team, including teammates' directories you can use.
-      visibleDirectories() {
-        if (this.activeScope === "personal") {
-          return this.directories.filter((directory) => directory.owned);
-        }
-        return this.directories.filter((directory) => directory.team_id === this.activeScope);
-      },
-
-      visibleConnectors() {
-        if (this.activeScope === "personal") {
-          return this.connectors.filter((connector) => connector.owned && !connector.team_id);
-        }
-        return this.connectors.filter((connector) => connector.team_id === this.activeScope);
+      sortByTeam(items) {
+        const self = this;
+        return items.slice().sort(function (a, b) {
+          const teamA = a.team_id ? (self.teamName(a.team_id) || "Team") : "";
+          const teamB = b.team_id ? (self.teamName(b.team_id) || "Team") : "";
+          if (teamA !== teamB) {
+            if (!teamA) return -1;
+            if (!teamB) return 1;
+            return teamA.localeCompare(teamB);
+          }
+          return (a.name || "").localeCompare(b.name || "");
+        });
       },
 
       // Directories a connector may reference. A team-scoped connector is limited
@@ -907,17 +877,9 @@
       openSheet(name) {
         if (name === "dir") {
           this.dirForm = defaultDirForm();
-          const team = this.activeTeam();
-          if (team && team.can_manage) {
-            this.dirForm.team_id = team.id;
-          }
         }
         if (name === "conn") {
           this.connForm = defaultConnForm();
-          const team = this.activeTeam();
-          if (team && team.can_manage) {
-            this.connForm.team_id = team.id;
-          }
         }
         if (name === "team-new") {
           this.teamForm = defaultTeamForm();
@@ -1210,8 +1172,11 @@
           });
           this.closeSheets();
           await this.load();
-          if (data.team && data.team.id) {
-            this.setScope(data.team.id);
+          // Land in the new team's management sheet so the next step —
+          // inviting people — is right in front of the user.
+          const created = data.team && this.teams.find((team) => team.id === data.team.id);
+          if (created) {
+            await this.openTeam(created);
           }
         } catch (error) {
           this.teamForm.err = error.message || "create failed";
@@ -1338,7 +1303,6 @@
         try {
           await api("/api/teams/" + encodeURIComponent(team.id), { method: "DELETE" });
           this.closeSheets();
-          this.setScope("personal");
           await this.load();
         } catch (error) {
           window.alert(error.message || "delete failed");
