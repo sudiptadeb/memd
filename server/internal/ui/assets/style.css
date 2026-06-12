@@ -1152,6 +1152,17 @@ section {
   word-break: break-all;
 }
 
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-row .field-label {
+  margin: 0;
+}
+
 .dot {
   display: inline-flex;
   align-items: center;

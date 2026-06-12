@@ -253,7 +253,7 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	viewTeams, writeTeams, _ := r.teamAccessForUser(c.OwnerUserID)
 	r.mu.RLock()
 	var out []DirectoryView
-	var pending []config.Directory // git team dirs needing a branch backend
+	var pending []DirectoryView // git team dirs needing a branch backend
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
 			if d.ID != id {
@@ -264,16 +264,19 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 				continue
 			}
 			view := DirectoryView{Directory: d, CanWrite: owned || writeTeams[d.TeamID]}
-			if !owned && d.Backend == "git" {
-				// Team git directory reached by a non-owner: serve it through
-				// this connector's own branch clone so every commit is on the
-				// connector's branch, authored as the connector's owner, and
-				// the directory branch only changes by merging that branch.
+			// Team git directory: every connector works on its own branch —
+			// the owner's connectors included — so every commit is on a
+			// connector branch, authored as whoever acted, and the directory
+			// branch only changes by merging. The one exception is the
+			// directory's designated owner connector, which works on the
+			// directory branch directly.
+			designated := owned && d.OwnerConnectorID != "" && d.OwnerConnectorID == c.ID
+			if d.Backend == "git" && d.TeamID != "" && !designated {
 				if b := r.branchBackends[branchBackendKey(d, c)]; b != nil {
 					view.Backend = b
 					out = append(out, view)
 				} else {
-					pending = append(pending, d)
+					pending = append(pending, view)
 				}
 				break
 			}
@@ -288,16 +291,13 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 
 	// Open missing branch clones outside the lock: the first access clones the
 	// remote, which is slow and must not block unrelated registry calls.
-	for _, d := range pending {
-		b := r.openBranchBackendCached(d, c)
+	for _, view := range pending {
+		b := r.openBranchBackendCached(view.Directory, c)
 		if b == nil {
 			continue
 		}
-		out = append(out, DirectoryView{
-			Directory: d,
-			Backend:   b,
-			CanWrite:  writeTeams[d.TeamID],
-		})
+		view.Backend = b
+		out = append(out, view)
 	}
 	return out
 }
@@ -558,7 +558,69 @@ func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (
 		r.mu.Unlock()
 		return config.Directory{}, account.ErrForbidden
 	}
+	if current.TeamID != teamID {
+		// Team scope changed: cached per-connector branch clones were built
+		// for the old scope (or are now unnecessary). Drop them all; valid
+		// connectors re-open lazily.
+		r.closeBranchBackendsLocked(func(parts []string) bool {
+			return parts[0] == current.OwnerUserID && parts[1] == current.ID
+		})
+	}
 	current.TeamID = teamID
+	r.cfg.Directories[idx] = current
+	r.mu.Unlock()
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserDirectory(context.Background(), current.OwnerUserID, current); err != nil {
+			return config.Directory{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Directory{}, err
+	}
+	return current, nil
+}
+
+// UpdateDirectoryOwnerConnectorForActor designates (or clears, with "") the one
+// connector allowed to work directly on a team git directory's branch. Only the
+// directory's owner may designate, and the connector must be theirs too —
+// the directory branch never opens up to another user's token.
+func (r *Registry) UpdateDirectoryOwnerConnectorForActor(actorUserID, id, connectorID string) (config.Directory, error) {
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Directory{}, err
+		}
+	}
+	r.mu.Lock()
+	idx := -1
+	for i, d := range r.cfg.Directories {
+		if d.ID == id && d.OwnerUserID == actorUserID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Directory{}, errors.New("directory not found")
+	}
+	if connectorID != "" {
+		found := false
+		for _, c := range r.cfg.Connectors {
+			if c.ID == connectorID && c.OwnerUserID == actorUserID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.mu.Unlock()
+			return config.Directory{}, errors.New("connector not found or not yours")
+		}
+		// The designated connector now works on the directory branch; its old
+		// branch clone (if any) must not keep flushing in the background.
+		r.closeBranchBackendsLocked(func(parts []string) bool {
+			return parts[0] == actorUserID && parts[1] == id && parts[2] == actorUserID && parts[3] == connectorID
+		})
+	}
+	current := r.cfg.Directories[idx]
+	current.OwnerConnectorID = connectorID
 	r.cfg.Directories[idx] = current
 	r.mu.Unlock()
 	if r.accounts != nil {
@@ -901,8 +963,21 @@ func (r *Registry) DeleteConnectorForUser(ownerUserID, id string) error {
 	r.closeBranchBackendsLocked(func(parts []string) bool {
 		return parts[2] == ownerUserID && parts[3] == id
 	})
+	// Clear any owner-connector designation pointing at the deleted connector.
+	var cleared []config.Directory
+	for i, d := range r.cfg.Directories {
+		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
+			r.cfg.Directories[i].OwnerConnectorID = ""
+			cleared = append(cleared, r.cfg.Directories[i])
+		}
+	}
 	r.mu.Unlock()
 	if r.accounts != nil {
+		for _, d := range cleared {
+			if err := r.accounts.UpsertUserDirectory(context.Background(), d.OwnerUserID, d); err != nil {
+				return err
+			}
+		}
 		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
 	}
 	return r.save()
@@ -936,8 +1011,21 @@ func (r *Registry) DeleteConnectorForActor(actorUserID, id string) error {
 	r.closeBranchBackendsLocked(func(parts []string) bool {
 		return parts[2] == ownerUserID && parts[3] == id
 	})
+	// Clear any owner-connector designation pointing at the deleted connector.
+	var cleared []config.Directory
+	for i, d := range r.cfg.Directories {
+		if d.OwnerUserID == ownerUserID && d.OwnerConnectorID == id {
+			r.cfg.Directories[i].OwnerConnectorID = ""
+			cleared = append(cleared, r.cfg.Directories[i])
+		}
+	}
 	r.mu.Unlock()
 	if r.accounts != nil {
+		for _, d := range cleared {
+			if err := r.accounts.UpsertUserDirectory(context.Background(), d.OwnerUserID, d); err != nil {
+				return err
+			}
+		}
 		return r.accounts.DeleteUserConnector(context.Background(), ownerUserID, id)
 	}
 	return r.save()

@@ -175,18 +175,24 @@ owners, admins, and members can write; viewers are read-only. Connector serving
 stays strict: an MCP/HTTP token only reaches the directory IDs saved on that
 connector, and only those the connector's owner is still entitled to.
 
-For **git-backed** team directories, a teammate's connector never pushes to the
-directory's branch. Each connector gets its own branch
-(`memd/<username>-<connector-id>`) forked from the directory branch, and every
-commit on it is authored as that member. The branch tracks the directory
-branch — fresh upstream commits are merged in on each flush, preferring the
-member's pending edits on conflicting hunks — so members keep seeing the shared
-truth while their own changes wait on their branch. Merging a connector branch
-back (via your Git host's PR/MR flow, or a plain `git merge`) is how its edits
-reach the team; reads through a member connector never bump file stats, so
-connector branches contain only real edits. Local-backend team directories have
-no branches: members read and write the shared folder directly, with the same
-role-based write gating.
+For **git-backed** team directories, no connector pushes to the directory's
+branch by default — the owner's connectors included. Each connector gets its
+own branch (`memd/<username>-<connector-id>`) forked from the directory branch,
+and every commit on it is authored as the human behind that connector. The
+branch tracks the directory branch — fresh upstream commits are merged in on
+each flush, preferring the connector's pending edits on conflicting hunks — so
+everyone keeps seeing the shared truth while their own changes wait on their
+branch. Merging a connector branch back (via your Git host's PR/MR flow, or a
+plain `git merge`) is how its edits reach the team; reads through a connector
+branch never bump file stats, so the branches contain only real edits.
+
+The owner can designate one of their own connectors as the directory's **main
+connector** (directory card → *Main connector*). That single connector works on
+the directory branch directly — useful for a curator agent that merges and
+tidies. The designation is restricted to a connector owned by the directory's
+owner; a teammate's token can never write the directory branch. Local-backend
+team directories have no branches: members read and write the shared folder
+directly, with the same role-based write gating.
 
 ## Self-Organising Memory
 

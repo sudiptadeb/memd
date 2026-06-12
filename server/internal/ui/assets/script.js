@@ -1322,6 +1322,26 @@
         }
       },
 
+      // Your own connectors that have this directory attached — the candidates
+      // for the directory's main-branch connector.
+      ownConnectorsForDirectory(directory) {
+        return this.connectors.filter((connector) => connector.owned && (connector.directory_ids || []).includes(directory.id));
+      },
+
+      async setDirectoryOwnerConnector(directory, connectorID) {
+        try {
+          await api("/api/directories/" + encodeURIComponent(directory.id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner_connector_id: connectorID || "" })
+          });
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "update failed");
+          await this.load();
+        }
+      },
+
       async exportUserData() {
         try {
           const bundle = await api("/api/data", { cache: "no-store" });

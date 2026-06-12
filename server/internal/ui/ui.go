@@ -89,18 +89,19 @@ type pageData struct {
 }
 
 type directoryView struct {
-	ID          string `json:"id"`
-	OwnerUserID string `json:"owner_user_id,omitempty"`
-	TeamID      string `json:"team_id,omitempty"`
-	TeamName    string `json:"team_name,omitempty"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Backend     string `json:"backend"`
-	Detail      string `json:"detail"`
-	Error       string `json:"error,omitempty"`
-	Owned       bool   `json:"owned"`
-	CanManage   bool   `json:"can_manage"`
-	CanAttach   bool   `json:"can_attach"`
+	ID               string `json:"id"`
+	OwnerUserID      string `json:"owner_user_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
+	TeamName         string `json:"team_name,omitempty"`
+	OwnerConnectorID string `json:"owner_connector_id,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description,omitempty"`
+	Backend          string `json:"backend"`
+	Detail           string `json:"detail"`
+	Error            string `json:"error,omitempty"`
+	Owned            bool   `json:"owned"`
+	CanManage        bool   `json:"can_manage"`
+	CanAttach        bool   `json:"can_attach"`
 }
 
 type connectorView struct {
@@ -182,18 +183,19 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			}
 		}
 		dirViews = append(dirViews, directoryView{
-			ID:          d.ID,
-			OwnerUserID: d.OwnerUserID,
-			TeamID:      d.TeamID,
-			TeamName:    teamNameByID[d.TeamID],
-			Name:        d.Name,
-			Description: d.Description,
-			Backend:     d.Backend,
-			Detail:      detail,
-			Error:       errMsg,
-			Owned:       d.OwnerUserID == ownerUserID,
-			CanManage:   d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
-			CanAttach:   d.OwnerUserID == ownerUserID || (d.TeamID != "" && writableTeam[d.TeamID]),
+			ID:               d.ID,
+			OwnerUserID:      d.OwnerUserID,
+			TeamID:           d.TeamID,
+			TeamName:         teamNameByID[d.TeamID],
+			OwnerConnectorID: d.OwnerConnectorID,
+			Name:             d.Name,
+			Description:      d.Description,
+			Backend:          d.Backend,
+			Detail:           detail,
+			Error:            errMsg,
+			Owned:            d.OwnerUserID == ownerUserID,
+			CanManage:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
+			CanAttach:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && writableTeam[d.TeamID]),
 		})
 	}
 	cs := h.reg.ConnectorsForUser(ownerUserID)
@@ -383,20 +385,39 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		logs.InfoUser(user.ID, "deleted directory id=%s", id)
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPatch:
+		// Pointer fields distinguish "absent" from "set to empty": a PATCH
+		// only changes the fields it carries.
 		var body struct {
-			TeamID string `json:"team_id"`
+			TeamID           *string `json:"team_id"`
+			OwnerConnectorID *string `json:"owner_connector_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		d, err := h.reg.UpdateDirectoryTeamForActor(user.ID, id, body.TeamID)
-		if err != nil {
-			httpErr(w, statusForAccountError(err), err)
+		var d config.Directory
+		var err error
+		if body.TeamID != nil {
+			d, err = h.reg.UpdateDirectoryTeamForActor(user.ID, id, *body.TeamID)
+			if err != nil {
+				httpErr(w, statusForAccountError(err), err)
+				return
+			}
+			logs.InfoUser(user.ID, "updated directory team scope id=%s team=%s", id, d.TeamID)
+		}
+		if body.OwnerConnectorID != nil {
+			d, err = h.reg.UpdateDirectoryOwnerConnectorForActor(user.ID, id, *body.OwnerConnectorID)
+			if err != nil {
+				httpErr(w, statusForAccountError(err), err)
+				return
+			}
+			logs.InfoUser(user.ID, "updated directory owner connector id=%s connector=%s", id, d.OwnerConnectorID)
+		}
+		if body.TeamID == nil && body.OwnerConnectorID == nil {
+			httpErr(w, http.StatusBadRequest, fmt.Errorf("nothing to update"))
 			return
 		}
-		logs.InfoUser(user.ID, "updated directory team scope id=%s team=%s", id, d.TeamID)
-		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "team_id": d.TeamID})
+		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "team_id": d.TeamID, "owner_connector_id": d.OwnerConnectorID})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
