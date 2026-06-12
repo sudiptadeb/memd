@@ -5,6 +5,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,17 @@ import (
 )
 
 const protocolVersion = "2025-03-26"
+
+// Preload budget for MEMORY.md in activeMemorySection. memory_load clamps the
+// preloaded index to whichever limit is hit first, cutting on a line boundary.
+const (
+	memoryIndexPreloadMaxLines = 200
+	memoryIndexPreloadMaxBytes = 25 << 10
+)
+
+// fileSizeWarnBytes is the per-file size above which toolWrite warns the agent
+// to split content into smaller focused files.
+const fileSizeWarnBytes = 100 << 10
 
 // Server is an MCP endpoint backed by a registry.
 type Server struct {
@@ -208,13 +220,69 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 			continue
 		}
 		sb.WriteString("**`MEMORY.md`:**\n\n```markdown\n")
+		body, lines, truncated := clampPreload(body)
 		sb.Write(body)
 		if len(body) == 0 || body[len(body)-1] != '\n' {
 			sb.WriteString("\n")
 		}
+		if truncated {
+			fmt.Fprintf(&sb, "[memd: MEMORY.md truncated at %d lines / %dKB for preload — memory_read(\"MEMORY.md\") returns the full index; consider a reorganise pass]\n", lines, memoryIndexPreloadMaxBytes>>10)
+		}
 		sb.WriteString("```\n\n")
 	}
 	return sb.String()
+}
+
+// clampPreload limits a MEMORY.md body to the first memoryIndexPreloadMaxLines
+// lines or memoryIndexPreloadMaxBytes, whichever is hit first, always cutting
+// on a line boundary. It returns the (possibly shortened) body, the number of
+// lines kept, and whether truncation occurred. A body inside both limits is
+// returned unchanged so untruncated indexes render byte-identically.
+func clampPreload(body []byte) ([]byte, int, bool) {
+	if !overPreloadBudget(body) {
+		return body, 0, false
+	}
+	lines := 0
+	kept := 0 // bytes kept, ending on a line boundary
+	for i := 0; i < len(body); {
+		nl := i
+		for nl < len(body) && body[nl] != '\n' {
+			nl++
+		}
+		end := nl
+		if end < len(body) {
+			end++ // include the newline
+		}
+		if lines >= memoryIndexPreloadMaxLines || end > memoryIndexPreloadMaxBytes {
+			break
+		}
+		kept = end
+		lines++
+		i = end
+	}
+	return body[:kept], lines, true
+}
+
+// overPreloadBudget reports whether a MEMORY.md body exceeds the preload budget
+// in lines or bytes.
+func overPreloadBudget(body []byte) bool {
+	if len(body) > memoryIndexPreloadMaxBytes {
+		return true
+	}
+	return countLines(body) > memoryIndexPreloadMaxLines
+}
+
+// countLines returns the number of text lines in body. A trailing newline does
+// not add an empty final line; an unterminated final line is still counted.
+func countLines(body []byte) int {
+	if len(body) == 0 {
+		return 0
+	}
+	n := bytes.Count(body, []byte{'\n'})
+	if body[len(body)-1] != '\n' {
+		n++
+	}
+	return n
 }
 
 // writeTopology renders the root entries plus the first layer of every
@@ -600,7 +668,14 @@ func (s *Server) toolWrite(conn *registry.Connector, args json.RawMessage) (stri
 	if err := d.Backend.Write(a.Path, []byte(a.Content), a.Message); err != nil {
 		return err.Error(), true
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path), false
+	msg := fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path)
+	if len(a.Content) > fileSizeWarnBytes {
+		msg += " — warning: file exceeds 100KB; prefer many small focused files (split it)"
+	}
+	if a.Path == "MEMORY.md" && overPreloadBudget([]byte(a.Content)) {
+		msg += " — warning: MEMORY.md exceeds the preload budget (200 lines / 25KB); only the first part will be preloaded by memory_load. Move detail into topic files."
+	}
+	return msg, false
 }
 
 func (s *Server) toolMove(conn *registry.Connector, args json.RawMessage) (string, bool) {
@@ -802,7 +877,7 @@ func reorganiseText(args map[string]string) string {
    - **related to others** → %smemory_move%s into a descriptive multi-word subfolder (e.g. %smemory/feedback/<name>.md%s, %smemory/mockups/<name>.html%s, or %smemory/data/<name>.csv%s).
 4. Use %smemory_move%s for renames and folder changes — not write-then-delete. Move preserves git rename detection so the file's history follows it.
 5. After the moves, walk the result and clean up: %smemory_delete_folder%s any leftover empty folders or stale subdirectories from prior incomplete passes.
-6. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule. Each entry is one line: a Markdown link plus a concrete description of what's in the linked file.
+6. Rewrite MEMORY.md as a curated sectioned index per the doctrine's "Curate, don't enumerate" rule. Each entry is one line: a Markdown link plus a concrete description of what's in the linked file. Bring MEMORY.md back under the preload budget (200 lines / 25KB) — move detail out into topic files so only the index is preloaded.
 7. Update MEMORY.md's agent front matter: %slast_reorganised%s = today, %sentries%s = the final one-liner count.
 8. Report the diff: counts of files moved / archived / merged / deleted; the new MEMORY.md section headers; anything you flagged for user attention.
 
@@ -917,6 +992,7 @@ func dreamText(args map[string]string) string {
 		"   - **Fade** — for managed files, `last_read_at` > 90 days, `access_count` 0–1, and not linked from MEMORY.md; for unmanaged files, clearly stale content or no index link. Archive (move under `memory/_archive/`) with a one-line supersession note in MEMORY.md if it still matters historically. Do it.\n"+
 		"   - **Resolve contradictions** — if two files disagree and the recent session confirmed one, supersede the other in place.\n"+
 		"   - Drastic actions (deleting content the user wrote, removing >1 paragraph, overwriting a `priority: load-bearing` managed file) — ask first per the preamble.\n"+
+		"   - **Consolidation is non-destructive** — archive or mark superseded rather than deleting; never destroy content the user might want to review.\n"+
 		"5. Report the diff: counts of files cemented / faded / merged; files skipped because the signal was ambiguous.\n\n"+
 		"Stats are signal, not gospel. A rarely-read file can still be load-bearing (e.g. a once-a-year procedure), and unmanaged artifacts do not carry `memd:` stats. Use judgement; if a managed file's `priority` field says `load-bearing` or `reference`, treat low access_count as expected and leave it alone.", dirHint(args))
 }
@@ -933,7 +1009,8 @@ func recallText(args map[string]string) string {
 		"3. Run `memory_search` for the topic and adjacent terms.\n"+
 		"4. `memory_read` each promising hit.\n"+
 		"5. Walk links inside readable files — read related files too.\n"+
-		"6. Synthesise an answer for the user: what memd actually says about the topic, with file links. Cite the files you used.\n\n"+
+		"6. Besides direct matches, surface adjacent constraints and preferences linked to the topic — related files and user preferences that touch it — even when not explicitly asked.\n"+
+		"7. Synthesise an answer for the user: what memd actually says about the topic, with file links. Cite the files you used.\n\n"+
 		"Don't dump raw search hits. Walk the wiki and present what you found.", topic, dirHint(args))
 }
 
@@ -948,6 +1025,7 @@ func housekeepText(args map[string]string) string {
 		"   - **Missing agent front matter** — for Markdown pages only, add `topic` / `tags` / `related` where the page's subject makes them obvious.\n"+
 		"   - **Stale `last_reorganised`** — flag in the report. Don't bump it yourself; that's `reorganise`'s job.\n"+
 		"   - **Empty template sections** — delete the empty heading.\n"+
+		"   - **Preload-budget drift** — flag `MEMORY.md` over the preload budget (200 lines / 25KB) and any file over ~100KB; recommend a `reorganise` pass to move detail into topic files. Don't restructure here.\n"+
 		"4. Report what you fixed and what you flagged (with reasoning).\n\n"+
 		"Housekeep tidies; it doesn't restructure. If the directory needs structural change, recommend `reorganise` at the end of the report.", dirHint(args))
 }
