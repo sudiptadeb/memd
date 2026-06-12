@@ -152,16 +152,28 @@ Team roles are:
 |------|------------|
 | `owner` | Manage everything, demote/remove admins, and delete the team. |
 | `admin` | Manage members, invite links, and team-scoped directories/connectors. |
-| `member` | View team-scoped directories/connectors. |
-| `viewer` | Lower-access membership role for shared read-oriented use. |
+| `member` | Use team directories: build their own connectors against them, read and write. |
+| `viewer` | Read-only access to team directories. |
 
 Owners/admins can create copyable invite links with optional expiry and optional
 max-use count. Invite links can be revoked. Accepting a valid link adds the
 signed-in regular user to the team; super admins cannot join teams.
 
-Team-scoped directories/connectors stay in the creator's namespace but are
-visible to team members. Connector serving remains strict: an MCP/HTTP token can
-only access the directory IDs saved on that connector.
+### Team directories
+
+A team directory stays owned by whoever created it — marking it "team" shares it
+with the team, it doesn't move it into a separate bucket. It still appears under
+the owner's own (Personal) view *and* under the team, so sharing never makes a
+directory vanish from its owner.
+
+Sharing is deliberately simple: an owner or admin marks a directory as a team
+directory, and from then on **each team member builds their own connector**
+against it. Members don't pass around one shared connector URL — every member
+has a distinct connector and token, so the activity log attributes each
+read/write to whoever actually did it. Write access follows the team role:
+owners, admins, and members can write; viewers are read-only. Connector serving
+stays strict: an MCP/HTTP token only reaches the directory IDs saved on that
+connector, and only those the connector's owner is still entitled to.
 
 ## Self-Organising Memory
 

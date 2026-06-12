@@ -98,6 +98,7 @@ type directoryView struct {
 	Backend     string `json:"backend"`
 	Detail      string `json:"detail"`
 	Error       string `json:"error,omitempty"`
+	Owned       bool   `json:"owned"`
 	CanManage   bool   `json:"can_manage"`
 	CanAttach   bool   `json:"can_attach"`
 }
@@ -115,6 +116,7 @@ type connectorView struct {
 	Write          bool     `json:"write"`
 	DirectoryIDs   []string `json:"directory_ids"`
 	DirectoryNames string   `json:"directory_names"`
+	Owned          bool     `json:"owned"`
 	CanManage      bool     `json:"can_manage"`
 }
 
@@ -152,10 +154,15 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 	teams, _ := h.accounts.ListTeamsForUser(context.Background(), ownerUserID)
 	teamNameByID := make(map[string]string, len(teams))
 	manageableTeam := make(map[string]bool, len(teams))
+	writableTeam := make(map[string]bool, len(teams))
 	for _, team := range teams {
 		teamNameByID[team.ID] = team.Name
-		if team.Role == account.RoleOwner || team.Role == account.RoleAdmin {
+		switch team.Role {
+		case account.RoleOwner, account.RoleAdmin:
 			manageableTeam[team.ID] = true
+			writableTeam[team.ID] = true
+		case account.RoleMember:
+			writableTeam[team.ID] = true
 		}
 	}
 	dirs := h.reg.DirectoriesForUser(ownerUserID)
@@ -184,8 +191,9 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Backend:     d.Backend,
 			Detail:      detail,
 			Error:       errMsg,
+			Owned:       d.OwnerUserID == ownerUserID,
 			CanManage:   d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
-			CanAttach:   d.OwnerUserID == ownerUserID,
+			CanAttach:   d.OwnerUserID == ownerUserID || (d.TeamID != "" && writableTeam[d.TeamID]),
 		})
 	}
 	cs := h.reg.ConnectorsForUser(ownerUserID)
@@ -225,6 +233,7 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Write:          c.Write,
 			DirectoryIDs:   ids,
 			DirectoryNames: names,
+			Owned:          c.OwnerUserID == ownerUserID,
 			CanManage:      c.OwnerUserID == ownerUserID || (c.TeamID != "" && manageableTeam[c.TeamID]),
 		})
 	}
