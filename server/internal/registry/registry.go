@@ -583,6 +583,53 @@ func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (
 	return current, nil
 }
 
+// UpdateDirectoryDetailsForActor renames a directory and/or updates its
+// description. Nil fields are left unchanged. The directory's owner or a
+// manager of its team may edit.
+func (r *Registry) UpdateDirectoryDetailsForActor(actorUserID, id string, name, description *string) (config.Directory, error) {
+	if name != nil && strings.TrimSpace(*name) == "" {
+		return config.Directory{}, errors.New("name is required")
+	}
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Directory{}, err
+		}
+	}
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	for i, d := range r.cfg.Directories {
+		if d.ID != id {
+			continue
+		}
+		if d.OwnerUserID == actorUserID || (d.TeamID != "" && manageTeams[d.TeamID]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Directory{}, errors.New("directory not found")
+	}
+	current := r.cfg.Directories[idx]
+	if name != nil {
+		current.Name = strings.TrimSpace(*name)
+	}
+	if description != nil {
+		current.Description = *description
+	}
+	r.cfg.Directories[idx] = current
+	r.mu.Unlock()
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserDirectory(context.Background(), current.OwnerUserID, current); err != nil {
+			return config.Directory{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Directory{}, err
+	}
+	return current, nil
+}
+
 // UpdateDirectoryOwnerConnectorForActor designates (or clears, with "") the one
 // connector allowed to work directly on a team git directory's branch. Only the
 // directory's owner may designate, and the connector must be theirs too —

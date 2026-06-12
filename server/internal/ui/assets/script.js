@@ -134,6 +134,17 @@
     };
   }
 
+  function defaultDirEditForm() {
+    return {
+      id: "",
+      originalName: "",
+      name: "",
+      description: "",
+      err: "",
+      submitting: false
+    };
+  }
+
   function defaultConnForm() {
     return {
       name: "",
@@ -464,6 +475,7 @@
       logsWidth: parseInt(storageGet("memd-logs-w", "340"), 10) || 340,
       sheet: null,
       dirForm: defaultDirForm(),
+      dirEditForm: defaultDirEditForm(),
       connForm: defaultConnForm(),
       editForm: defaultEditForm(),
       teamForm: defaultTeamForm(),
@@ -887,6 +899,18 @@
         this.sheet = name;
       },
 
+      openDirEdit(directory) {
+        this.dirEditForm = {
+          id: directory.id,
+          originalName: directory.name,
+          name: directory.name,
+          description: directory.description || "",
+          err: "",
+          submitting: false
+        };
+        this.sheet = "dir-edit";
+      },
+
       openEdit(connector) {
         this.editForm = {
           id: connector.id,
@@ -1066,6 +1090,27 @@
           this.dirForm.err = error.message || "create failed";
         } finally {
           this.dirForm.submitting = false;
+        }
+      },
+
+      async updateDirectoryDetails() {
+        this.dirEditForm.err = "";
+        this.dirEditForm.submitting = true;
+        try {
+          await api("/api/directories/" + encodeURIComponent(this.dirEditForm.id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: this.dirEditForm.name,
+              description: this.dirEditForm.description
+            })
+          });
+          this.closeSheets();
+          await this.load();
+        } catch (error) {
+          this.dirEditForm.err = error.message || "update failed";
+        } finally {
+          this.dirEditForm.submitting = false;
         }
       },
 

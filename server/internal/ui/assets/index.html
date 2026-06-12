@@ -137,6 +137,19 @@
             </button>
           </div>
 
+          <div class="sidebar-group" x-show="user && !user.super_admin" x-cloak>
+            <div class="sidebar-label">Data</div>
+            <input class="hidden-file" type="file" x-ref="userDataImport" accept="application/json,.json" @change="importUserData($event)" />
+            <button class="nav-item" type="button" @click="exportUserData()" title="Export data">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/download.svg#icon"></use></svg>
+              <span>Export data</span>
+            </button>
+            <button class="nav-item" type="button" @click="openImportUserData()" title="Import data">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/upload.svg#icon"></use></svg>
+              <span>Import data</span>
+            </button>
+          </div>
+
           <div class="sidebar-group mobile-account" x-show="user" x-cloak>
             <div class="sidebar-label">Session</div>
             <a class="drawer-link" href="/admin" x-show="user && user.super_admin" @click="closeNav()">Admin</a>
@@ -255,9 +268,9 @@
               <span class="desc">Create teams, invite people, and share selected directories.</span>
             </div>
             <span class="spacer"></span>
-            <button class="btn secondary" type="button" @click="openSheet('team-new')">
+            <button class="btn secondary" type="button" @click="openSheet('team-new')" title="New team">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
-              New team
+              <span class="btn-label">New team</span>
             </button>
           </div>
 
@@ -299,12 +312,9 @@
               <span class="desc">Folders on this machine, or a git repo, that memd can serve to connected agents. Directories shared through a team show the team name.</span>
             </div>
             <span class="spacer"></span>
-            <input class="hidden-file" type="file" x-ref="userDataImport" accept="application/json,.json" @change="importUserData($event)" />
-            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="exportUserData()">Export data</button>
-            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openImportUserData()">Import data</button>
-            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('dir')">
+            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('dir')" title="Add directory">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
-              Add directory
+              <span class="btn-label">Add directory</span>
             </button>
           </div>
 
@@ -320,6 +330,10 @@
                     <button class="btn ghost" type="button" x-show="!directory.error" @click="openBrowser(directory)">
                       <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
                       Browse
+                    </button>
+                    <button class="btn ghost" type="button" x-show="directory.can_manage" @click="openDirEdit(directory)">
+                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/pencil.svg#icon"></use></svg>
+                      Edit
                     </button>
                     <select class="mini-select" aria-label="Share directory with team" x-show="directory.can_manage && manageableTeams().length" @change="setDirectoryTeam(directory, $event.target.value)">
                       <option value="" :selected="!directory.team_id">Personal</option>
@@ -371,9 +385,9 @@
               <span class="desc">Each connector is one URL scoped to selected directories and optional write access.</span>
             </div>
             <span class="spacer"></span>
-            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories('').length" :title="attachableDirectories('').length ? '' : 'Add a directory first'">
+            <button class="btn secondary" type="button" x-show="user && !user.super_admin" @click="openSheet('conn')" :disabled="!attachableDirectories('').length" :title="attachableDirectories('').length ? 'Add connector' : 'Add a directory first'">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
-              Add connector
+              <span class="btn-label">Add connector</span>
             </button>
           </div>
 
@@ -770,6 +784,40 @@
         <span class="spacer"></span>
         <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
         <button class="btn primary" type="submit" form="add-dir-form" :disabled="dirForm.submitting">Add directory</button>
+      </footer>
+    </aside>
+
+    <aside class="sheet" :class="sheet === 'dir-edit' ? 'open' : ''" :aria-hidden="sheet !== 'dir-edit'" :inert="sheet !== 'dir-edit'" @keydown.escape.stop="closeSheets()">
+      <header class="sheet-head">
+        <div>
+          <h3>Edit directory</h3>
+          <div class="sub" x-text="dirEditForm.originalName"></div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
+        </button>
+      </header>
+
+      <form class="sheet-body" id="edit-dir-form" @submit.prevent="updateDirectoryDetails()">
+        <div class="field">
+          <label class="field-label">Name<span class="req">*</span></label>
+          <input class="input" x-model="dirEditForm.name" required placeholder="work-notes" />
+          <div class="field-hint">Short identifier for this memory directory.</div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Description</label>
+          <input class="input" x-model="dirEditForm.description" placeholder="What this directory holds" />
+        </div>
+
+        <span class="err" x-text="dirEditForm.err" x-show="dirEditForm.err"></span>
+      </form>
+
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" @click="closeSheets()">Cancel</button>
+        <button class="btn primary" type="submit" form="edit-dir-form" :disabled="dirEditForm.submitting || !dirEditForm.name">Save changes</button>
       </footer>
     </aside>
 
