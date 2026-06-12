@@ -2381,12 +2381,12 @@ section {
 
   .section-head {
     align-items: flex-start;
-    flex-wrap: wrap;
   }
 
-  .section-head .btn {
-    width: 100%;
-    justify-content: center;
+  /* Section actions stay beside the title as icon-only buttons; the
+     full label still reaches assistive tech via the button title. */
+  .section-head .btn .btn-label {
+    display: none;
   }
 
   .card-head {

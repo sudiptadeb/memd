@@ -389,6 +389,8 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		// Pointer fields distinguish "absent" from "set to empty": a PATCH
 		// only changes the fields it carries.
 		var body struct {
+			Name             *string `json:"name"`
+			Description      *string `json:"description"`
 			TeamID           *string `json:"team_id"`
 			OwnerConnectorID *string `json:"owner_connector_id"`
 		}
@@ -398,6 +400,14 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		var d config.Directory
 		var err error
+		if body.Name != nil || body.Description != nil {
+			d, err = h.reg.UpdateDirectoryDetailsForActor(user.ID, id, body.Name, body.Description)
+			if err != nil {
+				httpErr(w, statusForAccountError(err), err)
+				return
+			}
+			logs.InfoUser(user.ID, "updated directory details id=%s name=%q", id, d.Name)
+		}
 		if body.TeamID != nil {
 			d, err = h.reg.UpdateDirectoryTeamForActor(user.ID, id, *body.TeamID)
 			if err != nil {
@@ -414,11 +424,11 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			logs.InfoUser(user.ID, "updated directory owner connector id=%s connector=%s", id, d.OwnerConnectorID)
 		}
-		if body.TeamID == nil && body.OwnerConnectorID == nil {
+		if body.Name == nil && body.Description == nil && body.TeamID == nil && body.OwnerConnectorID == nil {
 			httpErr(w, http.StatusBadRequest, fmt.Errorf("nothing to update"))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "team_id": d.TeamID, "owner_connector_id": d.OwnerConnectorID})
+		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "name": d.Name, "description": d.Description, "team_id": d.TeamID, "owner_connector_id": d.OwnerConnectorID})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
