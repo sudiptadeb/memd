@@ -36,6 +36,14 @@ func TestMCPReadOnlyConnectorBlocksMutationsAllowsReads(t *testing.T) {
 	if err := os.WriteFile(seedPath, []byte(seedBody), 0o644); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
+	// Doctrine: memory_load is the session's first call. It also satisfies
+	// the load-first guard, so the calls below exercise read-only
+	// enforcement rather than the before-load nudge. It runs before the
+	// snapshot because loading bumps MEMORY.md's managed read stats —
+	// read-path bookkeeping, not a mutation gated by Write.
+	if text, isErr, rpcErrored := callTool(t, mux, conn.Token, "memory_load", map[string]any{}); rpcErrored || isErr {
+		t.Fatalf("memory_load failed: isErr=%v text=%q", isErr, text)
+	}
 	before := snapshotTree(t, dir)
 
 	// --- Mutating tools must all be refused with the read-only error. ---
