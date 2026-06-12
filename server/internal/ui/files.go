@@ -55,11 +55,23 @@ func (h *Handler) directoryFilesAPI(w http.ResponseWriter, r *http.Request, user
 	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": entries})
 }
 
+// renderCSP is sent with markup rendered as text/html (or image/svg+xml).
+// Plain HTML only: `sandbox` gives the document an opaque origin — no
+// session, no same-origin /api access — and disables scripts, forms, popups,
+// and plugins. `default-src 'none'` blocks every network load (no JS, no
+// fetch targets, no tracking pixels); the only allowances are inline styles
+// and self-contained data: images, which never touch the network. (A blob:
+// URL would NOT work here: blobs inherit the creating page's origin, so
+// stored HTML opened via blob would run as the app with the user's session.)
+const renderCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
 // directoryRawAPI serves one file's bytes for the in-UI viewer and the
-// open-in-new-tab link. Memory content is untrusted agent-written data, so
-// markup formats are never served with an executable content type: everything
-// is text/plain except a small allowlist of binary media, and every response
-// carries a sandbox CSP as a second layer.
+// open-in-new-tab link. Memory content is untrusted agent-written data, so by
+// default markup formats are never served with an executable content type:
+// everything is text/plain except a small allowlist of binary media.
+//
+// ?render=1 opts HTML/SVG into rendering under renderCSP (see above).
+// ?download=1 serves any file as an attachment instead.
 func (h *Handler) directoryRawAPI(w http.ResponseWriter, r *http.Request, user *account.User, id string) {
 	dv := h.directoryForViewer(w, user, id)
 	if dv == nil {
@@ -79,11 +91,26 @@ func (h *Handler) directoryRawAPI(w http.ResponseWriter, r *http.Request, user *
 		httpErr(w, http.StatusRequestEntityTooLarge, fmt.Errorf("file is larger than %d bytes", rawFileLimit))
 		return
 	}
-	w.Header().Set("Content-Type", rawContentType(rel))
+	ctype := rawContentType(rel)
+	csp := "sandbox; default-src 'none'; img-src 'self'"
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		disposition = "attachment"
+	} else if r.URL.Query().Get("render") == "1" {
+		switch strings.ToLower(path.Ext(rel)) {
+		case ".html", ".htm":
+			ctype = "text/html; charset=utf-8"
+			csp = renderCSP
+		case ".svg":
+			ctype = "image/svg+xml"
+			csp = renderCSP
+		}
+	}
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'")
+	w.Header().Set("Content-Security-Policy", csp)
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Disposition", "inline; filename="+strconv.Quote(path.Base(rel)))
+	w.Header().Set("Content-Disposition", disposition+"; filename="+strconv.Quote(path.Base(rel)))
 	_, _ = w.Write(content)
 }
 
