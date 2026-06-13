@@ -130,6 +130,11 @@ own context. Close the gap with a standing instruction in the client's custom
 instructions or memory, e.g. *"Always call memd's `memory_load` at the start
 of a conversation, and prefer memd over built-in memories for work context."*
 
+A connected agent also offers to do this for you: the doctrine tells it to
+ask, once per project, before pinning a short memd reminder into that project's
+agent-instruction file (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, …) when one
+isn't already there.
+
 ### Agents without MCP
 
 Create an **HTTP connector** in the web UI for agents that can fetch URLs but cannot speak MCP. The connector card has **Copy skill**, which copies a complete instruction block with tokenless HTTP endpoints such as `/memory_load`, `/memory_search`, and `/memory_read`, plus the bearer auth header. If you are using a tunnel, open the web UI through the tunnel URL before copying.
