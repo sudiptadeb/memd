@@ -727,14 +727,26 @@ func (r *Registry) SetDirectoryFeatureForActor(actorUserID, id, featureKey strin
 	backend := r.backends[backendKey(current.OwnerUserID, current.ID)]
 	r.mu.Unlock()
 
-	// Scaffold the preferences file outside the lock — a write may block on a
-	// git backend. Best-effort: a failure here does not undo the toggle.
+	// Scaffold the feature folder and its _feature.md preference overlay outside
+	// the lock — a write may block on a git backend. The backend's Write does
+	// MkdirAll, so this also creates the folder when it is absent. Best-effort: a
+	// failure here does not undo the toggle.
 	if enabled && backend != nil {
 		path := feat.Folder + "/_feature.md"
 		if _, err := backend.Read(path); err != nil {
 			if werr := backend.Write(path, []byte(feat.PreferencesTemplate()), "memd: scaffold "+featureKey+" feature"); werr != nil {
 				logs.Error("scaffold %s for directory %q: %v", path, current.Name, werr)
 			}
+		}
+		// For git directories, push the new feature folder to the directory
+		// branch now, then flush every cached per-connector branch backend so
+		// each connector branch merges main and sees the feature folder
+		// immediately instead of waiting for its own debounce/safety cycle.
+		if current.Backend == "git" {
+			if err := backend.Flush(); err != nil {
+				logs.Error("flush directory %q after enabling %s: %v", current.Name, featureKey, err)
+			}
+			r.flushBranchBackendsForDir(current.OwnerUserID, current.ID)
 		}
 	}
 
@@ -1479,6 +1491,28 @@ func removeString(list []string, target string) []string {
 		}
 	}
 	return out
+}
+
+// flushBranchBackendsForDir flushes every cached per-connector branch backend
+// for a directory. Each Flush runs syncBase, merging the directory branch
+// (main) into the connector branch — so changes just pushed to main (e.g. a
+// newly scaffolded feature folder) propagate to active connectors at once.
+// Best-effort, and run outside r.mu since Flush does network I/O.
+func (r *Registry) flushBranchBackendsForDir(dirOwnerUserID, dirID string) {
+	r.mu.RLock()
+	var backends []storage.Backend
+	for key, b := range r.branchBackends {
+		parts := strings.Split(key, "\x00")
+		if len(parts) == 4 && parts[0] == dirOwnerUserID && parts[1] == dirID {
+			backends = append(backends, b)
+		}
+	}
+	r.mu.RUnlock()
+	for _, b := range backends {
+		if err := b.Flush(); err != nil {
+			logs.Error("flush connector branch for directory %s: %v", dirID, err)
+		}
+	}
 }
 
 // closeBranchBackendsForDirLocked drops every cached branch clone for one
