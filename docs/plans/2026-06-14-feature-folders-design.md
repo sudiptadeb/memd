@@ -84,6 +84,21 @@ Consequences:
   the long tail of user features gets file-browser access. Good scalability story: invest
   custom UI only where it's earned.
 
+### 3.1 Enablement & doctrine delivery (decided)
+
+- **Enablement is stored in the DB and toggled in the UI**, *independent of folder
+  presence*. A user can disable `tasks` while the `tasks/` folder still exists — **disable
+  is not delete**; the data stays and the feature can be re-enabled. The DB is the source of
+  truth for "is this feature on for this directory"; the folder is the source of truth for
+  the data.
+- **Doctrine is always delivered from `_feature.md` inside the folder** (agent-readable and
+  agent-editable, so self-improvement works for built-ins too). Built-ins ship a **code
+  default** that seeds `_feature.md` when the feature is enabled and acts as a fallback if
+  the file is missing. This unifies the two tiers' doctrine path — the *only* difference
+  between a built-in and a user feature is that built-ins also have parser + rich UI code.
+- **A disabled feature is simply not surfaced** in `memory_load` and its rich UI is hidden;
+  nothing is deleted.
+
 ---
 
 ## 4. Tasks — the first built-in feature
@@ -213,21 +228,86 @@ exactly as today.
 
 ## 7. Open questions (still genuinely undecided)
 
-1. **How a directory "enables" a feature** — is it purely folder presence (`tasks/` with a
-   `_feature.md` exists), or is there also a per-directory feature list in the data model /
-   UI toggle? Leaning: folder presence is the source of truth; the UI offers "add feature"
-   that scaffolds the folder.
+1. **How a directory "enables" a feature** — *DECIDED:* enablement is stored in the DB and
+   toggled in the UI, independent of folder presence; disable ≠ delete (see §3.1).
 2. **Board: maintained vs. derived** — agreed the file contents are the source of truth and
    the board is derived; still to decide whether the agent refreshes it on every write or
    only on a tidy/`housekeep`-style pass.
 3. **Task identity** — line+read-modify-write to start; if/when to introduce stable id
    tokens.
-4. **Tools vs. doctrine-only for tasks** — start doctrine-only (agent manages files with the
-   existing `memory_*` tools), and only add thin `tasks_*` tools if the agent proves sloppy
-   at the markdown in practice.
+4. **Tools vs. doctrine-only for tasks** — *DECIDED:* doctrine-only first (agent manages
+   files with the existing `memory_*` tools); add thin `tasks_*` tools later only if the
+   agent proves sloppy at the markdown in practice.
 5. **Calendar specifics** — recurrence (RRULE-in-frontmatter vs. materialized occurrences),
    timezones, all-day events — deferred to the calendar feature's own design.
 6. **Naming** — `_feature.md` vs. another marker name; board filename.
+
+---
+
+## 9. Implementation plan — framework, Phase 1 (doctrine-only)
+
+Goal of Phase 1: a directory can have features **enabled/disabled in the UI (DB-backed)**,
+and an enabled feature's **doctrine is surfaced to the agent** via `memory_load`. Tasks is
+the first built-in, doctrine-only (no `tasks_*` tools, no parser, no rich UI yet).
+
+### 9.1 New package: `server/internal/feature`
+- `Feature` descriptor: `Key`, `Name`, `Folder` (root folder name, e.g. `tasks`),
+  `Builtin bool`, `DefaultDoctrine() string` (the seed/fallback prose).
+- `Registry` of built-ins: `tasks` (real), `calendar` (registered but marked
+  coming-soon/optional). `Builtins()` for the UI to list; `Lookup(key)`.
+- This package has no DB/storage deps — pure descriptors.
+
+### 9.2 Data model
+- `config.Directory` (`internal/config/config.go`): add
+  `Features []DirectoryFeature` where `DirectoryFeature{ Key string; Enabled bool }`
+  (room to add per-feature `Settings` later). Serialises into `config.json` for free.
+- DB (`internal/account`):
+  - `schema.go`: bump `latestSchemaVersion` 7 → 8; add `features TEXT NOT NULL DEFAULT ''`
+    (JSON) to the `user_directories` CREATE TABLE for fresh DBs.
+  - `store.go ensureUserDirectoryColumns`: add the `features` column on existing DBs
+    (same probe-then-ALTER pattern already used for `git_auth_*` / `owner_connector_id`).
+  - `user_data.go`: `upsertUserDirectory` marshals `Features` into the column;
+    `ListUserDirectories` unmarshals it.
+  - Add a `migration_test.go` case for the v7→v8 upgrade (mirrors existing cases).
+
+### 9.3 Registry (`internal/registry/registry.go`)
+- `Features` flows through automatically once it's on `config.Directory` (load path already
+  copies directories into `r.cfg.Directories`).
+- New method `SetDirectoryFeatureForActor(actorUserID, dirID, featureKey string, enabled bool)`
+  — modeled on `UpdateDirectoryTeamForActor`: ownership/team-manage check, validate
+  `featureKey` against `feature.Registry`, update the directory's `Features`, persist via
+  `accounts.UpsertUserDirectory` (or `save()` in config mode).
+- On enable, **scaffold the feature folder** if missing: write `<Folder>/_feature.md` with
+  the feature's `DefaultDoctrine()` (via the directory's backend). Lazy is acceptable, but
+  doing it on enable means `memory_load` always has a file to read.
+
+### 9.4 MCP surfacing (`internal/mcp/mcp.go`)
+- `New(...)` gains a `*feature.Registry` param (thread through `serve.go` construction).
+- `activeMemorySection(conn)`: for each `DirectoryView`, after the `MEMORY.md` block, render
+  a **Features** block — for every *enabled* feature on that directory: read
+  `<Folder>/_feature.md` from the backend (fallback to `DefaultDoctrine()` if absent),
+  and include the doctrine plus a one-line pointer to the folder. Disabled features are
+  skipped. No change to the global `instructions` (features are per-directory, not global).
+
+### 9.5 Web UI (`internal/ui/ui.go` + embedded assets)
+- `directoryView` / `pageData`: add `Features []featureToggleView{ Key, Name, Enabled }`,
+  built from `feature.Registry.Builtins()` × the directory's stored `Features`.
+- `directoryAPI` PATCH: add a `Features *map[string]bool` (or a dedicated
+  `/api/directories/<id>/features`) branch that calls `SetDirectoryFeatureForActor`.
+- Directory card gets a small **Features** section with on/off toggles. (This toggle is the
+  only required UI for Phase 1; rich task UI is Phase 2.)
+
+### 9.6 Tests
+- `feature` registry lookup/list.
+- store: features column round-trips; v7→v8 migration.
+- registry: `SetDirectoryFeatureForActor` enable/disable + permission checks.
+- mcp: `activeMemorySection` includes an enabled feature's doctrine and omits a disabled
+  one; reads `_feature.md` override when present, falls back to the code default.
+
+### 9.7 Phase 2 and beyond (not now)
+Tasks parser + rich dashboard board/cards; thin `tasks_*` tools if needed; the `calendar`
+built-in; user-defined features surfaced in the file browser; optional external-provider
+mirror/export.
 
 ---
 
