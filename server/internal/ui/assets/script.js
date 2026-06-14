@@ -500,6 +500,12 @@
       browserFileHTML: "",
       browserFileLoading: false,
       browserFileErr: "",
+      tasksDir: null,
+      tasksLists: [],
+      tasksBoard: null,
+      tasksLoading: false,
+      tasksErr: "",
+      newListName: "",
       routeApplying: false,
       toast: "",
       toastLevel: "info",
@@ -1439,6 +1445,138 @@
         } catch (error) {
           window.alert(error.message || "import failed");
         }
+      },
+
+      // --- Tasks dashboard ---
+
+      tasksEnabled(directory) {
+        return (directory.features || []).some((f) => f.key === "tasks" && f.enabled);
+      },
+
+      async openTasks(directory) {
+        this.tasksDir = directory;
+        this.tasksLists = [];
+        this.tasksBoard = null;
+        this.tasksErr = "";
+        this.newListName = "";
+        this.sheet = "tasks";
+        await this.loadTasks();
+      },
+
+      tasksURL() {
+        return "/api/directories/" + encodeURIComponent(this.tasksDir.id) + "/tasks";
+      },
+
+      async loadTasks() {
+        if (!this.tasksDir) return;
+        this.tasksLoading = true;
+        this.tasksErr = "";
+        try {
+          const data = await api(this.tasksURL(), { cache: "no-store" });
+          this.tasksLists = data.lists || [];
+          this.tasksBoard = data.board || {};
+        } catch (error) {
+          this.tasksErr = error.message || "failed to load tasks";
+        } finally {
+          this.tasksLoading = false;
+        }
+      },
+
+      async toggleTask(task) {
+        try {
+          await api(this.tasksURL(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "toggle", file: task.file, line: task.line, expect: task.raw })
+          });
+          await this.loadTasks();
+        } catch (error) {
+          this.showToast(error.message || "toggle failed", "error");
+          await this.loadTasks();
+        }
+      },
+
+      async addTask(file, event) {
+        const input = event.target.querySelector('input[type="text"]');
+        const title = input ? input.value.trim() : "";
+        if (!title) return;
+        try {
+          await api(this.tasksURL(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "add", file: file, title: title })
+          });
+          if (input) input.value = "";
+          await this.loadTasks();
+        } catch (error) {
+          this.showToast(error.message || "add failed", "error");
+        }
+      },
+
+      async addList(event) {
+        const name = this.newListName.trim();
+        if (!name) return;
+        const title = window.prompt("First task for “" + name + "”:");
+        if (title === null || !title.trim()) return;
+        try {
+          await api(this.tasksURL(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "add", list_name: name, title: title.trim() })
+          });
+          this.newListName = "";
+          await this.loadTasks();
+        } catch (error) {
+          this.showToast(error.message || "create list failed", "error");
+        }
+      },
+
+      boardBuckets() {
+        const b = this.tasksBoard || {};
+        return [
+          { key: "overdue", label: "Overdue", items: b.overdue || [] },
+          { key: "due_soon", label: "Due this week", items: b.due_soon || [] },
+          { key: "later", label: "Later", items: b.later || [] },
+          { key: "no_date", label: "No date", items: b.no_date || [] }
+        ].filter((bucket) => bucket.items.length);
+      },
+
+      listName(file) {
+        const list = (this.tasksLists || []).find((l) => l.file === file);
+        if (list) return list.name;
+        const base = (file || "").split("/").pop() || "";
+        return base.replace(/\.md$/i, "");
+      },
+
+      formatDue(due) {
+        if (!due) return "";
+        const parts = due.split("-");
+        if (parts.length !== 3) return due;
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const m = parseInt(parts[1], 10) - 1;
+        if (m < 0 || m > 11) return due;
+        return months[m] + " " + parseInt(parts[2], 10);
+      },
+
+      dueClass(due) {
+        if (!due) return "";
+        const today = new Date();
+        const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const d = new Date(due + "T00:00:00");
+        if (isNaN(d.getTime())) return "";
+        const days = Math.round((d - t) / 86400000);
+        if (days < 0) return "overdue";
+        if (days <= 7) return "soon";
+        return "later";
+      },
+
+      // Resolve a promoted-task link (relative to the list's folder) to its raw
+      // file URL so it opens in a new tab.
+      rawFileURLFor(listFile, link) {
+        if (!this.tasksDir) return "";
+        const dir = listFile.includes("/") ? listFile.slice(0, listFile.lastIndexOf("/")) : "";
+        const target = dir ? dir + "/" + link : link;
+        return "/api/directories/" + encodeURIComponent(this.tasksDir.id) + "/raw?path=" + encodeURIComponent(target);
       },
 
       async openBrowser(directory) {
