@@ -2450,6 +2450,21 @@ section {
 
   .section-head {
     align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* On a phone the title + description take a full row and the action cluster
+     (filter, toggles, refresh) wraps onto its own row below, instead of
+     squeezing the title column to a one-word-per-line sliver. */
+  .section-head .titles {
+    flex: 1 1 100%;
+  }
+  .section-head .spacer {
+    display: none;
+  }
+  .section-head .mini-select {
+    flex: 1 1 140px;
+    min-width: 0;
   }
 
   /* Section actions stay beside the title as icon-only buttons; the
