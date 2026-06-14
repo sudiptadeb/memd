@@ -102,12 +102,24 @@ dashboard round-trip.
 |------|------|
 | `server/internal/tasks/tasks.go` | grammar parser + board derivation + surgical line edits (`ParseFile`, `BuildList`, `BuildBoard`, `ToggleLine`, `AppendTask`) — no deps |
 | `server/internal/tasks/tasks_test.go` | parser/toggle/board/append unit tests |
-| `server/internal/ui/tasks.go` | `GET/POST /api/directories/<id>/tasks` — board read + toggle/add mutations, path-safety guard |
-| `server/internal/ui/tasks_test.go` | endpoint tests (board, toggle, stale-guard, add-new-list, path-escape, disabled) |
+| `server/internal/ui/tasks.go` | `GET/POST /api/directories/<id>/tasks` (per-dir board read + toggle/add) and `GET /api/tasks` (cross-directory aggregate), path-safety guard |
+| `server/internal/ui/tasks_test.go` | endpoint tests (board, toggle, stale-guard, add-new-list, path-escape, disabled, aggregate, aggregate-excludes-disabled) |
 | `server/internal/registry/registry.go` | `DirectoryViewForUser` now populates `CanWrite` so the UI can authorize edits |
-| `server/internal/ui/ui.go` | dispatches the `tasks` sub-resource (reads **and** writes) ahead of the GET-only switch |
-| `server/internal/ui/assets/{index.html,script.js,style.css}` | Tasks button + Tasks sheet (board buckets, per-list cards, checkboxes, subtasks, due/prio/tag chips, add task, new list) |
-| `server/internal/ui/assets/icons/list-checks.svg` | Tasks button icon |
+| `server/internal/ui/ui.go` | dispatches the `tasks` sub-resource (reads **and** writes); mounts `/api/tasks` |
+| `server/internal/ui/assets/{index.html,script.js,style.css}` | **Tasks** sidenav view — cross-directory aggregate, grouped by directory, filterable, URL-persisted (`#tasks=<dir|all>`); board buckets, per-list cards, checkboxes, subtasks, chips, add task, new list |
+| `server/internal/ui/assets/icons/list-checks.svg` | Tasks nav/button icon |
+
+### Tasks view (cross-directory)
+- A top-level **Tasks** entry in the sidenav (and mobile quick-switcher) shows every
+  tasks-enabled directory the user can see, each as its own group (board + lists). A
+  directory dropdown filters to one. A directory card's **Tasks** button jumps into this
+  view pre-filtered to that directory (the per-directory slide-over sheet was retired in
+  favour of one page).
+- **URL persistence:** the view + filter live in the hash (`#tasks=all` / `#tasks=<dirID>`),
+  pushed on navigation and restored by the hash router on reload — so refresh and deep-links
+  work, mirroring the existing browse-sheet routing.
+- Mutations still post to the per-directory `/api/directories/<id>/tasks`; the aggregate
+  `GET /api/tasks` is re-read after each edit.
 
 ### How it works
 - **Parser** (`ParseFile`): a checklist line `- [ ] title due:YYYY-MM-DD prio:high #tag`

@@ -3087,3 +3087,19 @@ button.crumb:hover {
 .prio-chip.prio-med { color: var(--warning); }
 .prio-chip.prio-low { color: var(--fg-3); }
 .tag-chip { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 35%, var(--border)); }
+
+/* --- Tasks view (cross-directory) --- */
+.tasks-section .task-board { margin-bottom: 1rem; }
+.tasks-group { margin-bottom: 2rem; }
+.tasks-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 650;
+}
+.tasks-group-head .icon { width: 1rem; height: 1rem; color: var(--fg-3); }
+.tasks-group-name { font-size: 1rem; }
+.tasks-group-head .task-list-counts { margin-left: auto; }

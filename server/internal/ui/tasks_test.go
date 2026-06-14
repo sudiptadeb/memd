@@ -114,6 +114,58 @@ func TestTasksGetReturnsListsAndBoard(t *testing.T) {
 	}
 }
 
+func TestTasksAllAggregates(t *testing.T) {
+	mux, handler, user, dirID, _ := newTasksFixture(t)
+	rec := tasksReq(t, mux, handler, user, http.MethodGet, "/api/tasks", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Directories []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			CanWrite bool   `json:"can_write"`
+			Lists    []struct {
+				Name string `json:"name"`
+				Open int    `json:"open"`
+			} `json:"lists"`
+		} `json:"directories"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Directories) != 1 {
+		t.Fatalf("directories = %+v", resp.Directories)
+	}
+	d := resp.Directories[0]
+	if d.ID != dirID || d.Name != "work" || !d.CanWrite {
+		t.Errorf("dir = %+v", d)
+	}
+	if len(d.Lists) != 1 || d.Lists[0].Name != "inbox" || d.Lists[0].Open != 1 {
+		t.Errorf("lists = %+v", d.Lists)
+	}
+}
+
+func TestTasksAllExcludesDisabled(t *testing.T) {
+	mux, handler, user, dirID, _ := newTasksFixture(t)
+	if _, err := handler.reg.SetDirectoryFeatureForActor(user.ID, dirID, "tasks", false); err != nil {
+		t.Fatal(err)
+	}
+	rec := tasksReq(t, mux, handler, user, http.MethodGet, "/api/tasks", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Directories []json.RawMessage `json:"directories"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Directories) != 0 {
+		t.Errorf("expected no directories when tasks disabled, got %d", len(resp.Directories))
+	}
+}
+
 func TestTasksToggle(t *testing.T) {
 	mux, handler, user, dirID, root := newTasksFixture(t)
 	body := `{"action":"toggle","file":"tasks/inbox.md","line":1,"expect":"- [ ] buy milk due:2099-01-01"}`
