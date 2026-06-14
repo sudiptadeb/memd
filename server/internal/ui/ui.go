@@ -405,6 +405,12 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	tail := r.URL.Path[len("/api/directories/"):]
 	id, action, _ := strings.Cut(tail, "/")
+	// The tasks dashboard is the one sub-resource that both reads (GET) and
+	// mutates (POST), so it is dispatched before the GET-only switch below.
+	if action == "tasks" {
+		h.directoryTasksAPI(w, r, user, id)
+		return
+	}
 	if r.Method == http.MethodGet {
 		switch action {
 		case "files":

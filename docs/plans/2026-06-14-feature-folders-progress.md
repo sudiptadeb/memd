@@ -1,8 +1,8 @@
 # Feature Folders — Progress & Next Steps
 
 **Companion to:** [`2026-06-14-feature-folders-design.md`](2026-06-14-feature-folders-design.md) (the design + decisions).
-**This file:** what is built, what is verified, and the Phase 2 plan.
-**As of:** 2026-06-14. **Branch:** `claude/connector-integration-framework-m35efg` (merged to `main`, fast-forward).
+**This file:** what is built, what is verified, and what comes after Phase 2.
+**As of:** 2026-06-14. Phases 1 + 2 are on `main`.
 
 ---
 
@@ -16,7 +16,8 @@
 | UI: directory feature toggles | ✅ built (not browser-smoke-tested) |
 | UI: super-admin live doctrine editor | ✅ built (not browser-smoke-tested) |
 | Git: folder scaffold + branch propagation on enable | ✅ built + git test |
-| Phase 2: tasks board + grammar parser + dashboard task UI | ⬜ not started |
+| Phase 2: grammar parser + derived board + dashboard task UI | ✅ built, tested, browser-verified |
+| Phase 2: thin `tasks_*` tools | ⬜ deferred (doctrine-only still holds; add only if agent proves sloppy) |
 | Calendar feature | ⬜ coming-soon stub only |
 | User-defined (non-built-in) features | ⬜ not started |
 
@@ -75,41 +76,72 @@ account v7→v8 migration. Full `go test ./server/...` + `go vet` green.
 
 ---
 
-## Phase 2 plan — make tasks real (parser + board + dashboard UI)
+## What shipped in Phase 2
 
-Phase 1 is doctrine-only: the agent manages task files with the existing `memory_*` tools.
-Phase 2 adds the structured layer so the dashboard can render a clean task UI.
+The structured layer is in: a hardcoded tasks grammar, a board derived live from the files,
+and a real dashboard task view. The files stay the single source of truth — parse is for
+display, edits are surgical line ops, so an agent's or human's notes/formatting survive a
+dashboard round-trip.
 
-1. **Task grammar parser** (new, in `feature` or a `feature/tasks` subpackage)
-   - Parse a list file into tasks: `- [ ] title due:YYYY-MM-DD prio:high #tag` + indented
-     subtasks + free `note:` lines. Parse promoted task files via YAML front matter
-     (reuse `storage/frontmatter.go`).
-   - **Round-trip safety:** parse-to-model for display; **edit by surgical line ops**
-     (toggle just the `[ ]`→`[x]`, rewrite one line's tokens) — never blind re-serialize.
-   - Identity: file+line read-modify-write to start; optional `^id` token later.
+### File map (Phase 2 additions)
 
-2. **Board / overview** — derive a front-page summary (open by deadline/status, links) from
-   the files; decide refresh trigger (on write vs. a tidy pass). Files are source of truth.
+| File | Role |
+|------|------|
+| `server/internal/tasks/tasks.go` | grammar parser + board derivation + surgical line edits (`ParseFile`, `BuildList`, `BuildBoard`, `ToggleLine`, `AppendTask`) — no deps |
+| `server/internal/tasks/tasks_test.go` | parser/toggle/board/append unit tests |
+| `server/internal/ui/tasks.go` | `GET/POST /api/directories/<id>/tasks` — board read + toggle/add mutations, path-safety guard |
+| `server/internal/ui/tasks_test.go` | endpoint tests (board, toggle, stale-guard, add-new-list, path-escape, disabled) |
+| `server/internal/registry/registry.go` | `DirectoryViewForUser` now populates `CanWrite` so the UI can authorize edits |
+| `server/internal/ui/ui.go` | dispatches the `tasks` sub-resource (reads **and** writes) ahead of the GET-only switch |
+| `server/internal/ui/assets/{index.html,script.js,style.css}` | Tasks button + Tasks sheet (board buckets, per-list cards, checkboxes, subtasks, due/prio/tag chips, add task, new list) |
+| `server/internal/ui/assets/icons/list-checks.svg` | Tasks button icon |
 
-3. **Dashboard task UI** (`ui` + assets) — a real task view for tasks-enabled directories:
-   list/board of cards with checkboxes, due chips, subtasks; check/edit calls a new
-   tasks API that does the surgical line edit. This is the "clean interface" the design
-   targets.
+### How it works
+- **Parser** (`ParseFile`): a checklist line `- [ ] title due:YYYY-MM-DD prio:high #tag`
+  becomes a `Task`; indented `- [ ]` lines are subtasks; any other indented line (or a
+  `note:` line) attaches to the task as a verbatim note; a leading `[text](file.md)` is
+  parsed as a promotion link. Line numbers are 1-based over the file **as stored** (front
+  matter included), so the UI can target the exact line.
+- **Board** (`BuildBoard`): open top-level tasks bucketed Overdue / Due-this-week / Later /
+  No-date by `due:`, plus per-list open/total counts. Recomputed on every GET — never a
+  trusted stored index.
+- **Edit safety:** `ToggleLine` flips only the box marker on one line and refuses if the
+  client's `expect` (the raw line it last saw) no longer matches — a stale board cannot
+  toggle the wrong task. `AppendTask` adds a line; both go through the backend's managed
+  `Write` (which adds/keeps the `memd:` stats block exactly as for any memory file). The UI
+  re-fetches after each mutation, so the front-matter the first write injects only shifts
+  line numbers *between* fetches, which the `expect` guard absorbs.
+- **Auth:** GET requires directory view access; POST requires `CanWrite` (owner or
+  write-role team member). Files are constrained to `tasks/<name>.md` (no traversal, no
+  nested folders, no `_` markers).
 
-4. **(Optional) thin `tasks_*` tools** — only if the agent proves sloppy editing markdown
-   in real use; Phase 1 deliberately defers them.
+### Tests + verification
+`go test ./server/...` + `go vet` green. Beyond unit/endpoint tests, the full stack was
+**browser-verified** (headless Chromium): logged in as a non-admin user, enabled Tasks,
+opened the dashboard (board buckets + list cards + subtasks + the italic note + chips all
+render), clicked a checkbox → POST toggle → reload → row struck through and `- [x]`
+persisted on disk; added a task and created a new list via the UI.
 
-5. **Then:** calendar feature (its own design for recurrence/timezones/all-day);
-   user-defined features surfaced in the existing file browser; optional one-way external
-   mirror (Google/Zoho) — explicitly later and not a dependency.
+## What's next (beyond Phase 2)
+
+1. **(Optional) thin `tasks_*` tools** — only if the agent proves sloppy editing markdown
+   in real use; doctrine-only still holds for now.
+2. **Promoted-task files** — surface single-task files (YAML front matter: status/due/prio)
+   in the board alongside list lines; today only checklist lines in list files are parsed.
+3. **Board-as-MEMORY.md / `_board.md`** — optionally let the agent persist the derived board
+   so memd's existing preload surfaces it for free (still regenerated, never trusted blind).
+4. **Calendar feature** (its own design for recurrence/timezones/all-day); user-defined
+   features in the file browser; optional one-way external mirror (Google/Zoho) — later, not
+   a dependency.
 
 ### Open questions carried forward (design doc §7)
-Board refresh timing; task identity (line vs `^id`); calendar file conventions; whether to
-add `tasks_*` tools.
+Board refresh timing (now: derived live on read; persisting it is item 3 above); task
+identity (line + `expect` guard today, optional `^id` token later); calendar file
+conventions.
 
 ---
 
 ## How to resume
 1. Read the design doc (decisions) then this file (state).
-2. Branch `claude/connector-integration-framework-m35efg` == `main`.
-3. Start Phase 2 at the **task grammar parser** — everything else (board, UI) builds on it.
+2. Phases 1 + 2 are on `main`. The tasks dashboard is live for any tasks-enabled directory.
+3. Next natural step is promoted-task files (item 2) or the calendar feature.

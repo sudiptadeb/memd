@@ -1383,17 +1383,22 @@ func (r *Registry) DirectoriesForUser(ownerUserID string) []config.Directory {
 // unknown or not visible to this user. The Backend field is nil when the
 // directory exists but its backend failed to open.
 func (r *Registry) DirectoryViewForUser(userID, id string) *DirectoryView {
-	viewTeams, _, _ := r.teamAccessForUser(userID)
+	viewTeams, writeTeams, _ := r.teamAccessForUser(userID)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, d := range r.cfg.Directories {
 		if d.ID != id {
 			continue
 		}
-		if d.OwnerUserID != userID && (d.TeamID == "" || !viewTeams[d.TeamID]) {
+		owned := d.OwnerUserID == userID
+		if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 			continue
 		}
-		return &DirectoryView{Directory: d, Backend: r.backends[backendKey(d.OwnerUserID, d.ID)]}
+		return &DirectoryView{
+			Directory: d,
+			Backend:   r.backends[backendKey(d.OwnerUserID, d.ID)],
+			CanWrite:  owned || (d.TeamID != "" && writeTeams[d.TeamID]),
+		}
 	}
 	return nil
 }

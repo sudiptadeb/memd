@@ -2944,3 +2944,146 @@ button.crumb:hover {
   line-height: 1.45;
   resize: vertical;
 }
+
+/* --- Tasks dashboard --- */
+.tasks-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.tasks-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.task-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.board-bucket {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface);
+}
+.board-bucket.overdue {
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--border));
+  background: color-mix(in oklab, var(--danger) 7%, transparent);
+}
+.board-bucket.due_soon {
+  border-color: color-mix(in oklab, var(--warning) 40%, var(--border));
+  background: color-mix(in oklab, var(--warning) 7%, transparent);
+}
+.board-bucket-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--fg-2);
+}
+.board-bucket-name { text-transform: uppercase; letter-spacing: 0.03em; }
+.board-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.18rem 0;
+  font-size: 0.88rem;
+}
+.board-item input[type="checkbox"] { flex: none; cursor: pointer; }
+.board-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-list-ref { font-size: 0.72rem; color: var(--fg-3); }
+
+.task-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.task-list-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.task-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.task-list-name { font-weight: 650; font-size: 0.95rem; text-transform: capitalize; }
+.task-list-counts { font-size: 0.76rem; color: var(--fg-3); }
+.task-rows { display: flex; flex-direction: column; }
+.task-row {
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.task-row:last-child { border-bottom: none; }
+.task-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.task-row-main input[type="checkbox"] { width: 1rem; height: 1rem; flex: none; cursor: pointer; }
+.task-title { flex: 1; min-width: 8rem; font-size: 0.9rem; }
+.task-title a { color: var(--accent); text-decoration: none; }
+.task-title a:hover { text-decoration: underline; }
+.task-row.done .task-title { color: var(--fg-3); text-decoration: line-through; }
+.task-subs {
+  margin: 0.35rem 0 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.task-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.83rem;
+  color: var(--fg-2);
+}
+.task-sub input[type="checkbox"] { flex: none; cursor: pointer; }
+.task-sub.done span { color: var(--fg-3); text-decoration: line-through; }
+.task-notes { margin: 0.3rem 0 0 1.5rem; }
+.task-note {
+  font-size: 0.8rem;
+  color: var(--fg-3);
+  font-style: italic;
+  padding: 0.05rem 0;
+}
+.task-empty, .task-empty-all { padding: 0.7rem 0.9rem; color: var(--fg-3); font-size: 0.85rem; }
+.task-add {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.task-add .input { flex: 1; }
+.task-new-list {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.task-new-list .input { flex: 1; }
+
+.due-chip, .prio-chip, .tag-chip {
+  font-size: 0.72rem;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex: none;
+}
+.due-chip.overdue { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 45%, var(--border)); background: color-mix(in oklab, var(--danger) 9%, transparent); }
+.due-chip.soon { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, var(--border)); background: color-mix(in oklab, var(--warning) 9%, transparent); }
+.due-chip.later { color: var(--fg-2); }
+.prio-chip.prio-high { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 45%, var(--border)); }
+.prio-chip.prio-med { color: var(--warning); }
+.prio-chip.prio-low { color: var(--fg-3); }
+.tag-chip { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 35%, var(--border)); }
