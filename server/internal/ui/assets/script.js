@@ -1368,6 +1368,20 @@
         }
       },
 
+      async setDirectoryFeature(directory, key, enabled) {
+        try {
+          await api("/api/directories/" + encodeURIComponent(directory.id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ feature: { key: key, enabled: enabled } })
+          });
+          await this.load();
+        } catch (error) {
+          window.alert(error.message || "update failed");
+          await this.load();
+        }
+      },
+
       // Your own connectors that have this directory attached — the candidates
       // for the directory's main-branch connector.
       ownConnectorsForDirectory(directory) {

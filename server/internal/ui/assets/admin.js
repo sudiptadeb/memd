@@ -85,6 +85,7 @@
       showLocalLogin: false,
       ssoRedirecting: false,
       users: [],
+      doctrines: [],
       loading: false,
       loadErr: "",
       loginForm: defaultLoginForm(),
@@ -110,6 +111,7 @@
         if (this.user && this.user.super_admin) {
           await this.loadUsers();
           await this.loadOIDC();
+          await this.loadDoctrines();
         }
       },
 
@@ -254,6 +256,44 @@
           this.oidcForm.err = error.message || "could not save OIDC settings";
         } finally {
           this.oidcForm.saving = false;
+        }
+      },
+
+      async loadDoctrines() {
+        try {
+          const data = await api("/api/admin/doctrines", { cache: "no-store" });
+          this.doctrines = (data.doctrines || []).map(function (d) {
+            return Object.assign({ saving: false }, d);
+          });
+        } catch (error) {
+          this.showToast(error.message || "could not load doctrines");
+        }
+      },
+
+      async saveDoctrine(d) {
+        d.saving = true;
+        try {
+          await api("/api/admin/doctrines/" + encodeURIComponent(d.id), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: d.text })
+          });
+          d.overridden = true;
+          this.showToast("Doctrine applied (temporary)");
+        } catch (error) {
+          window.alert(error.message || "could not apply doctrine");
+        } finally {
+          d.saving = false;
+        }
+      },
+
+      async resetDoctrine(d) {
+        try {
+          await api("/api/admin/doctrines/" + encodeURIComponent(d.id), { method: "DELETE" });
+          await this.loadDoctrines();
+          this.showToast("Doctrine reset to default");
+        } catch (error) {
+          window.alert(error.message || "could not reset doctrine");
         }
       },
 
