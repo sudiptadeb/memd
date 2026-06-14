@@ -13,6 +13,7 @@
 | Strategic validation (market research) | ✅ done — recorded in design doc §1 |
 | Design decisions | ✅ locked — design doc §1–§8 |
 | Phase 1: framework + tasks (doctrine-only) | ✅ built, tested, merged to `main` |
+| Phase 1.5: deduped doctrine + derived task summary in `memory_load` | ✅ built + tested |
 | UI: directory feature toggles | ✅ built (not browser-smoke-tested) |
 | UI: super-admin live doctrine editor | ✅ built (not browser-smoke-tested) |
 | Git: folder scaffold + branch propagation on enable | ✅ built + git test |
@@ -46,13 +47,25 @@ can live-edit any doctrine in memory (not persisted).
 | `server/internal/account/store.go` | `ensureUserDirectoryColumns` adds `features` |
 | `server/internal/account/user_data.go` | features column upsert/scan (+ marshal helpers) |
 | `server/internal/registry/registry.go` | `SetDirectoryFeatureForActor` (toggle, scaffold, git propagate) |
-| `server/internal/mcp/mcp.go` | `featureMemorySection` + global doctrine from Live |
+| `server/internal/mcp/mcp.go` | `structuredMemoryDoctrine` (doctrine once/load) + `featureStateSection`/`taskState` (per-dir derived summary + prefs); reuses the `tasks` package board |
 | `server/internal/ui/ui.go` | `featureToggles`, directory PATCH `feature` branch |
 | `server/internal/ui/admin_doctrine.go` | `/api/admin/doctrines` endpoints |
 | `server/internal/ui/assets/{index.html,script.js}` | directory Features toggle row |
 | `server/internal/ui/assets/{admin.html,admin.js}` | Doctrines editor |
 
 ### Behavior details worth remembering
+- **Doctrine is rendered once per `memory_load`**, not once per directory. `memory_load`
+  emits a single `## Structured memory` section with each enabled kind's base doctrine +
+  an `_Enabled in: …_` list; each directory's section then carries only its derived state
+  and its `_feature.md` preferences. (Phase 1 repeated the full doctrine per directory.)
+- **Tasks surface a derived summary in the preload**, recomputed fresh from the files each
+  load by reusing the Phase 2 `tasks` package (`BuildList` + `BuildBoard`) against the
+  server clock: `N open · N done · N overdue · N due soon` plus the overdue / due-soon lines
+  (capped at 5 each). The agent's preload and the dashboard read the same grammar/board, so
+  there is no second parser. This resolves design §7.2 in favour of *derive-on-read in the
+  server* for the preload — no agent-maintained board needed for orientation. Scan reads use
+  `ReadRaw` so the load never bumps managed stats or triggers a git commit; `tasks.IsListFile`
+  skips `_`-prefixed files (`_feature.md`, `_board.md`) so a board file can't double-count.
 - **Enable** writes `<folder>/_feature.md` (a preferences template). The backend's `Write`
   does `MkdirAll`, so the folder is created on existing directories.
 - **Git directories:** on enable we `Flush()` the main backend (push the folder to the
