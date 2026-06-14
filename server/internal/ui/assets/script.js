@@ -505,6 +505,7 @@
       tasksLoading: false,
       tasksLoaded: false,
       tasksErr: "",
+      tasksHideDone: storageGet("memd-tasks-hide-done", "") === "1",
       routeApplying: false,
       toast: "",
       toastLevel: "info",
@@ -664,7 +665,9 @@
           });
           this.teams = results[2].teams || [];
           this.normalizeView();
-          this.maybeShowOnboarding();
+          // Defer the onboarding view switch to the next tick so it is not
+          // batched into the same reactive flush as loading=false / fresh data.
+          this.$nextTick(() => this.maybeShowOnboarding());
         } catch (error) {
           if (error.status === 401) {
             this.user = null;
@@ -717,6 +720,19 @@
           this.activeView = "directories";
         }
         storageSet("memd-view", this.activeView);
+      },
+
+      // viewIs powers each main section's x-show. It reads activeView, loading
+      // and loadErr into locals *before* combining them, so all three are always
+      // registered as reactive dependencies. A bare `a === x && !b` expression
+      // short-circuits and can drop a dependency mid-flush, which wedged the
+      // initially-active section's x-show effect (it stopped reacting to
+      // activeView). Reading unconditionally avoids that entirely.
+      viewIs(name) {
+        const view = this.activeView;
+        const loading = this.loading;
+        const err = this.loadErr;
+        return view === name && !loading && !err;
       },
 
       setView(view) {
@@ -1579,6 +1595,20 @@
           { key: "later", label: "Later", items: b.later || [] },
           { key: "no_date", label: "No date", items: b.no_date || [] }
         ].filter((bucket) => bucket.items.length);
+      },
+
+      toggleHideDone() {
+        storageSet("memd-tasks-hide-done", this.tasksHideDone ? "1" : "0");
+      },
+
+      // Tasks to render for a list, dropping completed ones (and completed
+      // subtasks) when "Hide completed" is on. The files are untouched — this is
+      // display-only.
+      visibleTasks(list) {
+        if (!this.tasksHideDone) return list.tasks;
+        return (list.tasks || [])
+          .filter((t) => !t.done)
+          .map((t) => ({ ...t, subtasks: (t.subtasks || []).filter((s) => !s.done) }));
       },
 
       listName(group, file) {

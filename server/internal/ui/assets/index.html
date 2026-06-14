@@ -214,7 +214,7 @@
           </button>
         </div>
 
-        <section class="app-section info-section" x-show="activeView === 'info' && !loading && !loadErr" x-cloak>
+        <section class="app-section info-section" x-show="viewIs('info')" x-cloak>
           <div class="section-head">
             <div class="titles">
               <h2>How it works</h2>
@@ -276,7 +276,7 @@
           </div>
         </section>
 
-        <section class="app-section" x-show="activeView === 'teams' && !loading && !loadErr && user && !user.super_admin" x-cloak>
+        <section class="app-section" x-show="viewIs('teams') && user && !user.super_admin" x-cloak>
           <div class="section-head">
             <div class="titles">
               <h2>Teams <span class="count" x-text="teams.length"></span></h2>
@@ -320,7 +320,7 @@
           </template>
         </section>
 
-        <section class="app-section" x-show="activeView === 'directories' && !loading && !loadErr" x-cloak>
+        <section class="app-section" x-show="viewIs('directories')" x-cloak>
           <div class="section-head">
             <div class="titles">
               <h2>Directories <span class="count" x-text="directories.length"></span></h2>
@@ -409,13 +409,17 @@
           </template>
         </section>
 
-        <section class="app-section tasks-section" x-show="activeView === 'tasks' && !loading && !loadErr" x-cloak>
+        <section class="app-section tasks-section" x-show="viewIs('tasks')" x-cloak>
           <div class="section-head">
             <div class="titles">
               <h2>Tasks <span class="count" x-show="tasksLoaded" x-text="tasksOpenCount() + ' open'"></span></h2>
               <span class="desc">Things to do, kept as files in your directories. The files stay the source of truth.</span>
             </div>
             <span class="spacer"></span>
+            <label class="hide-done-toggle" x-show="tasksLoaded && tasksGroups().length" title="Hide completed tasks from the lists">
+              <input type="checkbox" x-model="tasksHideDone" @change="toggleHideDone()" />
+              <span>Hide completed</span>
+            </label>
             <select class="mini-select" aria-label="Filter by directory" x-model="tasksFilter" @change="setTasksFilter(tasksFilter)" x-show="tasksAll.length > 1">
               <option value="">All directories</option>
               <template x-for="d in tasksAll" :key="d.id">
@@ -474,7 +478,7 @@
                       <span class="task-list-counts" x-text="list.open + ' open · ' + list.total + ' total'"></span>
                     </header>
                     <div class="task-rows">
-                      <template x-for="t in list.tasks" :key="t.line">
+                      <template x-for="t in visibleTasks(list)" :key="t.line">
                         <div class="task-row" :class="t.done ? 'done' : ''">
                           <div class="task-row-main">
                             <input type="checkbox" :checked="t.done" :disabled="!group.can_write" @change="toggleTask(group, t)" :aria-label="'Toggle ' + t.title" />
@@ -503,7 +507,7 @@
                           </template>
                         </div>
                       </template>
-                      <div class="task-empty" x-show="!list.tasks.length">No tasks in this list yet.</div>
+                      <div class="task-empty" x-show="!visibleTasks(list).length" x-text="list.tasks.length ? 'All done here 🎉' : 'No tasks in this list yet.'"></div>
                     </div>
                     <form class="task-add" x-show="group.can_write" @submit.prevent="addTask(group, list.file, $event)">
                       <input class="input" type="text" placeholder="Add a task…" />
@@ -526,7 +530,7 @@
           </template>
         </section>
 
-        <section class="app-section" x-show="activeView === 'connectors' && !loading && !loadErr" x-cloak>
+        <section class="app-section" x-show="viewIs('connectors')" x-cloak>
           <div class="section-head">
             <div class="titles">
               <h2>Connectors <span class="count" x-text="connectors.length"></span></h2>
@@ -620,7 +624,7 @@
           </template>
         </section>
 
-        <section class="app-section logs-page-section" x-show="activeView === 'logs' && !loading && !loadErr" x-cloak>
+        <section class="app-section logs-page-section" x-show="viewIs('logs')" x-cloak>
           <header class="logs-head page-logs-head">
             <h2>Activity</h2>
             <span class="live">live</span>

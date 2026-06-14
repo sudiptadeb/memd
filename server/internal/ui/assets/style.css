@@ -3103,3 +3103,14 @@ button.crumb:hover {
 .tasks-group-head .icon { width: 1rem; height: 1rem; color: var(--fg-3); }
 .tasks-group-name { font-size: 1rem; }
 .tasks-group-head .task-list-counts { margin-left: auto; }
+
+.hide-done-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--fg-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hide-done-toggle input { cursor: pointer; }
