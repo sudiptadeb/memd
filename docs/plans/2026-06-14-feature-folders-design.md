@@ -3,13 +3,16 @@
 **Status:** Phase 1 implemented (see §9) — feature framework + tasks (doctrine-only),
 DB-backed UI toggles, and the super-admin live doctrine editor.
 
-Two refinements added during the build:
+Refinements added during the build:
 - **Agent-facing framing:** features are presented to the LLM as *kinds of structured
-  memory it can keep here* (`AgentSummary` + a "Structured memory enabled here" block in
+  memory it can keep here* (`AgentSummary` + a `## Structured memory` block in
   `memory_load`), never as abstract "features".
 - **Super-admin live doctrine editor:** `/admin` → *Doctrines* edits the global doctrine and
   each feature's base doctrine **in memory only** (no persistence; reverts on restart), via
   the `doctrine.Live` store and `/api/admin/doctrines` endpoints.
+- **Phase 1.5 (see progress doc):** the shared how-to doctrine is rendered **once per
+  `memory_load`** (not repeated per directory), and tasks surface a **server-derived
+  open/overdue/due-soon summary** scanned from the files in each directory's section.
 **Date:** 2026-06-14
 **Scope:** a framework for adding togglable, file-first *features* (tasks, calendar, …)
 to memd directories, with tasks specified as the first built-in feature.
@@ -55,7 +58,7 @@ in a team directory are independent).
   tasks/               # the "tasks" feature (this doc)
     _feature.md        # doctrine — marks this folder as a feature
     inbox.md
-    home_renovation.md
+    home-renovation.md
   calendar/            # a future feature, same pattern
     _feature.md
 ```
@@ -107,8 +110,10 @@ Consequences:
   2. **`<folder>/_feature.md` — the user-preference layer, *appended* to the base.** Where
      the user (or the agent, self-improving) adds personal rules, e.g. *"always create
      tasks 1 hour earlier than needed,"* *"no events on Sundays."*
-  At `memory_load`, memd composes **base doctrine + `_feature.md` preferences** for each
-  enabled feature on a directory.
+  At `memory_load`, memd renders each enabled kind's **base doctrine once for the whole load**
+  (with an `_Enabled in: …_` list), then in each directory's section renders that directory's
+  **derived state + `_feature.md` preferences** — so the heavy doctrine is not duplicated per
+  directory.
 - **Enabling a built-in scaffolds `_feature.md` as a preferences *template*** — a short
   header explaining "these are your personal preferences for <feature>; add your rules
   here" — **not** a copy of the base doctrine. If the file is missing, the base alone is
@@ -128,14 +133,14 @@ Consequences:
 tasks/
   _feature.md          # doctrine
   inbox.md             # default list: loose tasks start here as lines
-  home_renovation.md   # a named list
-  next_trip.md         # a named list
+  home-renovation.md   # a named list
+  next-trip.md         # a named list
   paint-bedroom.md     # a task that outgrew its line → its own file
 ```
 
 ### 4.2 Filenames are dumb addresses
 
-Filenames are **stable nouns** (`home_renovation.md`, `paint-bedroom.md`). They never
+Filenames are **stable, hyphenated nouns** (`home-renovation.md`, `paint-bedroom.md`). They never
 encode status / deadline / priority — those are multiple moving dimensions that don't fit a
 flat string and would churn the filename on every change. Status and deadlines live
 *inside* files; the overview lives in the board.
@@ -150,14 +155,14 @@ links to where each task lives:
 # Tasks — Overview
 
 ## Overdue
-- [ ] Renew passport — due Jun 10 -> next_trip.md
+- [ ] Renew passport — due Jun 10 -> next-trip.md
 
 ## Due this week
-- [ ] Paint the bedroom — due Jun 20 -> home_renovation.md
+- [ ] Paint the bedroom — due Jun 20 -> home-renovation.md
 
 ## Lists
-- home_renovation.md — 4 open / 9 total
-- next_trip.md — 3 open / 5 total
+- home-renovation.md — 4 open / 9 total
+- next-trip.md — 3 open / 5 total
 - inbox.md — 2 loose
 ```
 
@@ -249,9 +254,12 @@ exactly as today.
 
 1. **How a directory "enables" a feature** — *DECIDED:* enablement is stored in the DB and
    toggled in the UI, independent of folder presence; disable ≠ delete (see §3.1).
-2. **Board: maintained vs. derived** — agreed the file contents are the source of truth and
-   the board is derived; still to decide whether the agent refreshes it on every write or
-   only on a tidy/`housekeep`-style pass.
+2. **Board: maintained vs. derived** — *DECIDED (for the preload):* the file contents are the
+   source of truth and the server **derives** an open/overdue/due-soon summary on every
+   `memory_load` (cheap line scan, always fresh) — see Phase 1.5 in the progress doc. A
+   persistent agent-maintained board file is now optional, only for a richer human-browsable
+   page; if it exists it is `_`-prefixed so the derived scan never double-counts it. Still
+   open: whether the rich Phase-2 dashboard derives live or caches.
 3. **Task identity** — line+read-modify-write to start; if/when to introduce stable id
    tokens.
 4. **Tools vs. doctrine-only for tasks** — *DECIDED:* doctrine-only first (agent manages

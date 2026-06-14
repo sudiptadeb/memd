@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
@@ -18,6 +19,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/sudiptadeb/memd/server/internal/tasks"
 )
 
 const protocolVersion = "2025-03-26"
@@ -41,8 +43,20 @@ type Server struct {
 	serverName string
 	serverVer  string
 
+	// clock supplies "now" for time-derived rendering (e.g. flagging overdue
+	// tasks). nil means time.Now().UTC(); tests override it for determinism.
+	clock func() time.Time
+
 	mu    sync.Mutex
 	loads map[string]loadState // connector ID → memory_load tracking for the current client session
+}
+
+// now returns the current date/time used for derived rendering.
+func (s *Server) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now().UTC()
 }
 
 // loadState tracks whether a connector's current client session has called
@@ -270,6 +284,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		return sb.String()
 	}
 	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know. For deeper navigation, call `memory_list` on a folder or `memory_read` on a specific file.\n\n")
+	sb.WriteString(s.structuredMemoryDoctrine(dirs))
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
 		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
@@ -288,7 +303,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		writeTopology(&sb, d.Backend, root)
 		sb.WriteString("```\n\n")
 
-		sb.WriteString(s.featureMemorySection(d))
+		sb.WriteString(s.featureStateSection(d, root))
 
 		body, err := d.Backend.Read("MEMORY.md")
 		if err != nil {
@@ -309,14 +324,11 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 	return sb.String()
 }
 
-// featureMemorySection renders the structured-memory features enabled on a
-// directory. To the agent these read as kinds of memory it can keep here, not
-// as abstract features. For each enabled, available feature it emits the base
-// doctrine (live-overridable) followed by the user-preference overlay read from
-// <folder>/_feature.md when present.
-func (s *Server) featureMemorySection(d registry.DirectoryView) string {
+// enabledFeatures returns the enabled, available (non-coming-soon) features for
+// a directory, in the order they are stored on the directory.
+func (s *Server) enabledFeatures(d registry.DirectoryView) []feature.Feature {
 	if s.features == nil {
-		return ""
+		return nil
 	}
 	var feats []feature.Feature
 	for _, df := range d.Directory.Features {
@@ -329,13 +341,36 @@ func (s *Server) featureMemorySection(d registry.DirectoryView) string {
 		}
 		feats = append(feats, f)
 	}
-	if len(feats) == 0 {
+	return feats
+}
+
+// structuredMemoryDoctrine renders the base doctrine for every structured-memory
+// kind enabled anywhere in this load — exactly once, no matter how many
+// directories enable it. The doctrine is identical across directories (only the
+// per-directory preferences and state differ), so repeating it per directory
+// would waste preload budget. Each directory's live state and preferences are
+// rendered separately by featureStateSection.
+func (s *Server) structuredMemoryDoctrine(dirs []registry.DirectoryView) string {
+	var order []feature.Feature
+	seen := map[string]bool{}
+	where := map[string][]string{}
+	for _, d := range dirs {
+		for _, f := range s.enabledFeatures(d) {
+			if !seen[f.Key] {
+				seen[f.Key] = true
+				order = append(order, f)
+			}
+			where[f.Key] = append(where[f.Key], d.Directory.Name)
+		}
+	}
+	if len(order) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("**Structured memory enabled here.** Beyond freeform notes, you keep these kinds of memory in this directory — store and maintain them as described:\n\n")
-	for _, f := range feats {
-		fmt.Fprintf(&sb, "#### %s\n\n%s\n\n", f.Name, f.AgentSummary)
+	sb.WriteString("## Structured memory\n\n")
+	sb.WriteString("Beyond freeform notes, some directories keep these structured kinds of memory. The rules for each kind apply wherever it is enabled; each directory's current state and preferences appear in that directory's section below.\n\n")
+	for _, f := range order {
+		fmt.Fprintf(&sb, "### %s\n\n%s\n\n", f.Name, f.AgentSummary)
 		base := ""
 		if s.live != nil {
 			base = s.live.Get(doctrine.FeatureID(f.Key))
@@ -344,17 +379,118 @@ func (s *Server) featureMemorySection(d registry.DirectoryView) string {
 			base = f.BaseDoctrine()
 		}
 		sb.WriteString(base)
-		sb.WriteString("\n")
-		if d.Backend != nil {
-			if prefs, err := d.Backend.Read(f.Folder + "/_feature.md"); err == nil {
+		fmt.Fprintf(&sb, "\n\n_Enabled in: %s._\n\n", strings.Join(where[f.Key], ", "))
+	}
+	return sb.String()
+}
+
+// featureStateSection renders the per-directory state of each enabled feature: a
+// derived, always-fresh summary (for tasks, an open/overdue/due-soon digest
+// scanned from the files) plus the directory's user-preference overlay from
+// <folder>/_feature.md. The shared how-to doctrine lives once in
+// structuredMemoryDoctrine, so this section stays compact. root is the
+// directory's already-listed root entries, used to skip features whose folder
+// does not exist yet without an extra listing.
+func (s *Server) featureStateSection(d registry.DirectoryView, root []storage.DirEntry) string {
+	feats := s.enabledFeatures(d)
+	if len(feats) == 0 {
+		return ""
+	}
+	hasFolder := map[string]bool{}
+	for _, e := range root {
+		if e.IsDir {
+			hasFolder[e.Name] = true
+		}
+	}
+	var sb strings.Builder
+	for _, f := range feats {
+		fmt.Fprintf(&sb, "**%s** (structured memory):\n", f.Name)
+		if f.Key == "tasks" {
+			sb.WriteString(s.taskState(d, f, hasFolder[f.Folder]))
+		}
+		if d.Backend != nil && hasFolder[f.Folder] {
+			if prefs, err := d.Backend.ReadRaw(f.Folder + "/_feature.md"); err == nil {
 				if t := strings.TrimSpace(string(prefs)); t != "" {
-					fmt.Fprintf(&sb, "\nUser preferences (%s/_feature.md):\n%s\n", f.Folder, t)
+					fmt.Fprintf(&sb, "\nPreferences (%s/_feature.md):\n%s\n", f.Folder, t)
 				}
 			}
 		}
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// maxListedTasks caps how many overdue / due-soon task lines are spelled out in
+// the derived summary, keeping the preload bounded; the rest are counted.
+const maxListedTasks = 5
+
+// taskState renders a directory's tasks folder as a derived summary for the
+// preload, reusing the built-in tasks grammar/board so the agent sees the same
+// open/overdue/due-soon view the dashboard does. Files are read with ReadRaw so
+// the snapshot never bumps managed access stats or triggers a backend write.
+func (s *Server) taskState(d registry.DirectoryView, f feature.Feature, folderExists bool) string {
+	if d.Backend == nil || !folderExists {
+		return "- no tasks yet\n"
+	}
+	entries, err := d.Backend.ListPath(f.Folder)
+	if err != nil {
+		return ""
+	}
+	var lists []tasks.List
+	for _, e := range entries {
+		if e.IsDir || !tasks.IsListFile(e.Name) {
+			continue
+		}
+		body, err := d.Backend.ReadRaw(e.Path)
+		if err != nil {
+			continue
+		}
+		lists = append(lists, tasks.BuildList(e.Path, tasks.DisplayName(e.Name), body))
+	}
+	return renderTaskBoard(tasks.BuildBoard(lists, s.now()))
+}
+
+// renderTaskBoard turns a derived board into the compact preload summary: a
+// counts line, then the overdue and due-soon tasks (capped).
+func renderTaskBoard(b tasks.Board) string {
+	var open, total int
+	for _, l := range b.Lists {
+		open += l.Open
+		total += l.Total
+	}
+	if total == 0 {
+		return "- no tasks yet\n"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "- %d open · %d done", open, total-open)
+	if len(b.Overdue) > 0 {
+		fmt.Fprintf(&sb, " · %d overdue", len(b.Overdue))
+	}
+	if len(b.DueSoon) > 0 {
+		fmt.Fprintf(&sb, " · %d due soon", len(b.DueSoon))
+	}
+	sb.WriteString("\n")
+	writeTaskItems(&sb, "overdue", b.Overdue)
+	writeTaskItems(&sb, "due soon", b.DueSoon)
+	return sb.String()
+}
+
+func writeTaskItems(sb *strings.Builder, label string, items []tasks.Task) {
+	for i, t := range items {
+		if i >= maxListedTasks {
+			fmt.Fprintf(sb, "  - …and %d more %s\n", len(items)-maxListedTasks, label)
+			return
+		}
+		title := t.Title
+		for _, tag := range t.Tags {
+			title += " #" + tag
+		}
+		due := ""
+		if t.Due != "" {
+			due = " (due " + t.Due + ")"
+		}
+		fmt.Fprintf(sb, "  - %s: %s%s — %s\n", label, title, due, t.File)
+	}
 }
 
 // clampPreload limits a MEMORY.md body to the first memoryIndexPreloadMaxLines

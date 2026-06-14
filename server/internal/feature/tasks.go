@@ -20,9 +20,11 @@ How tasks are stored:
 - Add detail by indenting under the task line: ` + "`due:YYYY-MM-DD`" + `, ` + "`prio:high|med|low`" + `, ` + "`#tags`" + `,
   sub-tasks ("- [ ] ..."), and free ` + "`note:`" + ` lines. Anything you cannot fit a convention to is kept as a note.
 - When a task outgrows its line (real notes, many sub-tasks), promote it to its own file ` + "`tasks/<slug>.md`" + `
-  and leave the original line as a link: "- [ ] [Paint the bedroom](paint-bedroom.md)". Promoted task files
-  carry YAML front matter (status, due, prio) with the notes in the body.
-- Filenames are stable names only — never encode status, priority, or due dates in a filename.
+  and leave the original line as a link: "- [ ] [Paint the bedroom](paint-bedroom.md)". A promoted task carries
+  ` + "`status`" + `, ` + "`due`" + `, ` + "`prio`" + ` as top-level keys in the file's front matter — the same ` + "`---`" + ` block memd
+  manages (they sit alongside the ` + "`memd:`" + ` stats subtree, never a second block) — with the notes in the body.
+- Filenames are stable, hyphenated slugs (` + "`home-renovation.md`" + `, ` + "`paint-bedroom.md`" + `) — never encode
+  status, priority, or due dates in a filename.
 
 Finding and summarising:
 - To find tasks, search the folder: open tasks = "- [ ]", deadlines = "due:", topics = "#tag".
