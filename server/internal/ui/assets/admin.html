@@ -212,6 +212,42 @@
           </template>
         </div>
       </section>
+
+      <section class="admin-section">
+        <div class="section-head">
+          <div class="titles">
+            <span class="step">Super admin</span>
+            <h2>Doctrines <span class="count" x-text="doctrines.length"></span></h2>
+            <span class="desc">Live-edit the global doctrine and each feature's base doctrine. Changes apply immediately to connected agents but are <strong>not saved</strong> — they revert to the built-in defaults on restart.</span>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn secondary" type="button" @click="loadDoctrines()">
+            <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+            Refresh
+          </button>
+        </div>
+
+        <div class="cards doctrine-cards">
+          <template x-for="d in doctrines" :key="d.id">
+            <article class="card doctrine-card">
+              <div class="card-head">
+                <div class="card-name" x-text="d.label"></div>
+                <span class="dot accent" x-show="d.overridden" x-cloak>overridden</span>
+                <span class="spacer"></span>
+                <code class="card-meta" x-text="d.id"></code>
+              </div>
+              <div class="field">
+                <textarea class="input doctrine-text" rows="10" x-model="d.text" spellcheck="false"></textarea>
+              </div>
+              <div class="card-head">
+                <span class="spacer"></span>
+                <button class="btn ghost" type="button" @click="resetDoctrine(d)" :disabled="!d.overridden">Reset to default</button>
+                <button class="btn primary" type="button" @click="saveDoctrine(d)" :disabled="d.saving">Apply (temporary)</button>
+              </div>
+            </article>
+          </template>
+        </div>
+      </section>
     </main>
 
     <div class="scrim" :class="sheet ? 'open' : ''" @click="closeSheets()"></div>

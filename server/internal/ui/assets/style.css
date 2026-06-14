@@ -2908,3 +2908,39 @@ button.crumb:hover {
     scroll-behavior: auto !important;
   }
 }
+
+/* Structured-memory feature toggles on the directory card. */
+.feature-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.feature-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+.feature-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+.feature-toggle.muted {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Super-admin live doctrine editor. */
+.doctrine-text {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  resize: vertical;
+}

@@ -362,6 +362,18 @@
                       </template>
                     </select>
                   </div>
+                  <div class="card-row" x-show="directory.can_manage && directory.features && directory.features.length">
+                    <span class="field-label" title="Enable structured-memory features for this directory (tasks, calendar, …). Disabling keeps the folder and its data — it just stops surfacing the feature to agents.">Features</span>
+                    <div class="feature-toggles">
+                      <template x-for="feature in directory.features" :key="feature.key">
+                        <label class="feature-toggle" :class="feature.coming_soon ? 'muted' : ''">
+                          <input type="checkbox" :checked="feature.enabled" :disabled="feature.coming_soon" @change="setDirectoryFeature(directory, feature.key, $event.target.checked)" />
+                          <span x-text="feature.name"></span>
+                          <span class="dot" x-show="feature.coming_soon" x-cloak>soon</span>
+                        </label>
+                      </template>
+                    </div>
+                  </div>
                   <div class="error-msg" x-show="directory.error">
                     <svg class="icon" aria-hidden="true"><use href="/assets/icons/triangle-alert.svg#icon"></use></svg>
                     <span x-text="directory.error"></span>
