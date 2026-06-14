@@ -8,8 +8,14 @@ What works today:
 
 - Local + Git backends. Git commits are debounced (one per session, not per write).
 - Responsive web UI with separate views for How it works, Teams, Directories,
-  Connectors, and Activity. Desktop keeps a side navigation rail; smaller
-  screens use a hamburger drawer and show Activity as a normal page.
+  Tasks, Connectors, and Activity. Desktop keeps a side navigation rail; smaller
+  screens use a hamburger drawer and show Activity as a normal page. Each view is
+  reflected in the URL hash (`#view=…` / `#tasks=…`) for reloads and deep-links.
+- Structured-memory **features** per directory (toggled on the directory card):
+  **Tasks** is built in — a Markdown-checklist grammar with a derived board,
+  surfaced to agents in `memory_load` and shown in a cross-directory Tasks
+  dashboard. **Calendar** is registered but coming soon. See
+  [structured-memory.md](structured-memory.md).
 - Web UI for managing directories and MCP/HTTP connectors. Each connector gets a bearer token credential; token-in-URL remains supported for local/legacy use.
 - Configured mode bootstraps a local account/team metadata database. The default database is cgo-free SQLite; `MEMD_DATABASE_URL` can point at another SQL URL once additional drivers are linked.
 - The web UI requires login: local accounts (super-admin created) or
@@ -59,9 +65,10 @@ The server starts and prints the web UI URL (default `http://127.0.0.1:7878`) �
 
 In the UI:
 
-1. **Use the main views.** The app has How it works, Teams, Directories,
+1. **Use the main views.** The app has How it works, Teams, Directories, Tasks,
    Connectors, and Activity. On smaller screens, open the hamburger drawer to
-   switch views; dark mode remains in the top bar.
+   switch views; dark mode remains in the top bar. The active view (and the Tasks
+   filter) is kept in the URL hash, so reloads and shared links return to it.
 2. **Create teams when needed.** Regular users can create teams, manage members,
    and create invite links with optional expiry and max-use count.
 3. **Add directories.** Pick local folder or Git repo. For Git: use an HTTPS
@@ -80,6 +87,12 @@ In the UI:
    manage this from the admin page.
 6. **Wire up agents.** Paste MCP URLs into MCP configs, use **Copy auth** when
    the client supports headers, or use **Copy skill** for HTTP connectors.
+7. **(Optional) enable features.** On a directory card, toggle **Tasks** to give
+   that directory structured task memory. The directory's **Tasks** button (and
+   the top-level **Tasks** view) then shows a board of open work across all
+   tasks-enabled directories, with checkboxes, due/priority/tag chips, and
+   add-task / new-list controls. Disabling keeps the files; it just hides the
+   feature. See [structured-memory.md](structured-memory.md).
 
 ## CLI
 

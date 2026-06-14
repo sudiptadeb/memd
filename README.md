@@ -12,7 +12,7 @@ Your memory lives as ordinary files on your disk — or in a private Git repo yo
   <sub><a href="docs/assets/memd.svg">vector source (SVG)</a></sub>
 </p>
 
-> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login **plus IdP-agnostic OIDC single sign-on**, super-admin user management, regular-user teams, invite links, team-scoped directories/connectors, SQL-backed user data, managed file stats, import/export, responsive web UI, and the five consolidation workflows all work.
+> **Status:** early. Local + Git backends, MCP Streamable HTTP, local login **plus IdP-agnostic OIDC single sign-on**, super-admin user management, regular-user teams, invite links, team-scoped directories/connectors, SQL-backed user data, managed file stats, import/export, responsive web UI, the five consolidation workflows, and **structured-memory features (a Tasks dashboard)** all work.
 
 ## Why
 
@@ -151,6 +151,8 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 | **Super admin** | A bootstrap/admin account for managing users and configuring SSO. |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
 | **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
+| **Feature** | An optional, togglable kind of *structured memory* for a directory — a self-describing folder (e.g. `tasks/`) with its own doctrine and, for built-ins, a rich dashboard. |
+| **Tasks**   | The first built-in feature: Markdown checklists with due dates, priorities, tags, and subtasks, plus a cross-directory board in the web UI. |
 
 Super-admin accounts are for account administration only. They do not import,
 export, or own directories/connectors; create a regular user for actual memory
@@ -159,10 +161,12 @@ work.
 ## Teams And The Web UI
 
 Configured mode uses a responsive app shell with primary views for **How it
-works**, **Teams**, **Directories**, **Connectors**, and **Activity**. Desktop
-keeps the navigation rail visible. Smaller screens collapse navigation into a
-hamburger drawer, keep dark mode in the top bar, and show Activity as a normal
-page instead of a cramped side panel.
+works**, **Teams**, **Directories**, **Tasks**, **Connectors**, and **Activity**.
+Desktop keeps the navigation rail visible. Smaller screens collapse navigation
+into a hamburger drawer, keep dark mode in the top bar, and show Activity as a
+normal page instead of a cramped side panel. Each view is reflected in the URL
+hash (`#view=connectors`, `#tasks=<dir>`, …), so reloads and shared links land
+back on the same place.
 
 Regular users can create teams from the main UI. The creator becomes `owner`.
 Team roles are:
@@ -236,6 +240,44 @@ memd doesn't just store — it manages. Five workflows, each named after a real-
 Long-running passes auto-dispatch to a background agent when the client supports it (Claude Code's Task tool, Codex's worker, Cursor's background agent), so the main conversation stays responsive.
 
 Workflows act autonomously and report afterwards — they only stop to ask the user before genuinely drastic actions (deleting authored content, removing more than a paragraph, overwriting a managed file tagged `priority: load-bearing`). Everything is in Git; the user can review or revert.
+
+## Structured Memory: Features & Tasks
+
+Beyond freeform notes, a directory can enable **features** — togglable *kinds of
+structured memory*, each a self-describing folder with its own doctrine and, for
+built-ins, a rich dashboard. **Tasks** is the first built-in; **Calendar** is
+registered but coming soon. The framing is deliberate: a `tasks/` folder of
+Markdown checklists is the agent *remembering* what you need to do, as portable
+files you own — not a to-do SaaS.
+
+- **Toggle per directory** on the directory card. Enablement is DB-backed and
+  independent of folder presence: **disabling keeps the folder and its files**, it
+  just stops surfacing the feature and hides its dashboard. Enabling scaffolds
+  `tasks/_feature.md`, a short preferences file layered on top of memd's built-in
+  rules (you or the agent can edit it — *"always schedule an hour early," "tag
+  work #work"*).
+- **Tasks grammar:** a task is a checklist line `- [ ] title due:2026-06-20
+  prio:high #home`, with indented `- [ ]` subtasks and free `note:` lines kept
+  verbatim. Loose tasks live in `tasks/inbox.md`; group related ones into named
+  lists. A task graduates from a line → indented detail → its own file (linked
+  back) only when it outgrows the list. Filenames are stable nouns — status and
+  dates live *inside* files.
+- **Surfaced to the agent** in `memory_load` under a single *Structured memory*
+  section: the base doctrine once, then each directory's live task summary
+  (`N open · N done · N overdue · N due soon` + the flagged lines) derived from
+  the files with the same grammar the dashboard uses.
+- **Tasks dashboard:** a top-level **Tasks** view aggregates every tasks-enabled
+  directory, grouped and filterable by directory, with a deadline **board**
+  (Overdue / Due this week / Later / No date), per-list cards with checkboxes,
+  subtasks and due/priority/tag chips, add-task, new-list, and **Hide completed**.
+  It is URL-persisted (`#tasks=<dir>`).
+- **The files are the single source of truth.** The agent, a human in a text
+  editor, and the dashboard all share them; the dashboard edits by **surgical
+  line operations** (flip one `[ ]` → `[x]`), never blind re-serialization, so
+  notes, formatting, and order survive. A super admin can live-edit any doctrine
+  in `/admin` → *Doctrines* (in memory only).
+
+Full reference: [docs/structured-memory.md](docs/structured-memory.md).
 
 ## File Structure
 
@@ -432,6 +474,7 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 ## Read More
 
 - [docs/doctrine.md](docs/doctrine.md) — the MCP `instructions` payload sent to every connecting agent: authority, read/write rules, file structure, drastic-action policy.
+- [docs/structured-memory.md](docs/structured-memory.md) — features (structured memory) and the Tasks dashboard: the model, the grammar, the board, and the surgical-edit rule.
 - [docs/server.md](docs/server.md) — running the server, CLI flags, wiring up agents, security.
 - [docs/agent-hooks.md](docs/agent-hooks.md) — hard guards for memory operations: client-side hooks and read-only connectors for rules the doctrine can only request.
 - [docs/self-hosting.md](docs/self-hosting.md) — generic systemd + nginx + Certbot deployment playbook.
@@ -468,8 +511,10 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 - [x] Local login, super-admin user management, and cgo-free SQLite metadata DB
 - [x] User-scoped directory/connector records and user data import/export
 - [x] Team management, invite links, and team-scoped directories/connectors
-- [x] Responsive app shell with sidebar/drawer navigation and dedicated Activity/Info views
+- [x] Responsive app shell with sidebar/drawer navigation, URL-hashed views, and dedicated Activity/Info views
 - [x] IdP-agnostic OIDC single sign-on (Authorization Code + PKCE, local JWKS validation)
+- [x] Structured-memory features: framework + Tasks (grammar, derived board, `memory_load` summary, cross-directory dashboard)
+- [ ] Calendar feature; promoted-task files in the board; optional `tasks_*` tools
 - [ ] Skills/hooks injection — per-tool reinforcement (`~/.claude/skills/memd-*`, Codex `AGENTS.md` block, `.cursor/rules/memd.mdc`)
 - [ ] OAuth-based Git-provider integrations for repository access
 - [ ] Separate UI / MCP listeners for larger hosted deployments
