@@ -15,10 +15,15 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/storage"
 	"github.com/sudiptadeb/memd/server/internal/token"
 )
+
+// builtinFeatures is the immutable set of features memd ships; used to validate
+// feature toggles and to scaffold a feature folder's _feature.md on enable.
+var builtinFeatures = feature.Builtins()
 
 // Connector aliases the on-disk type so callers don't need both imports.
 type Connector = config.Connector
@@ -680,6 +685,80 @@ func (r *Registry) UpdateDirectoryOwnerConnectorForActor(actorUserID, id, connec
 		return config.Directory{}, err
 	}
 	return current, nil
+}
+
+// SetDirectoryFeatureForActor enables or disables a built-in feature on a
+// directory. Enablement is independent of folder presence — disabling keeps the
+// folder and its data, it just stops surfacing the feature. On enable, the
+// feature folder's `_feature.md` (the user-preference layer) is scaffolded if
+// missing. The directory's owner or a manager of its team may toggle.
+func (r *Registry) SetDirectoryFeatureForActor(actorUserID, id, featureKey string, enabled bool) (config.Directory, error) {
+	feat, ok := builtinFeatures.Lookup(featureKey)
+	if !ok {
+		return config.Directory{}, fmt.Errorf("unknown feature: %s", featureKey)
+	}
+	if enabled && feat.ComingSoon {
+		return config.Directory{}, fmt.Errorf("feature %s is not available yet", featureKey)
+	}
+	if r.accounts != nil {
+		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
+			return config.Directory{}, err
+		}
+	}
+	_, _, manageTeams := r.teamAccessForUser(actorUserID)
+	r.mu.Lock()
+	idx := -1
+	for i, d := range r.cfg.Directories {
+		if d.ID != id {
+			continue
+		}
+		if d.OwnerUserID == actorUserID || (d.TeamID != "" && manageTeams[d.TeamID]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		r.mu.Unlock()
+		return config.Directory{}, errors.New("directory not found")
+	}
+	current := r.cfg.Directories[idx]
+	current.Features = setDirectoryFeature(current.Features, featureKey, enabled)
+	r.cfg.Directories[idx] = current
+	backend := r.backends[backendKey(current.OwnerUserID, current.ID)]
+	r.mu.Unlock()
+
+	// Scaffold the preferences file outside the lock — a write may block on a
+	// git backend. Best-effort: a failure here does not undo the toggle.
+	if enabled && backend != nil {
+		path := feat.Folder + "/_feature.md"
+		if _, err := backend.Read(path); err != nil {
+			if werr := backend.Write(path, []byte(feat.PreferencesTemplate()), "memd: scaffold "+featureKey+" feature"); werr != nil {
+				logs.Error("scaffold %s for directory %q: %v", path, current.Name, werr)
+			}
+		}
+	}
+
+	if r.accounts != nil {
+		if err := r.accounts.UpsertUserDirectory(context.Background(), current.OwnerUserID, current); err != nil {
+			return config.Directory{}, err
+		}
+	} else if err := r.save(); err != nil {
+		return config.Directory{}, err
+	}
+	return current, nil
+}
+
+// setDirectoryFeature returns features with featureKey set to enabled, updating
+// an existing entry in place or appending a new one.
+func setDirectoryFeature(features []config.DirectoryFeature, featureKey string, enabled bool) []config.DirectoryFeature {
+	out := append([]config.DirectoryFeature(nil), features...)
+	for i := range out {
+		if out[i].Key == featureKey {
+			out[i].Enabled = enabled
+			return out
+		}
+	}
+	return append(out, config.DirectoryFeature{Key: featureKey, Enabled: enabled})
 }
 
 func (r *Registry) DeleteDirectoryForActor(actorUserID, id string) error {

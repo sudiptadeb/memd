@@ -13,6 +13,7 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
+	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/mcp"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/version"
@@ -57,7 +58,11 @@ func Run(dir string) error {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	mcpSrv := mcp.New(reg, doctrine.Text, "memd", version.Value)
+	features := feature.Builtins()
+	live := doctrine.NewLive()
+	live.Register(doctrine.GlobalID, "Global doctrine", doctrine.Text)
+	feature.RegisterDoctrines(live, features)
+	mcpSrv := mcp.New(reg, live, features, "memd", version.Value)
 	mux := http.NewServeMux()
 	mcpSrv.Mount(mux, "/mcp/")
 	mcpSrv.MountHTTP(mux, "/http/")

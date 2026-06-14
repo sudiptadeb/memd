@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -159,7 +160,7 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, team_id, owner_connector_id, name, description, backend, local_path,
 		       git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_auth_username, git_auth_token, git_ssh_key_path, git_wait_for_writes, git_save_every,
-		       created_at
+		       features, created_at
 		  FROM user_directories
 		 WHERE owner_user_id = ?
 		 ORDER BY lower(name)`, ownerUserID)
@@ -172,14 +173,16 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 		var d config.Directory
 		var git config.Git
 		var teamID sql.NullString
+		var features string
 		var created string
 		if err := rows.Scan(
 			&d.ID, &teamID, &d.OwnerConnectorID, &d.Name, &d.Description, &d.Backend, &d.LocalPath,
 			&git.RemoteURL, &git.Branch, &git.BasePath, &git.AuthorName, &git.AuthorEmail, &git.AuthUsername, &git.AuthToken, &git.SSHKeyPath, &git.WaitForWrites, &git.SaveEvery,
-			&created,
+			&features, &created,
 		); err != nil {
 			return nil, err
 		}
+		d.Features = unmarshalFeatures(features)
 		d.CreatedAt = mustParseTime(created)
 		d.OwnerUserID = ownerUserID
 		if teamID.Valid {
@@ -303,9 +306,9 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 		INSERT INTO user_directories(
 			owner_user_id, id, team_id, owner_connector_id, name, description, backend, local_path,
 			git_remote_url, git_branch, git_base_path, git_author_name, git_author_email, git_auth_username, git_auth_token, git_ssh_key_path, git_wait_for_writes, git_save_every,
-			created_at, updated_at
+			features, created_at, updated_at
 		)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(owner_user_id, id) DO UPDATE SET
 			team_id = excluded.team_id,
 			owner_connector_id = excluded.owner_connector_id,
@@ -323,11 +326,38 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 			git_ssh_key_path = excluded.git_ssh_key_path,
 			git_wait_for_writes = excluded.git_wait_for_writes,
 			git_save_every = excluded.git_save_every,
+			features = excluded.features,
 			updated_at = excluded.updated_at`,
 		ownerUserID, d.ID, d.TeamID, d.OwnerConnectorID, d.Name, d.Description, d.Backend, d.LocalPath,
 		git.RemoteURL, git.Branch, git.BasePath, git.AuthorName, git.AuthorEmail, git.AuthUsername, git.AuthToken, git.SSHKeyPath, git.WaitForWrites, git.SaveEvery,
-		created, now)
+		marshalFeatures(d.Features), created, now)
 	return err
+}
+
+// marshalFeatures encodes a directory's feature list for the features column.
+// An empty list serialises to "" so the column default stays clean.
+func marshalFeatures(features []config.DirectoryFeature) string {
+	if len(features) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(features)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// unmarshalFeatures decodes the features column, tolerating an empty/invalid
+// value as "no features".
+func unmarshalFeatures(raw string) []config.DirectoryFeature {
+	if raw == "" {
+		return nil
+	}
+	var features []config.DirectoryFeature
+	if err := json.Unmarshal([]byte(raw), &features); err != nil {
+		return nil
+	}
+	return features
 }
 
 func upsertUserConnector(ctx context.Context, tx *sql.Tx, ownerUserID string, c config.Connector) error {

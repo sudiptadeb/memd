@@ -57,7 +57,7 @@ func newFilesFixture(t *testing.T) (*http.ServeMux, *Handler, account.User, stri
 	}
 
 	mux := http.NewServeMux()
-	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager())
+	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager(), nil)
 	handler.Mount(mux)
 	return mux, handler, user, dirID
 }

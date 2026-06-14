@@ -88,7 +88,7 @@ func TestHTTPEndpointRejectsMCPConnector(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = reg.Close() })
 
-	server := New(reg, "doctrine", "memd", "test")
+	server := newTestServer(reg)
 	mux := http.NewServeMux()
 	server.MountHTTP(mux, "/http/")
 
@@ -138,7 +138,7 @@ func TestHTTPConnectorRejectsMismatchedURLAndHeaderTokens(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = reg.Close() })
 
-	server := New(reg, "doctrine", "memd", "test")
+	server := newTestServer(reg)
 	mux := http.NewServeMux()
 	server.MountHTTP(mux, "/http/")
 
@@ -165,7 +165,7 @@ func testHTTPServer(t *testing.T, write bool) (*http.ServeMux, config.Connector)
 	}
 	t.Cleanup(func() { _ = reg.Close() })
 
-	server := New(reg, "doctrine", "memd", "test")
+	server := newTestServer(reg)
 	mux := http.NewServeMux()
 	server.MountHTTP(mux, "/http/")
 	return mux, conn

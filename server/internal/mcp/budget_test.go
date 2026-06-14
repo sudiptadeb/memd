@@ -26,7 +26,7 @@ func testBudgetServer(t *testing.T) (*Server, config.Connector, string) {
 		t.Fatalf("AddConnector: %v", err)
 	}
 	t.Cleanup(func() { _ = reg.Close() })
-	return New(reg, "doctrine", "memd", "test"), conn, dirID
+	return newTestServer(reg), conn, dirID
 }
 
 // seedMemory writes MEMORY.md to the connector's directory via the backend. The

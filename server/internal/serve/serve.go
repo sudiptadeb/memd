@@ -15,6 +15,7 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
+	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/mcp"
 	"github.com/sudiptadeb/memd/server/internal/registry"
@@ -80,11 +81,16 @@ func RunOptions(opts Options) error {
 		logs.Info("OIDC SSO enabled")
 	}
 
+	features := feature.Builtins()
+	live := doctrine.NewLive()
+	live.Register(doctrine.GlobalID, "Global doctrine", doctrine.Text)
+	feature.RegisterDoctrines(live, features)
+
 	mux := http.NewServeMux()
-	mcpSrv := mcp.New(reg, doctrine.Text, "memd", version.Value)
+	mcpSrv := mcp.New(reg, live, features, "memd", version.Value)
 	mcpSrv.Mount(mux, "/mcp/")
 	mcpSrv.MountHTTP(mux, "/http/")
-	ui.New(reg, accountStore, baseURL, sessions, oidcMgr).Mount(mux)
+	ui.New(reg, accountStore, baseURL, sessions, oidcMgr, live).Mount(mux)
 
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
 	fmt.Fprintln(opts.Stdout, "Press Ctrl-C to stop.")

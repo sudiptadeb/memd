@@ -240,7 +240,7 @@ func testReadOnlyMCPServer(t *testing.T) (*http.ServeMux, config.Connector, stri
 	}
 	t.Cleanup(func() { _ = reg.Close() })
 
-	server := New(reg, "doctrine", "memd", "test")
+	server := newTestServer(reg)
 	mux := http.NewServeMux()
 	server.Mount(mux, "/mcp/")
 	return mux, conn, dir, dirID

@@ -78,6 +78,19 @@ type Directory struct {
 	LocalPath   string    `json:"local_path,omitempty"`
 	Git         *Git      `json:"git,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+
+	// Features lists the structured-memory features enabled on this directory
+	// (tasks, calendar, …). Enablement is independent of folder presence: a
+	// disabled feature keeps its folder and data, it is just not surfaced.
+	Features []DirectoryFeature `json:"features,omitempty"`
+}
+
+// DirectoryFeature is the per-directory enable record for one feature. Settings
+// is reserved for future per-feature configuration.
+type DirectoryFeature struct {
+	Key      string            `json:"key"`
+	Enabled  bool              `json:"enabled"`
+	Settings map[string]string `json:"settings,omitempty"`
 }
 
 // Git is the per-directory git backend config.
