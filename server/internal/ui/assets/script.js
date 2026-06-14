@@ -500,12 +500,11 @@
       browserFileHTML: "",
       browserFileLoading: false,
       browserFileErr: "",
-      tasksDir: null,
-      tasksLists: [],
-      tasksBoard: null,
+      tasksAll: [],
+      tasksFilter: "",
       tasksLoading: false,
+      tasksLoaded: false,
       tasksErr: "",
-      newListName: "",
       routeApplying: false,
       toast: "",
       toastLevel: "info",
@@ -537,6 +536,11 @@
           await this.load();
           this.startLogs();
           await this.applyBrowserRoute();
+          // View restored from localStorage (no hash) still needs its data + URL.
+          if (this.activeView === "tasks" && !this.tasksLoaded) {
+            await this.loadTasksAll();
+            this.syncTasksURL();
+          }
         }
       },
 
@@ -705,7 +709,7 @@
       },
 
       normalizeView() {
-        const valid = ["info", "directories", "connectors", "logs"];
+        const valid = ["info", "directories", "tasks", "connectors", "logs"];
         if (this.user && !this.user.super_admin) {
           valid.unshift("teams");
         }
@@ -718,7 +722,22 @@
       setView(view) {
         this.activeView = view || "directories";
         this.normalizeView();
+        if (this.activeView === "tasks" && !this.routeApplying) {
+          this.loadTasksAll();
+        }
+        this.syncTasksURL();
         this.closeNavIfMobile();
+      },
+
+      // Reflect the Tasks view (and its directory filter) in the URL hash so it
+      // survives reloads and can be shared. Mirrors the browse-sheet hash logic.
+      syncTasksURL() {
+        if (this.routeApplying) return;
+        const target = this.activeView === "tasks" ? ("#tasks=" + (this.tasksFilter || "all")) : "";
+        const current = window.location.hash;
+        if (target === current) return;
+        if (!target && !/(^|[#&])tasks=/.test(current)) return;
+        window.history.pushState({}, "", window.location.pathname + window.location.search + target);
       },
 
       isMobileNav() {
@@ -1447,34 +1466,31 @@
         }
       },
 
-      // --- Tasks dashboard ---
+      // --- Tasks dashboard (aggregate, cross-directory) ---
 
       tasksEnabled(directory) {
         return (directory.features || []).some((f) => f.key === "tasks" && f.enabled);
       },
 
+      // Open the Tasks view filtered to one directory (from a directory card).
       async openTasks(directory) {
-        this.tasksDir = directory;
-        this.tasksLists = [];
-        this.tasksBoard = null;
-        this.tasksErr = "";
-        this.newListName = "";
-        this.sheet = "tasks";
-        await this.loadTasks();
+        this.tasksFilter = directory ? directory.id : "";
+        this.setView("tasks");
       },
 
-      tasksURL() {
-        return "/api/directories/" + encodeURIComponent(this.tasksDir.id) + "/tasks";
+      // Open the Tasks view showing every directory (from the sidenav).
+      async openTasksView() {
+        this.tasksFilter = "";
+        this.setView("tasks");
       },
 
-      async loadTasks() {
-        if (!this.tasksDir) return;
+      async loadTasksAll() {
         this.tasksLoading = true;
         this.tasksErr = "";
         try {
-          const data = await api(this.tasksURL(), { cache: "no-store" });
-          this.tasksLists = data.lists || [];
-          this.tasksBoard = data.board || {};
+          const data = await api("/api/tasks", { cache: "no-store" });
+          this.tasksAll = data.directories || [];
+          this.tasksLoaded = true;
         } catch (error) {
           this.tasksErr = error.message || "failed to load tasks";
         } finally {
@@ -1482,57 +1498,81 @@
         }
       },
 
-      async toggleTask(task) {
+      setTasksFilter(id) {
+        this.tasksFilter = id || "";
+        this.syncTasksURL();
+      },
+
+      // Directory groups to render, honouring the current filter.
+      tasksGroups() {
+        if (!this.tasksFilter) return this.tasksAll;
+        return this.tasksAll.filter((g) => g.id === this.tasksFilter);
+      },
+
+      tasksOpenCount() {
+        return this.tasksGroups().reduce((sum, g) => sum + this.groupOpen(g), 0);
+      },
+
+      groupOpen(group) {
+        return (group.lists || []).reduce((sum, l) => sum + (l.open || 0), 0);
+      },
+
+      tasksDirURL(dirID) {
+        return "/api/directories/" + encodeURIComponent(dirID) + "/tasks";
+      },
+
+      async toggleTask(group, task) {
         try {
-          await api(this.tasksURL(), {
+          await api(this.tasksDirURL(group.id), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "toggle", file: task.file, line: task.line, expect: task.raw })
           });
-          await this.loadTasks();
+          await this.loadTasksAll();
         } catch (error) {
           this.showToast(error.message || "toggle failed", "error");
-          await this.loadTasks();
+          await this.loadTasksAll();
         }
       },
 
-      async addTask(file, event) {
+      async addTask(group, file, event) {
         const input = event.target.querySelector('input[type="text"]');
         const title = input ? input.value.trim() : "";
         if (!title) return;
         try {
-          await api(this.tasksURL(), {
+          await api(this.tasksDirURL(group.id), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "add", file: file, title: title })
           });
           if (input) input.value = "";
-          await this.loadTasks();
+          await this.loadTasksAll();
         } catch (error) {
           this.showToast(error.message || "add failed", "error");
         }
       },
 
-      async addList(event) {
-        const name = this.newListName.trim();
+      async addList(group, event) {
+        const input = event.target.querySelector('input[type="text"]');
+        const name = input ? input.value.trim() : "";
         if (!name) return;
         const title = window.prompt("First task for “" + name + "”:");
         if (title === null || !title.trim()) return;
         try {
-          await api(this.tasksURL(), {
+          await api(this.tasksDirURL(group.id), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "add", list_name: name, title: title.trim() })
           });
-          this.newListName = "";
-          await this.loadTasks();
+          if (input) input.value = "";
+          await this.loadTasksAll();
         } catch (error) {
           this.showToast(error.message || "create list failed", "error");
         }
       },
 
-      boardBuckets() {
-        const b = this.tasksBoard || {};
+      boardBuckets(board) {
+        const b = board || {};
         return [
           { key: "overdue", label: "Overdue", items: b.overdue || [] },
           { key: "due_soon", label: "Due this week", items: b.due_soon || [] },
@@ -1541,8 +1581,8 @@
         ].filter((bucket) => bucket.items.length);
       },
 
-      listName(file) {
-        const list = (this.tasksLists || []).find((l) => l.file === file);
+      listName(group, file) {
+        const list = (group.lists || []).find((l) => l.file === file);
         if (list) return list.name;
         const base = (file || "").split("/").pop() || "";
         return base.replace(/\.md$/i, "");
@@ -1572,11 +1612,10 @@
 
       // Resolve a promoted-task link (relative to the list's folder) to its raw
       // file URL so it opens in a new tab.
-      rawFileURLFor(listFile, link) {
-        if (!this.tasksDir) return "";
+      rawFileURLFor(dirID, listFile, link) {
         const dir = listFile.includes("/") ? listFile.slice(0, listFile.lastIndexOf("/")) : "";
         const target = dir ? dir + "/" + link : link;
-        return "/api/directories/" + encodeURIComponent(this.tasksDir.id) + "/raw?path=" + encodeURIComponent(target);
+        return "/api/directories/" + encodeURIComponent(dirID) + "/raw?path=" + encodeURIComponent(target);
       },
 
       async openBrowser(directory) {
@@ -1641,9 +1680,18 @@
       async applyBrowserRoute() {
         if (!this.user || this.routeApplying) return;
         const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-        const dirID = params.get("browse") || "";
         this.routeApplying = true;
         try {
+          // Tasks view: #tasks=<dirID|all>
+          if (params.has("tasks")) {
+            const f = params.get("tasks");
+            this.activeView = "tasks";
+            this.normalizeView();
+            this.tasksFilter = (f && f !== "all") ? f : "";
+            await this.loadTasksAll();
+            return;
+          }
+          const dirID = params.get("browse") || "";
           if (!dirID) {
             if (this.sheet === "browse") this.closeSheets();
             return;

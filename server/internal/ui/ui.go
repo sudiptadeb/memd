@@ -79,6 +79,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
 	mux.HandleFunc("/api/directories", h.requireUser(h.directoriesAPI))
 	mux.HandleFunc("/api/directories/", h.requireUser(h.directoryAPI))
+	mux.HandleFunc("/api/tasks", h.requireUser(h.tasksAllAPI))
 	mux.HandleFunc("/api/git/check", h.requireUser(h.gitCheckAPI))
 	mux.HandleFunc("/api/connectors", h.requireUser(h.connectorsAPI))
 	mux.HandleFunc("/api/connectors/", h.requireUser(h.connectorAPI))

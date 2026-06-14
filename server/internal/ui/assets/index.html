@@ -28,6 +28,10 @@
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
           <b x-show="directories.length" x-text="directories.length"></b>
         </button>
+        <button type="button" :class="activeView === 'tasks' ? 'on' : ''" @click="openTasksView()" title="Tasks" aria-label="Tasks">
+          <svg class="icon" aria-hidden="true"><use href="/assets/icons/list-checks.svg#icon"></use></svg>
+          <b x-show="tasksLoaded && tasksOpenCount()" x-text="tasksOpenCount()"></b>
+        </button>
         <button type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors" aria-label="Connectors">
           <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
           <b x-show="connectors.length" x-text="connectors.length"></b>
@@ -130,6 +134,11 @@
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
               <span>Directories</span>
               <b x-text="directories.length"></b>
+            </button>
+            <button class="nav-item" type="button" :class="activeView === 'tasks' ? 'on' : ''" @click="openTasksView()" title="Tasks">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/list-checks.svg#icon"></use></svg>
+              <span>Tasks</span>
+              <b x-show="tasksLoaded" x-text="tasksOpenCount()"></b>
             </button>
             <button class="nav-item" type="button" :class="activeView === 'connectors' ? 'on' : ''" @click="setView('connectors')" title="Connectors">
               <svg class="icon" aria-hidden="true"><use href="/assets/icons/plug.svg#icon"></use></svg>
@@ -396,6 +405,123 @@
                 <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
                 Add your first directory
               </button>
+            </div>
+          </template>
+        </section>
+
+        <section class="app-section tasks-section" x-show="activeView === 'tasks' && !loading && !loadErr" x-cloak>
+          <div class="section-head">
+            <div class="titles">
+              <h2>Tasks <span class="count" x-show="tasksLoaded" x-text="tasksOpenCount() + ' open'"></span></h2>
+              <span class="desc">Things to do, kept as files in your directories. The files stay the source of truth.</span>
+            </div>
+            <span class="spacer"></span>
+            <select class="mini-select" aria-label="Filter by directory" x-model="tasksFilter" @change="setTasksFilter(tasksFilter)" x-show="tasksAll.length > 1">
+              <option value="">All directories</option>
+              <template x-for="d in tasksAll" :key="d.id">
+                <option :value="d.id" x-text="d.name"></option>
+              </template>
+            </select>
+            <button class="btn ghost" type="button" @click="loadTasksAll()" title="Refresh">
+              <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
+              <span class="btn-label">Refresh</span>
+            </button>
+          </div>
+
+          <div class="picker-error" x-show="tasksErr" x-text="tasksErr"></div>
+          <div class="file-loading" x-show="tasksLoading">Loading tasks…</div>
+
+          <template x-if="tasksLoaded && !tasksGroups().length">
+            <div class="empty">
+              <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/assets/icons/list-checks.svg#icon"></use></svg></div>
+              <h4>No tasks yet</h4>
+              <p>Enable <b>Tasks</b> on a directory (in Directories), then add tasks here or let an agent keep them for you.</p>
+            </div>
+          </template>
+
+          <template x-for="group in tasksGroups()" :key="group.id">
+            <div class="tasks-group">
+              <div class="tasks-group-head" x-show="tasksAll.length > 1 || !tasksFilter">
+                <svg class="icon" aria-hidden="true"><use href="/assets/icons/folder-open.svg#icon"></use></svg>
+                <span class="tasks-group-name" x-text="group.name"></span>
+                <span class="task-list-counts" x-text="groupOpen(group) + ' open'"></span>
+              </div>
+
+              <div class="task-board" x-show="boardBuckets(group.board).length">
+                <template x-for="bucket in boardBuckets(group.board)" :key="bucket.key">
+                  <div class="board-bucket" :class="bucket.key">
+                    <div class="board-bucket-head">
+                      <span class="board-bucket-name" x-text="bucket.label"></span>
+                      <span class="count" x-text="bucket.items.length"></span>
+                    </div>
+                    <template x-for="t in bucket.items" :key="t.file + ':' + t.line">
+                      <div class="board-item">
+                        <input type="checkbox" :checked="t.done" :disabled="!group.can_write" @change="toggleTask(group, t)" :aria-label="'Toggle ' + t.title" />
+                        <span class="board-item-title" x-text="t.title"></span>
+                        <span class="due-chip" x-show="t.due" :class="dueClass(t.due)" x-text="formatDue(t.due)"></span>
+                        <span class="task-list-ref" x-text="listName(group, t.file)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+
+              <div class="task-lists">
+                <template x-for="list in group.lists" :key="list.file">
+                  <section class="task-list-card">
+                    <header class="task-list-head">
+                      <span class="task-list-name" x-text="list.name"></span>
+                      <span class="task-list-counts" x-text="list.open + ' open · ' + list.total + ' total'"></span>
+                    </header>
+                    <div class="task-rows">
+                      <template x-for="t in list.tasks" :key="t.line">
+                        <div class="task-row" :class="t.done ? 'done' : ''">
+                          <div class="task-row-main">
+                            <input type="checkbox" :checked="t.done" :disabled="!group.can_write" @change="toggleTask(group, t)" :aria-label="'Toggle ' + t.title" />
+                            <span class="task-title">
+                              <template x-if="t.link"><a :href="rawFileURLFor(group.id, list.file, t.link)" target="_blank" rel="noopener" x-text="t.title"></a></template>
+                              <template x-if="!t.link"><span x-text="t.title"></span></template>
+                            </span>
+                            <span class="due-chip" x-show="t.due" :class="dueClass(t.due)" x-text="formatDue(t.due)"></span>
+                            <span class="prio-chip" x-show="t.prio" :class="'prio-' + t.prio" x-text="t.prio"></span>
+                            <template x-for="tag in (t.tags || [])" :key="tag"><span class="tag-chip" x-text="'#' + tag"></span></template>
+                          </div>
+                          <template x-if="(t.subtasks || []).length">
+                            <div class="task-subs">
+                              <template x-for="s in t.subtasks" :key="s.line">
+                                <label class="task-sub" :class="s.done ? 'done' : ''">
+                                  <input type="checkbox" :checked="s.done" :disabled="!group.can_write" @change="toggleTask(group, s)" />
+                                  <span x-text="s.title"></span>
+                                </label>
+                              </template>
+                            </div>
+                          </template>
+                          <template x-if="(t.notes || []).length">
+                            <div class="task-notes">
+                              <template x-for="(n, ni) in t.notes" :key="ni"><div class="task-note" x-text="n"></div></template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                      <div class="task-empty" x-show="!list.tasks.length">No tasks in this list yet.</div>
+                    </div>
+                    <form class="task-add" x-show="group.can_write" @submit.prevent="addTask(group, list.file, $event)">
+                      <input class="input" type="text" placeholder="Add a task…" />
+                      <button class="btn ghost" type="submit" title="Add task">
+                        <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+                      </button>
+                    </form>
+                  </section>
+                </template>
+
+                <form class="task-new-list" x-show="group.can_write" @submit.prevent="addList(group, $event)">
+                  <input class="input" type="text" placeholder="New list name (e.g. home renovation)" />
+                  <button class="btn secondary" type="submit">
+                    <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
+                    New list
+                  </button>
+                </form>
+              </div>
             </div>
           </template>
         </section>
@@ -916,111 +1042,6 @@
             <div class="picker-empty" x-show="browserFile.isPDF">PDF files render best in their own tab — use "Open in new tab".</div>
             <div class="file-markdown" x-show="browserFile.isMarkdown && !browserFileLoading && !browserFileErr" x-html="browserFileHTML" @click="markdownClick($event)"></div>
             <pre class="file-pre" x-show="!browserFile.isImage && !browserFile.isPDF && !browserFile.isMarkdown && !browserFileLoading && !browserFileErr" x-text="browserFileContent"></pre>
-          </div>
-        </template>
-      </div>
-    </aside>
-
-    <aside class="sheet wide-sheet tasks-sheet" :class="sheet === 'tasks' ? 'open' : ''" :aria-hidden="sheet !== 'tasks'" :inert="sheet !== 'tasks'" @keydown.escape.stop="closeSheets()">
-      <header class="sheet-head">
-        <div>
-          <h3 x-text="tasksDir ? tasksDir.name + ' · Tasks' : 'Tasks'"></h3>
-          <div class="sub">Things to do, kept as files in this directory. Check, add, and organise — the files stay the source of truth.</div>
-        </div>
-        <span class="spacer"></span>
-        <button class="icon-btn" type="button" @click="loadTasks()" title="Refresh" aria-label="Refresh">
-          <svg class="icon" aria-hidden="true"><use href="/assets/icons/refresh-cw.svg#icon"></use></svg>
-        </button>
-        <button class="icon-btn" type="button" @click="closeSheets()" title="Close">
-          <svg class="icon" aria-hidden="true"><use href="/assets/icons/x.svg#icon"></use></svg>
-        </button>
-      </header>
-
-      <div class="sheet-body tasks-body">
-        <div class="picker-error" x-show="tasksErr" x-text="tasksErr"></div>
-        <div class="file-loading" x-show="tasksLoading">Loading tasks…</div>
-
-        <template x-if="!tasksLoading && tasksBoard">
-          <div class="tasks-content">
-            <div class="task-board" x-show="boardBuckets().length">
-              <template x-for="bucket in boardBuckets()" :key="bucket.key">
-                <div class="board-bucket" :class="bucket.key">
-                  <div class="board-bucket-head">
-                    <span class="board-bucket-name" x-text="bucket.label"></span>
-                    <span class="count" x-text="bucket.items.length"></span>
-                  </div>
-                  <template x-for="t in bucket.items" :key="t.file + ':' + t.line">
-                    <div class="board-item">
-                      <input type="checkbox" :checked="t.done" @change="toggleTask(t)" :aria-label="'Toggle ' + t.title" />
-                      <span class="board-item-title" x-text="t.title"></span>
-                      <span class="due-chip" x-show="t.due" :class="dueClass(t.due)" x-text="formatDue(t.due)"></span>
-                      <span class="task-list-ref" x-text="listName(t.file)"></span>
-                    </div>
-                  </template>
-                </div>
-              </template>
-            </div>
-
-            <div class="task-lists">
-              <template x-for="list in tasksLists" :key="list.file">
-                <section class="task-list-card">
-                  <header class="task-list-head">
-                    <span class="task-list-name" x-text="list.name"></span>
-                    <span class="task-list-counts" x-text="list.open + ' open · ' + list.total + ' total'"></span>
-                  </header>
-                  <div class="task-rows">
-                    <template x-for="t in list.tasks" :key="t.line">
-                      <div class="task-row" :class="t.done ? 'done' : ''">
-                        <div class="task-row-main">
-                          <input type="checkbox" :checked="t.done" @change="toggleTask(t)" :aria-label="'Toggle ' + t.title" />
-                          <span class="task-title">
-                            <template x-if="t.link"><a :href="rawFileURLFor(list.file, t.link)" target="_blank" rel="noopener" x-text="t.title"></a></template>
-                            <template x-if="!t.link"><span x-text="t.title"></span></template>
-                          </span>
-                          <span class="due-chip" x-show="t.due" :class="dueClass(t.due)" x-text="formatDue(t.due)"></span>
-                          <span class="prio-chip" x-show="t.prio" :class="'prio-' + t.prio" x-text="t.prio"></span>
-                          <template x-for="tag in (t.tags || [])" :key="tag"><span class="tag-chip" x-text="'#' + tag"></span></template>
-                        </div>
-                        <template x-if="(t.subtasks || []).length">
-                          <div class="task-subs">
-                            <template x-for="s in t.subtasks" :key="s.line">
-                              <label class="task-sub" :class="s.done ? 'done' : ''">
-                                <input type="checkbox" :checked="s.done" @change="toggleTask(s)" />
-                                <span x-text="s.title"></span>
-                              </label>
-                            </template>
-                          </div>
-                        </template>
-                        <template x-if="(t.notes || []).length">
-                          <div class="task-notes">
-                            <template x-for="(n, ni) in t.notes" :key="ni"><div class="task-note" x-text="n"></div></template>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-                    <div class="task-empty" x-show="!list.tasks.length">No tasks in this list yet.</div>
-                  </div>
-                  <form class="task-add" @submit.prevent="addTask(list.file, $event)">
-                    <input class="input" type="text" placeholder="Add a task…" :data-file="list.file" />
-                    <button class="btn ghost" type="submit" title="Add task">
-                      <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
-                    </button>
-                  </form>
-                </section>
-              </template>
-
-              <div class="task-empty-all" x-show="!tasksLists.length">
-                <p>No task lists yet. Create one to get started.</p>
-              </div>
-
-              <form class="task-new-list" @submit.prevent="addList($event)">
-                <input class="input" type="text" placeholder="New list name (e.g. home renovation)" x-model="newListName" />
-                <button class="btn secondary" type="submit" :disabled="!newListName.trim()">
-                  <svg class="icon" aria-hidden="true"><use href="/assets/icons/plus.svg#icon"></use></svg>
-                  New list
-                </button>
-              </form>
-            </div>
           </div>
         </template>
       </div>
