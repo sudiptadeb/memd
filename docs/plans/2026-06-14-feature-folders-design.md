@@ -1,6 +1,15 @@
 # Feature Folders — Design Decisions
 
-**Status:** design agreed, not yet built.
+**Status:** Phase 1 implemented (see §9) — feature framework + tasks (doctrine-only),
+DB-backed UI toggles, and the super-admin live doctrine editor.
+
+Two refinements added during the build:
+- **Agent-facing framing:** features are presented to the LLM as *kinds of structured
+  memory it can keep here* (`AgentSummary` + a "Structured memory enabled here" block in
+  `memory_load`), never as abstract "features".
+- **Super-admin live doctrine editor:** `/admin` → *Doctrines* edits the global doctrine and
+  each feature's base doctrine **in memory only** (no persistence; reverts on restart), via
+  the `doctrine.Live` store and `/api/admin/doctrines` endpoints.
 **Date:** 2026-06-14
 **Scope:** a framework for adding togglable, file-first *features* (tasks, calendar, …)
 to memd directories, with tasks specified as the first built-in feature.
