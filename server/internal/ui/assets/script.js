@@ -537,11 +537,13 @@
           await this.load();
           this.startLogs();
           await this.applyBrowserRoute();
-          // View restored from localStorage (no hash) still needs its data + URL.
+          // View restored from localStorage (no hash) still needs its data.
           if (this.activeView === "tasks" && !this.tasksLoaded) {
             await this.loadTasksAll();
-            this.syncTasksURL();
           }
+          // Reflect the active view in the address bar on first load too,
+          // without adding a history entry.
+          this.syncURL(true);
         }
       },
 
@@ -702,8 +704,14 @@
         if (!this.showGetStarted || storageGet(this.onboardingKey(), "") === "1") {
           return;
         }
+        // Respect a view the user deep-linked to (or restored from the hash);
+        // only steer the default landing into onboarding.
+        if (this.activeView !== "directories") {
+          return;
+        }
         this.activeView = "info";
         storageSet("memd-view", this.activeView);
+        this.syncURL();
       },
 
       dismissOnboarding() {
@@ -741,19 +749,41 @@
         if (this.activeView === "tasks" && !this.routeApplying) {
           this.loadTasksAll();
         }
-        this.syncTasksURL();
+        this.syncURL();
         this.closeNavIfMobile();
       },
 
-      // Reflect the Tasks view (and its directory filter) in the URL hash so it
-      // survives reloads and can be shared. Mirrors the browse-sheet hash logic.
-      syncTasksURL() {
+      // Reflect the current location in the URL hash so every view (and the
+      // browse sheet / Tasks filter) survives a reload and can be shared:
+      //   #browse=<dir>&...   the file browser sheet (takes precedence)
+      //   #tasks=<dir|all>    the Tasks view + its directory filter
+      //   #view=<name>        any other main view (info/teams/directories/…)
+      syncURL(replace) {
         if (this.routeApplying) return;
-        const target = this.activeView === "tasks" ? ("#tasks=" + (this.tasksFilter || "all")) : "";
+        let target;
+        if (this.sheet === "browse" && this.browserDir) {
+          target = this.browserHash();
+        } else if (this.activeView === "tasks") {
+          target = "#tasks=" + (this.tasksFilter || "all");
+        } else {
+          target = "#view=" + this.activeView;
+        }
         const current = window.location.hash;
         if (target === current) return;
-        if (!target && !/(^|[#&])tasks=/.test(current)) return;
-        window.history.pushState({}, "", window.location.pathname + window.location.search + target);
+        const url = window.location.pathname + window.location.search + target;
+        if (replace) {
+          window.history.replaceState({}, "", url);
+        } else {
+          window.history.pushState({}, "", url);
+        }
+      },
+
+      // Back-compat aliases used by the browse-sheet and Tasks-filter call sites.
+      syncBrowserURL() {
+        this.syncURL();
+      },
+      syncTasksURL() {
+        this.syncURL();
       },
 
       isMobileNav() {
@@ -1698,15 +1728,7 @@
         return "#" + params.toString();
       },
 
-      syncBrowserURL() {
-        if (this.routeApplying) return;
-        const target = this.browserHash();
-        const current = window.location.hash;
-        if (target === current) return;
-        if (!target && !/(^|[#&])browse=/.test(current)) return;
-        window.history.pushState({}, "", window.location.pathname + window.location.search + target);
-      },
-
+      // Restore app state from the URL hash (on load and on back/forward).
       async applyBrowserRoute() {
         if (!this.user || this.routeApplying) return;
         const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -1714,31 +1736,43 @@
         try {
           // Tasks view: #tasks=<dirID|all>
           if (params.has("tasks")) {
+            if (this.sheet === "browse") this.closeSheets();
             const f = params.get("tasks");
             this.activeView = "tasks";
             this.normalizeView();
-            this.tasksFilter = (f && f !== "all") ? f : "";
+            this.tasksFilter = f && f !== "all" ? f : "";
             await this.loadTasksAll();
             return;
           }
-          const dirID = params.get("browse") || "";
-          if (!dirID) {
-            if (this.sheet === "browse") this.closeSheets();
+          // File browser sheet: #browse=<dir>&path|file=…
+          if (params.has("browse")) {
+            const dirID = params.get("browse");
+            const directory = this.directories.find((d) => d.id === dirID);
+            if (!directory) {
+              window.history.replaceState({}, "", window.location.pathname + window.location.search);
+              if (this.sheet === "browse") this.closeSheets();
+              return;
+            }
+            this.activeView = "directories";
+            this.normalizeView();
+            const file = params.get("file") || "";
+            const path = file ? parentPath(file) : params.get("path") || "";
+            this.browserDir = directory;
+            this.sheet = "browse";
+            await this.browseFiles(path);
+            if (file) {
+              await this.openBrowserFile({ path: file, name: baseName(file) });
+            }
             return;
           }
-          const directory = this.directories.find((d) => d.id === dirID);
-          if (!directory) {
-            window.history.replaceState({}, "", window.location.pathname + window.location.search);
-            if (this.sheet === "browse") this.closeSheets();
-            return;
-          }
-          const file = params.get("file") || "";
-          const path = file ? parentPath(file) : (params.get("path") || "");
-          this.browserDir = directory;
-          this.sheet = "browse";
-          await this.browseFiles(path);
-          if (file) {
-            await this.openBrowserFile({ path: file, name: baseName(file) });
+          // Any other main view: #view=<name>
+          if (this.sheet === "browse") this.closeSheets();
+          if (params.has("view")) {
+            this.activeView = params.get("view");
+            this.normalizeView();
+            if (this.activeView === "tasks" && !this.tasksLoaded) {
+              await this.loadTasksAll();
+            }
           }
         } finally {
           this.routeApplying = false;

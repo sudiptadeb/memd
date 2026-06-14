@@ -117,7 +117,12 @@ dashboard round-trip.
   favour of one page).
 - **URL persistence:** the view + filter live in the hash (`#tasks=all` / `#tasks=<dirID>`),
   pushed on navigation and restored by the hash router on reload — so refresh and deep-links
-  work, mirroring the existing browse-sheet routing.
+  work, mirroring the existing browse-sheet routing. Every other main view is hashed too
+  (`#view=teams` / `#view=connectors` / …) via a unified `syncURL()`; the browse sheet keeps
+  `#browse=<dir>&…` and restores `#view=directories` on close. All views are deep-linkable.
+- **Mobile:** the Tasks (and every) section header wraps on a phone — title + description
+  take a full row and the action cluster (filter, Hide-completed, refresh) drops to its own
+  row, instead of crushing the title into a one-word-per-line sliver.
 - Mutations still post to the per-directory `/api/directories/<id>/tasks`; the aggregate
   `GET /api/tasks` is re-read after each edit.
 - **Hide completed** toggle (persisted in `localStorage`) drops done tasks/subtasks from the
