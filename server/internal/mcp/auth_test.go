@@ -50,7 +50,7 @@ func testMCPServer(t *testing.T) (*http.ServeMux, config.Connector) {
 	}
 	t.Cleanup(func() { _ = reg.Close() })
 
-	server := New(reg, "doctrine", "memd", "test")
+	server := newTestServer(reg)
 	mux := http.NewServeMux()
 	server.Mount(mux, "/mcp/")
 	return mux, conn

@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 7
+const latestSchemaVersion = 8
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -88,6 +88,7 @@ var schemaStatements = []string{
 		git_ssh_key_path TEXT NOT NULL DEFAULT '',
 		git_wait_for_writes TEXT NOT NULL DEFAULT '',
 		git_save_every TEXT NOT NULL DEFAULT '',
+		features TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (owner_user_id, id)

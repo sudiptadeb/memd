@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/doctrine"
+	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/storage"
@@ -33,10 +35,11 @@ const fileSizeWarnBytes = 100 << 10
 
 // Server is an MCP endpoint backed by a registry.
 type Server struct {
-	reg          *registry.Registry
-	instructions string
-	serverName   string
-	serverVer    string
+	reg        *registry.Registry
+	live       *doctrine.Live    // global doctrine + feature base doctrines (live-editable)
+	features   *feature.Registry // built-in structured-memory features
+	serverName string
+	serverVer  string
 
 	mu    sync.Mutex
 	loads map[string]loadState // connector ID → memory_load tracking for the current client session
@@ -51,14 +54,24 @@ type loadState struct {
 	nudged bool
 }
 
-func New(reg *registry.Registry, instructions, name, version string) *Server {
+func New(reg *registry.Registry, live *doctrine.Live, features *feature.Registry, name, version string) *Server {
 	return &Server{
-		reg:          reg,
-		instructions: instructions,
-		serverName:   name,
-		serverVer:    version,
-		loads:        map[string]loadState{},
+		reg:        reg,
+		live:       live,
+		features:   features,
+		serverName: name,
+		serverVer:  version,
+		loads:      map[string]loadState{},
 	}
+}
+
+// instructionsText returns the current global doctrine (an admin may have
+// overridden it at runtime via the Live store).
+func (s *Server) instructionsText() string {
+	if s.live == nil {
+		return ""
+	}
+	return s.live.Get(doctrine.GlobalID)
 }
 
 // Mount registers the MCP handler under prefix. Tokens may be supplied either
@@ -190,7 +203,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 				"name":    s.serverName,
 				"version": s.serverVer,
 			},
-			"instructions": s.instructions,
+			"instructions": s.instructionsText(),
 		},
 	}
 }
@@ -275,6 +288,8 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		writeTopology(&sb, d.Backend, root)
 		sb.WriteString("```\n\n")
 
+		sb.WriteString(s.featureMemorySection(d))
+
 		body, err := d.Backend.Read("MEMORY.md")
 		if err != nil {
 			sb.WriteString("_(MEMORY.md missing — bootstrap with `memory_write`)_\n\n")
@@ -290,6 +305,54 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 			fmt.Fprintf(&sb, "[memd: MEMORY.md truncated at %d lines / %dKB for preload — memory_read(\"MEMORY.md\") returns the full index; consider a reorganise pass]\n", lines, memoryIndexPreloadMaxBytes>>10)
 		}
 		sb.WriteString("```\n\n")
+	}
+	return sb.String()
+}
+
+// featureMemorySection renders the structured-memory features enabled on a
+// directory. To the agent these read as kinds of memory it can keep here, not
+// as abstract features. For each enabled, available feature it emits the base
+// doctrine (live-overridable) followed by the user-preference overlay read from
+// <folder>/_feature.md when present.
+func (s *Server) featureMemorySection(d registry.DirectoryView) string {
+	if s.features == nil {
+		return ""
+	}
+	var feats []feature.Feature
+	for _, df := range d.Directory.Features {
+		if !df.Enabled {
+			continue
+		}
+		f, ok := s.features.Lookup(df.Key)
+		if !ok || f.ComingSoon {
+			continue
+		}
+		feats = append(feats, f)
+	}
+	if len(feats) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("**Structured memory enabled here.** Beyond freeform notes, you keep these kinds of memory in this directory — store and maintain them as described:\n\n")
+	for _, f := range feats {
+		fmt.Fprintf(&sb, "#### %s\n\n%s\n\n", f.Name, f.AgentSummary)
+		base := ""
+		if s.live != nil {
+			base = s.live.Get(doctrine.FeatureID(f.Key))
+		}
+		if base == "" {
+			base = f.BaseDoctrine()
+		}
+		sb.WriteString(base)
+		sb.WriteString("\n")
+		if d.Backend != nil {
+			if prefs, err := d.Backend.Read(f.Folder + "/_feature.md"); err == nil {
+				if t := strings.TrimSpace(string(prefs)); t != "" {
+					fmt.Fprintf(&sb, "\nUser preferences (%s/_feature.md):\n%s\n", f.Folder, t)
+				}
+			}
+		}
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }

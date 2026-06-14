@@ -26,7 +26,7 @@ func TestLogsAPIIsNotCached(t *testing.T) {
 		t.Fatalf("CreateSuperAdmin: %v", err)
 	}
 	mux := http.NewServeMux()
-	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager())
+	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager(), nil)
 	handler.Mount(mux)
 
 	logs.Info("activity polling regression marker")
@@ -313,7 +313,7 @@ func newTestUI(t *testing.T, accounts *account.Store) (*http.ServeMux, *Handler)
 	reg := registry.NewEphemeral()
 	t.Cleanup(func() { _ = reg.Close() })
 	mux := http.NewServeMux()
-	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager())
+	handler := New(reg, accounts, "http://127.0.0.1:7878", newTestSessions(t), oidc.NewManager(), nil)
 	handler.Mount(mux)
 	return mux, handler
 }

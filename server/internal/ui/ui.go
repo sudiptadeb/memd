@@ -15,6 +15,8 @@ import (
 
 	"github.com/sudiptadeb/memd/server/internal/account"
 	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/sudiptadeb/memd/server/internal/doctrine"
+	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/oidc"
 	"github.com/sudiptadeb/memd/server/internal/registry"
@@ -30,20 +32,28 @@ type Handler struct {
 	accounts *account.Store
 	sessions *SessionManager
 	oidc     *oidc.Manager
+	live     *doctrine.Live // live-editable doctrines (super-admin only)
+	features *feature.Registry
 	baseURL  string
 }
 
-// New builds the web UI handler. sessions carries the cookie-sealing key and
-// oidc is the runtime-swappable IdP provider (may be disabled).
-func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessions *SessionManager, oidcMgr *oidc.Manager) *Handler {
+// New builds the web UI handler. sessions carries the cookie-sealing key, oidc
+// is the runtime-swappable IdP provider (may be disabled), and live is the
+// in-memory doctrine store a super admin can edit at runtime.
+func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessions *SessionManager, oidcMgr *oidc.Manager, live *doctrine.Live) *Handler {
 	if oidcMgr == nil {
 		oidcMgr = oidc.NewManager()
+	}
+	if live == nil {
+		live = doctrine.NewLive()
 	}
 	return &Handler{
 		reg:      reg,
 		accounts: accounts,
 		sessions: sessions,
 		oidc:     oidcMgr,
+		live:     live,
+		features: feature.Builtins(),
 		baseURL:  baseURL,
 	}
 }
@@ -62,6 +72,8 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
 	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))
 	mux.HandleFunc("/api/admin/oidc/relink", h.requireSuperAdmin(h.adminOIDCRelinkAPI))
+	mux.HandleFunc("/api/admin/doctrines", h.requireSuperAdmin(h.adminDoctrinesAPI))
+	mux.HandleFunc("/api/admin/doctrines/", h.requireSuperAdmin(h.adminDoctrineAPI))
 	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))
 	mux.HandleFunc("/api/teams/", h.requireUser(h.teamAPI))
 	mux.HandleFunc("/api/team-invites/", h.teamInviteAPI)
@@ -103,6 +115,16 @@ type directoryView struct {
 	Owned            bool   `json:"owned"`
 	CanManage        bool   `json:"can_manage"`
 	CanAttach        bool   `json:"can_attach"`
+
+	Features []featureToggle `json:"features"`
+}
+
+// featureToggle is the per-directory state of one built-in feature for the UI.
+type featureToggle struct {
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	ComingSoon bool   `json:"coming_soon"`
 }
 
 type connectorView struct {
@@ -197,6 +219,7 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Owned:            d.OwnerUserID == ownerUserID,
 			CanManage:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
 			CanAttach:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && writableTeam[d.TeamID]),
+			Features:         h.featureToggles(d),
 		})
 	}
 	cs := h.reg.ConnectorsForUser(ownerUserID)
@@ -241,6 +264,26 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 		})
 	}
 	return pageData{Directories: dirViews, Connectors: cViews}
+}
+
+// featureToggles returns the per-directory state of every built-in feature: its
+// key, label, whether it is enabled on this directory, and whether it is still
+// coming-soon (registered but not yet usable).
+func (h *Handler) featureToggles(d config.Directory) []featureToggle {
+	enabled := make(map[string]bool, len(d.Features))
+	for _, df := range d.Features {
+		enabled[df.Key] = df.Enabled
+	}
+	var out []featureToggle
+	for _, f := range h.features.List() {
+		out = append(out, featureToggle{
+			Key:        f.Key,
+			Name:       f.Name,
+			Enabled:    enabled[f.Key],
+			ComingSoon: f.ComingSoon,
+		})
+	}
+	return out
 }
 
 // --- Directory API ---
@@ -393,6 +436,10 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			Description      *string `json:"description"`
 			TeamID           *string `json:"team_id"`
 			OwnerConnectorID *string `json:"owner_connector_id"`
+			Feature          *struct {
+				Key     string `json:"key"`
+				Enabled bool   `json:"enabled"`
+			} `json:"feature"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httpErr(w, http.StatusBadRequest, err)
@@ -424,7 +471,15 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			logs.InfoUser(user.ID, "updated directory owner connector id=%s connector=%s", id, d.OwnerConnectorID)
 		}
-		if body.Name == nil && body.Description == nil && body.TeamID == nil && body.OwnerConnectorID == nil {
+		if body.Feature != nil {
+			d, err = h.reg.SetDirectoryFeatureForActor(user.ID, id, body.Feature.Key, body.Feature.Enabled)
+			if err != nil {
+				httpErr(w, statusForAccountError(err), err)
+				return
+			}
+			logs.InfoUser(user.ID, "set directory feature id=%s feature=%s enabled=%v", id, body.Feature.Key, body.Feature.Enabled)
+		}
+		if body.Name == nil && body.Description == nil && body.TeamID == nil && body.OwnerConnectorID == nil && body.Feature == nil {
 			httpErr(w, http.StatusBadRequest, fmt.Errorf("nothing to update"))
 			return
 		}
