@@ -91,11 +91,21 @@ Consequences:
   is not delete**; the data stays and the feature can be re-enabled. The DB is the source of
   truth for "is this feature on for this directory"; the folder is the source of truth for
   the data.
-- **Doctrine is always delivered from `_feature.md` inside the folder** (agent-readable and
-  agent-editable, so self-improvement works for built-ins too). Built-ins ship a **code
-  default** that seeds `_feature.md` when the feature is enabled and acts as a fallback if
-  the file is missing. This unifies the two tiers' doctrine path — the *only* difference
-  between a built-in and a user feature is that built-ins also have parser + rich UI code.
+- **Doctrine is two layers for built-ins:**
+  1. **Base doctrine — stored in the server (code).** The canonical rules for the feature
+     (how tasks work, the grammar, graduation). Stable; not in the editable file, so it
+     can't be corrupted.
+  2. **`<folder>/_feature.md` — the user-preference layer, *appended* to the base.** Where
+     the user (or the agent, self-improving) adds personal rules, e.g. *"always create
+     tasks 1 hour earlier than needed,"* *"no events on Sundays."*
+  At `memory_load`, memd composes **base doctrine + `_feature.md` preferences** for each
+  enabled feature on a directory.
+- **Enabling a built-in scaffolds `_feature.md` as a preferences *template*** — a short
+  header explaining "these are your personal preferences for <feature>; add your rules
+  here" — **not** a copy of the base doctrine. If the file is missing, the base alone is
+  used.
+- **User-created features (later) have no server base**, so their `_feature.md` *is* the
+  whole doctrine. That — plus parser/UI code — is the only real difference between the tiers.
 - **A disabled feature is simply not surfaced** in `memory_load` and its rich UI is hidden;
   nothing is deleted.
 
@@ -252,7 +262,9 @@ the first built-in, doctrine-only (no `tasks_*` tools, no parser, no rich UI yet
 
 ### 9.1 New package: `server/internal/feature`
 - `Feature` descriptor: `Key`, `Name`, `Folder` (root folder name, e.g. `tasks`),
-  `Builtin bool`, `DefaultDoctrine() string` (the seed/fallback prose).
+  `Builtin bool`, `BaseDoctrine() string` (the server-canonical rules), and
+  `PreferencesTemplate() string` (the short scaffold written into `_feature.md` on enable —
+  a header inviting the user to add personal rules, NOT a copy of the base).
 - `Registry` of built-ins: `tasks` (real), `calendar` (registered but marked
   coming-soon/optional). `Builtins()` for the UI to list; `Lookup(key)`.
 - This package has no DB/storage deps — pure descriptors.
@@ -278,16 +290,16 @@ the first built-in, doctrine-only (no `tasks_*` tools, no parser, no rich UI yet
   `featureKey` against `feature.Registry`, update the directory's `Features`, persist via
   `accounts.UpsertUserDirectory` (or `save()` in config mode).
 - On enable, **scaffold the feature folder** if missing: write `<Folder>/_feature.md` with
-  the feature's `DefaultDoctrine()` (via the directory's backend). Lazy is acceptable, but
-  doing it on enable means `memory_load` always has a file to read.
+  the feature's `PreferencesTemplate()` (the user-preference header, not the base) via the
+  directory's backend. Missing file is fine — the base doctrine is used alone.
 
 ### 9.4 MCP surfacing (`internal/mcp/mcp.go`)
 - `New(...)` gains a `*feature.Registry` param (thread through `serve.go` construction).
 - `activeMemorySection(conn)`: for each `DirectoryView`, after the `MEMORY.md` block, render
-  a **Features** block — for every *enabled* feature on that directory: read
-  `<Folder>/_feature.md` from the backend (fallback to `DefaultDoctrine()` if absent),
-  and include the doctrine plus a one-line pointer to the folder. Disabled features are
-  skipped. No change to the global `instructions` (features are per-directory, not global).
+  a **Features** block — for every *enabled* feature on that directory, compose
+  **`BaseDoctrine()` + the contents of `<Folder>/_feature.md`** (the user-preference layer,
+  if the file exists), plus a one-line pointer to the folder. Disabled features are skipped.
+  No change to the global `instructions` (features are per-directory, not global).
 
 ### 9.5 Web UI (`internal/ui/ui.go` + embedded assets)
 - `directoryView` / `pageData`: add `Features []featureToggleView{ Key, Name, Enabled }`,
