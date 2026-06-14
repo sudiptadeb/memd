@@ -120,6 +120,24 @@ dashboard round-trip.
   work, mirroring the existing browse-sheet routing.
 - Mutations still post to the per-directory `/api/directories/<id>/tasks`; the aggregate
   `GET /api/tasks` is re-read after each edit.
+- **Hide completed** toggle (persisted in `localStorage`) drops done tasks/subtasks from the
+  list display; the board already shows only open work. Display-only — files are untouched.
+
+### UX fix: section visibility regression
+While building the Tasks view a long-standing bug surfaced: every main view shares an
+`x-show="activeView === '<v>' && !loading && !loadErr"` `<section>`, and Alpine's effect on
+the **initially-active** section (default `directories`) got wedged — it stopped reacting to
+`activeView`, so the Directories cards stayed visible under *every* view (now including
+Tasks). Two compounding causes, both fixed:
+- **Short-circuit dependency loss:** a `a === x && !b` expression stops reading `b`/`loadErr`
+  once it short-circuits, so Alpine drops them as reactive deps. Replaced every section's
+  condition with a `viewIs(name)` helper that reads `activeView`, `loading` and `loadErr`
+  into locals *before* combining them, so all three are always tracked.
+- **Same-flush view switch:** onboarding flipped `activeView` to `info` inside the same
+  reactive flush as `loading=false`, which tore down the section's effect. The onboarding
+  switch is now deferred to `$nextTick`.
+Browser-verified: exactly one section renders per view (info / directories / tasks /
+connectors / logs), across onboarding and normal accounts, and after reload.
 
 ### How it works
 - **Parser** (`ParseFile`): a checklist line `- [ ] title due:YYYY-MM-DD prio:high #tag`
