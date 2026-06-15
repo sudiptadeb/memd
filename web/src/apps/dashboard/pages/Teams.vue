@@ -15,17 +15,23 @@
     <div class="picker-error" v-if="loadErr" v-text="loadErr"></div>
 
     <div class="cards" v-if="teams.length">
-      <article class="card" v-for="team in teams" :key="team.id">
+      <router-link
+        class="card team-card"
+        v-for="team in teams"
+        :key="team.id"
+        :to="`/teams/${team.id}`"
+      >
         <div class="card-head">
           <div class="card-name" v-text="team.name"></div>
           <span class="dot accent" v-text="roleLabel(team.role)"></span>
           <span class="spacer"></span>
-          <button class="btn ghost" type="button" @click="openTeam(team)">
-            <MIcon name="pencil" />
+          <span class="manage-link">
             Manage
-          </button>
+            <MIcon name="chevron-right" />
+          </span>
         </div>
-      </article>
+        <div class="card-meta" v-if="team.slug">@<span v-text="team.slug"></span></div>
+      </router-link>
     </div>
 
     <div class="empty" v-else-if="!loading">
@@ -38,78 +44,67 @@
       </button>
     </div>
 
-    <!-- New team sheet -->
-    <div class="scrim" :class="{ open: sheet }" @click="closeSheets"></div>
-
-    <aside
-      class="sheet"
-      :class="{ open: sheet === 'team-new' }"
-      :aria-hidden="sheet !== 'team-new'"
-      :inert="sheet !== 'team-new'"
-      @keydown.escape.stop="closeSheets"
-    >
-      <header class="sheet-head">
-        <div>
+    <!-- New team dialog -->
+    <div class="modal-scrim" :class="{ open: showNew }" :inert="!showNew" @click="closeNew">
+      <div class="modal" @click.stop>
+        <header class="modal-head">
           <h3>New team</h3>
           <div class="sub">Invite people and share selected directories with them.</div>
-        </div>
-        <span class="spacer"></span>
-        <button class="icon-btn" type="button" title="Close" @click="closeSheets">
-          <MIcon name="x" />
-        </button>
-      </header>
-
-      <form class="sheet-body" id="new-team-form" @submit.prevent="createTeam">
-        <div class="field">
-          <label class="field-label">Name<span class="req">*</span></label>
-          <input class="input" v-model="teamForm.name" required placeholder="Family memory" />
-        </div>
-        <div class="field">
-          <label class="field-label">Slug</label>
-          <input class="input" v-model="teamForm.slug" placeholder="family-memory" />
-        </div>
-        <span class="err" v-if="teamForm.err" v-text="teamForm.err"></span>
-      </form>
-
-      <footer class="sheet-foot">
-        <span class="spacer"></span>
-        <button class="btn ghost" type="button" @click="closeSheets">Cancel</button>
-        <button
-          class="btn primary"
-          type="submit"
-          form="new-team-form"
-          :disabled="teamForm.submitting || !teamForm.name"
-        >
-          Create team
-        </button>
-      </footer>
-    </aside>
-
-    <!-- Manage team sheet -->
-    <TeamManageSheet
-      :team="activeTeam"
-      :open="sheet === 'team'"
-      @close="closeSheets"
-      @changed="reload"
-      @deleted="onTeamDeleted"
-    />
+        </header>
+        <form class="modal-body" id="new-team-form" @submit.prevent="createTeam">
+          <div class="field">
+            <label class="field-label" for="new-team-name">Name<span class="req">*</span></label>
+            <input
+              id="new-team-name"
+              class="input"
+              v-model="teamForm.name"
+              required
+              placeholder="Family memory"
+            />
+          </div>
+          <div class="field">
+            <label class="field-label" for="new-team-slug">Slug</label>
+            <input
+              id="new-team-slug"
+              class="input"
+              v-model="teamForm.slug"
+              placeholder="family-memory"
+            />
+            <span class="field-hint">Optional. A short, URL-friendly handle for the team.</span>
+          </div>
+          <span class="err" v-if="teamForm.err" v-text="teamForm.err"></span>
+        </form>
+        <footer class="modal-foot">
+          <span class="spacer"></span>
+          <button class="btn ghost" type="button" @click="closeNew">Cancel</button>
+          <button
+            class="btn primary"
+            type="submit"
+            form="new-team-form"
+            :disabled="teamForm.submitting || !teamForm.name"
+          >
+            Create team
+          </button>
+        </footer>
+      </div>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { teams as teamsApi, ApiError } from "@/shared/api";
-import { toast } from "@/shared/bus";
 import MIcon from "@/shared/components/MIcon.vue";
-import TeamManageSheet from "./TeamManageSheet.vue";
 import type { Team } from "@/shared/types";
+
+const router = useRouter();
 
 const teams = ref<Team[]>([]);
 const loading = ref(true);
 const loadErr = ref("");
 
-const sheet = ref<"" | "team-new" | "team">("");
-const activeTeam = ref<Team | null>(null);
+const showNew = ref(false);
 
 const teamForm = reactive({
   name: "",
@@ -135,32 +130,16 @@ async function load(): Promise<void> {
   }
 }
 
-// Reload the list and keep the open manage sheet pointed at the fresh team
-// object (so role/permission changes propagate into the panel).
-async function reload(): Promise<void> {
-  await load();
-  if (activeTeam.value) {
-    const fresh = teams.value.find((t) => t.id === activeTeam.value!.id);
-    activeTeam.value = fresh ?? null;
-    if (!fresh) sheet.value = "";
-  }
-}
-
 function openNew(): void {
   teamForm.name = "";
   teamForm.slug = "";
   teamForm.err = "";
   teamForm.submitting = false;
-  sheet.value = "team-new";
+  showNew.value = true;
 }
 
-function openTeam(team: Team): void {
-  activeTeam.value = team;
-  sheet.value = "team";
-}
-
-function closeSheets(): void {
-  sheet.value = "";
+function closeNew(): void {
+  showNew.value = false;
 }
 
 async function createTeam(): Promise<void> {
@@ -168,12 +147,14 @@ async function createTeam(): Promise<void> {
   teamForm.submitting = true;
   try {
     const data = await teamsApi.create({ name: teamForm.name, slug: teamForm.slug });
-    closeSheets();
-    await load();
-    // Land in the new team's management sheet so the next step — inviting
-    // people — is right in front of the user.
-    const created = data.team && teams.value.find((t) => t.id === data.team.id);
-    if (created) openTeam(created);
+    closeNew();
+    // Land on the new team's detail page so the next step — inviting people —
+    // is right in front of the user.
+    if (data.team) {
+      await router.push(`/teams/${data.team.id}`);
+    } else {
+      await load();
+    }
   } catch (error) {
     teamForm.err = error instanceof ApiError ? error.message : "create failed";
   } finally {
@@ -181,12 +162,39 @@ async function createTeam(): Promise<void> {
   }
 }
 
-function onTeamDeleted(team: Team): void {
-  toast(`Deleted ${team.name}`, "success");
-  closeSheets();
-  activeTeam.value = null;
-  void load();
-}
-
 onMounted(load);
 </script>
+
+<style scoped>
+.team-card {
+  cursor: pointer;
+}
+
+.team-card:hover .manage-link {
+  color: var(--fg-1);
+}
+
+.manage-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--fg-3);
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color var(--dur-fast);
+}
+
+.manage-link .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+</style>

@@ -20,13 +20,7 @@
         v-for="directory in sortedDirectories"
         :key="directory.id"
         :directory="directory"
-        :manageable-teams="manageableTeams"
-        :own-connectors="ownConnectorsForDirectory(directory)"
         :team-label="teamName(directory.team_id)"
-        @browse="openBrowse"
-        @edit="openEdit"
-        @open-tasks="goToTasks"
-        @changed="reload"
       />
     </div>
 
@@ -42,35 +36,24 @@
   </section>
 
   <DirForm :open="addOpen" :teams="manageableTeams" :can-browse-fs="canBrowseFs" @close="addOpen = false" @created="onCreated" />
-  <DirEditForm :open="editOpen" :directory="editing" @close="editOpen = false" @saved="onSaved" />
-  <DirFiles :open="browseOpen" :directory="browsing" @close="browseOpen = false" />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import MIcon from "@/shared/components/MIcon.vue";
 import DirCard from "../components/DirCard.vue";
 import DirForm from "../components/DirForm.vue";
-import DirEditForm from "../components/DirEditForm.vue";
-import DirFiles from "../components/DirFiles.vue";
-import { connectors as connectorsApi, directories as directoriesApi, teams as teamsApi, ApiError } from "@/shared/api";
+import { directories as directoriesApi, teams as teamsApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
 import { useSession } from "@/shared/session";
-import type { ConnectorView, DirectoryView, Team } from "@/shared/types";
+import type { DirectoryView, Team } from "@/shared/types";
 
-const router = useRouter();
 const { user, isSuperAdmin } = useSession();
 
 const directories = ref<DirectoryView[]>([]);
-const connectors = ref<ConnectorView[]>([]);
 const teams = ref<Team[]>([]);
 
 const addOpen = ref(false);
-const editOpen = ref(false);
-const browseOpen = ref(false);
-const editing = ref<DirectoryView | null>(null);
-const browsing = ref<DirectoryView | null>(null);
 
 // Add buttons are hidden for super admins (they manage everyone's, not their
 // own), matching the Alpine UI.
@@ -100,23 +83,10 @@ const sortedDirectories = computed(() => {
   });
 });
 
-// Your own connectors that already attach this directory — the candidates for
-// its main-branch connector.
-function ownConnectorsForDirectory(directory: DirectoryView): ConnectorView[] {
-  return connectors.value.filter(
-    (c) => c.owned && (c.directory_ids || []).includes(directory.id),
-  );
-}
-
 async function reload(): Promise<void> {
   try {
-    const [dirs, conns, tms] = await Promise.all([
-      directoriesApi.list(),
-      connectorsApi.list(),
-      teamsApi.list(),
-    ]);
+    const [dirs, tms] = await Promise.all([directoriesApi.list(), teamsApi.list()]);
     directories.value = dirs.directories || [];
-    connectors.value = conns.connectors || [];
     teams.value = tms.teams || [];
   } catch (e) {
     toast(e instanceof ApiError ? e.message : String(e), "error");
@@ -127,27 +97,8 @@ function openAdd(): void {
   addOpen.value = true;
 }
 
-function openEdit(directory: DirectoryView): void {
-  editing.value = directory;
-  editOpen.value = true;
-}
-
-function openBrowse(directory: DirectoryView): void {
-  browsing.value = directory;
-  browseOpen.value = true;
-}
-
-function goToTasks(directory: DirectoryView): void {
-  void router.push({ name: "tasks", query: { dir: directory.id } });
-}
-
 async function onCreated(): Promise<void> {
   addOpen.value = false;
-  await reload();
-}
-
-async function onSaved(): Promise<void> {
-  editOpen.value = false;
   await reload();
 }
 

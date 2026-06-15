@@ -1,7 +1,7 @@
 import { createApp, type Component } from "vue";
 import {
   createRouter,
-  createWebHistory,
+  createWebHashHistory,
   type RouteRecordRaw,
   type Router,
 } from "vue-router";
@@ -15,10 +15,12 @@ export function createMemdApp(root: Component, routes: RouteRecordRaw[]): {
   app: ReturnType<typeof createApp>;
   router: Router;
 } {
-  // history base comes from Vite's per-app base (BASE_URL): "/" for the
-  // dashboard, "/admin/" for the admin app, so routes are clean and #-free.
+  // Hash history: client routes live after "#", so deep links never reach the
+  // Go server (no SPA fallback needed) and work under any static mount. The
+  // per-app Vite base (BASE_URL) — "/" for the dashboard, "/admin/" for admin —
+  // is the path that precedes the "#".
   const router = createRouter({
-    history: createWebHistory(import.meta.env.BASE_URL),
+    history: createWebHashHistory(import.meta.env.BASE_URL),
     routes,
     scrollBehavior: () => ({ top: 0 }),
   });
