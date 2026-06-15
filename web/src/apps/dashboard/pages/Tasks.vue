@@ -411,6 +411,12 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* Capped column so the table's Directory/List columns stay readable instead of
+   being flung to the far edge of a wide monitor. */
+.tasks-section {
+  max-width: 980px;
+}
+
 /* Compact single-row quick-add that sits between the toolbar and the table. */
 .task-quick-add {
   display: flex;
@@ -509,8 +515,17 @@ onMounted(load);
     flex: 1 1 auto;
     max-width: none;
   }
+  /* Long titles read poorly squeezed to the row's right edge — give the Task
+     cell the full card width with its label above it, left-aligned. */
+  .tasks-table td[data-label="Task"] {
+    display: block;
+  }
+  .tasks-table td[data-label="Task"]::before {
+    display: block;
+    margin-bottom: 4px;
+  }
   .tasks-table .task-cell {
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .task-cell.indent {
     padding-left: 0;

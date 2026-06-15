@@ -255,6 +255,11 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* Capped column so the cards don't stretch across a wide monitor. */
+.app-section {
+  max-width: 880px;
+}
+
 .detail-loading {
   padding: 2rem 0;
   color: var(--fg-3);
