@@ -3129,3 +3129,141 @@ button.crumb:hover {
   white-space: nowrap;
 }
 .hide-done-toggle input { cursor: pointer; }
+
+/* ========================================================================== *
+ *  Data tables  —  shared tabular layout for members, tasks and other lists  *
+ *  that must scale to many rows. Wrap <table class="mtable"> in               *
+ *  <div class="mtable-wrap"> for rounded borders + horizontal overflow.       *
+ * ========================================================================== */
+.mtable-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.mtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+.mtable th,
+.mtable td {
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+.mtable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mtable tbody tr {
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.mtable tbody tr:hover {
+  background: var(--surface-2);
+}
+.mtable tbody tr:last-child td {
+  border-bottom: none;
+}
+.mtable td.shrink,
+.mtable th.shrink {
+  width: 1%;
+  white-space: nowrap;
+}
+.mtable td.num,
+.mtable th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.mtable .cell-muted { color: var(--fg-3); }
+.mtable .cell-strong { font-weight: 600; color: var(--fg-1); }
+.mtable .row-click { cursor: pointer; }
+/* Opt-in: collapse rows into stacked cards on phones (each <td> needs a
+   data-label). Tables without this just scroll horizontally in .mtable-wrap. */
+@media (max-width: 640px) {
+  .mtable-stack thead { display: none; }
+  .mtable-stack,
+  .mtable-stack tbody,
+  .mtable-stack tbody tr { display: block; }
+  .mtable-stack tbody tr {
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .mtable-stack tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.2rem 0;
+    border: none;
+  }
+  .mtable-stack tbody td::before {
+    content: attr(data-label);
+    color: var(--fg-3);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+/* ========================================================================== *
+ *  Detail-page header  —  shared chrome for route-based master/detail pages   *
+ *  (team detail, directory detail): back button + title + actions.            *
+ * ========================================================================== */
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  margin-bottom: 1.4rem;
+}
+.detail-back {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg-2);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.detail-back:hover {
+  border-color: var(--border-strong);
+  color: var(--fg-1);
+}
+.detail-back .icon { width: 1.05rem; height: 1.05rem; }
+.detail-titles { flex: 1; min-width: 0; }
+.detail-title {
+  font-size: 1.4rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.detail-sub {
+  margin-top: 0.2rem;
+  color: var(--fg-3);
+  font-size: 0.85rem;
+}
+.detail-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+@media (max-width: 640px) {
+  .detail-actions { width: 100%; }
+}
