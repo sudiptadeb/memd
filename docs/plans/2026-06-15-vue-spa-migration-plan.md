@@ -6,8 +6,8 @@ Status: design agreed; implementation not started.
 
 ## Scope
 
-Replace the embedded single-page Alpine.js UI with two Vue 3 single-page apps —
-the user **dashboard** (served at `/`) and the super-admin **console** (served at
+Replace the embedded single-page Alpine.js UI with Vue 3 apps — the user
+**dashboard** (served at `/`) and the super-admin **console** (served at
 `/admin`) — without changing the backend API/auth contract. The migration must:
 
 1. **Preserve the existing embed.** The release binary keeps serving the UI from
@@ -16,10 +16,34 @@ the user **dashboard** (served at `/`) and the super-admin **console** (served a
    backend API through a dev proxy, so the UI can be developed against live data
    without rebuilding the Go binary.
 3. **Draw clean boundaries** between the three runtime modes (production embed /
-   local dev / build), with `build/build.sh` as the one correct build path.
+   local dev / build) and between the apps, with `build/build.sh` as the one
+   correct build path.
 
 This is almost entirely a frontend-tooling-and-embed change. The backend stays
-as-is apart from a one-line change to *where* the embedded assets come from.
+as-is apart from a small change to *where* the embedded assets come from.
+
+## Design Principles
+
+These are the load-bearing decisions; everything below follows from them.
+
+1. **One HTML page = one app = independently buildable and embeddable.** Each
+   distinct page is its own app with its own build, its own self-contained output,
+   and its own base path. **Multi-entry builds are rejected**: they force the apps
+   to be hosted together and embedded as a single unit, which removes the option
+   to serve, embed, or omit one app independently later. Self-contained per-app
+   builds keep that option open.
+2. **Shared behavior comes from a common app template + a tiny event bus, not
+   from a coupled build.** A shared bootstrap (`createMemdApp`) wires every app
+   the same way, and a small event bus carries ephemeral cross-cutting signals
+   (toasts, full-page loader). These are deliberate *seams*: a single place to
+   reach through and migrate or upgrade every app at once down the line. Shared
+   code is duplicated into each app's bundle — the accepted, cheap cost of
+   independence.
+3. **`build/build.sh` is the one build path.** `dist/` is gitignored; a bare
+   `go build` without a prior frontend build is allowed to fail. No sentinels, no
+   runtime fallbacks.
+4. **The API/auth seam is unchanged.** Apps consume the same same-origin
+   `/api/*` + session-cookie contract the Alpine UI uses today.
 
 ## Why This Is Low-Risk On The Backend
 
@@ -35,9 +59,6 @@ The current UI already talks to a clean seam:
 - The frontend only does same-origin `fetch('/api/...')`; cookies ride along.
 - Views are already hash-routed (`#view=connectors`, `#tasks=<dir>`), which maps
   directly onto Vue Router hash mode, so existing URLs keep working.
-
-So the API contract is the boundary; the Vue apps consume it exactly as Alpine
-does today.
 
 ## Current State (what is being replaced)
 
@@ -57,41 +78,40 @@ cache validator).
 
 Agreed on 2026-06-15:
 
-1. **One Vite project, folder-per-app, single build.** A single `web/` project
-   with each app as a folder under `src/apps/<app>/index.html` (`dashboard`,
-   `admin`). A single `vite build` (multi-entry) emits both apps; route-level
-   code-splitting keeps the dashboard from loading admin view code. The dev
-   server hosts both apps from one process. (Fully isolated per-app bundles via a
-   `VITE_APP` build loop are a documented option, not the default — see below.)
-2. **Build-only embed; `build.sh` is the one path.** `dist/` is gitignored and
-   never committed. `build/build.sh` runs the frontend build, then `go build`
-   embeds the result. A bare `go build` *without* a prior frontend build simply
-   **fails to compile** — that is acceptable and expected; the supported path is
-   always `build/build.sh`. No sentinel files, no runtime fallbacks.
-3. **TypeScript** — typed components and api client. Catches drift against the Go
+1. **Separate per-app builds, one project.** A single `web/` project holds every
+   app under `src/apps/<app>/index.html` (`dashboard`, `admin`), but each app is
+   **built independently** (`VITE_APP=<app> vite build`) into its own
+   self-contained `dist/<app>/` with its own base path. No shared chunk graph;
+   each app can be embedded or served on its own. The dev server hosts all apps
+   from one process for convenience.
+2. **Build-only embed; `build.sh` is the one path.** `dist/` is gitignored.
+   `build/build.sh` builds each app, then `go build` embeds the result. A bare
+   `go build` without a frontend build fails to compile — acceptable and
+   expected.
+3. **TypeScript** — typed components and api client; catches drift against the Go
    JSON contract at build time.
 4. **Vue 3 + Vue Router (hash mode), no Pinia** — Router preserves the existing
-   `#view=` URLs; shared state lives in composables (`useSession`, `useTheme`,
-   …) plus a tiny event bus for ephemeral signals (toasts, full-page loader).
-   Pinia can be added later if cross-view state grows.
+   `#view=` URLs; shared state lives in composables (`useSession`, `useTheme`)
+   plus the event bus. Pinia can be added later if cross-view state grows.
 
 ## Target Architecture: Three Runtime Boundaries
 
 ### 1. Production (embedded) — unchanged contract
 
-`go build` embeds the built Vue output and serves it. No Node at runtime, single
-binary, same routes. The only change versus today is that the embedded files are
-Vite output under `dist/` instead of hand-written `assets/`.
+`go build` embeds the built apps and serves them. No Node at runtime, single
+binary, same routes. Each app is self-contained under `dist/<app>/` with its own
+base path so its asset URLs never collide with another app's:
 
-With Vite `root: src/apps`, each app emits its HTML at its root-relative path, so
-the build produces `dist/dashboard/index.html` and `dist/admin/index.html` —
-which map 1:1 onto Go's existing two routes. `index()` serves
-`dist/dashboard/index.html`; `adminIndex()` serves `dist/admin/index.html`;
-`/assets/` serves the hashed bundles from `dist/assets/` (via
-`fs.Sub(embedFS, "dist")`). Because Vite content-hashes filenames, caching is
-correct by construction: long-cache the hashed assets and only no-cache the two
-HTML entry documents (the current blanket `no-cache` hack can be dropped for
-assets).
+- Dashboard: `base: '/'` → `dist/dashboard/index.html`, assets at `dist/dashboard/assets/`.
+  Go serves `/` → that HTML and `/assets/...` → that asset tree.
+- Admin: `base: '/admin/'` → `dist/admin/index.html`, assets at `dist/admin/assets/`.
+  Go serves `/admin` → that HTML and `/admin/assets/...` → that asset tree.
+
+Because each app is self-contained, it stays independently embeddable — a future
+build could embed only the dashboard, or serve the admin console from a separate
+binary/process, with no code change to the other. Vite content-hashes filenames,
+so caching is correct by construction: long-cache the hashed assets, no-cache
+only the HTML documents.
 
 ### 2. Local UI development (the new capability)
 
@@ -101,7 +121,7 @@ Two terminals:
 # Terminal 1: the real backend + DB on :7878
 ./dist/<os>/memd-... serve --init-db
 
-# Terminal 2: Vite dev server with HMR on :5173, hosting both apps, proxying to :7878
+# Terminal 2: Vite dev server with HMR on :5173, hosting the apps, proxying to :7878
 npm --prefix web run dev
 ```
 
@@ -125,46 +145,44 @@ does not set `Secure`, and `SameSite=Lax` is fine first-party to the Vite origin
 **One caveat:** the OIDC `/auth/callback` redirect is absolute to `baseURL`
 (`:7878`), so SSO login does **not** transparently round-trip through `:5173`.
 Local-password login is the dev path; SSO is tested against the real server.
-Everything else proxies cleanly.
 
 ### 3. Build
 
-`build/build.sh` orchestrates: build the frontend, then `go build` embeds it.
+`build/build.sh` orchestrates: build each app independently, then `go build`
+embeds them.
 
 ```sh
 build_web() {
   command -v npm >/dev/null || { echo "npm is required to build the web UI" >&2; exit 1; }
-  ( cd web && npm ci && npm run build )   # one vite build → server/internal/ui/dist
+  ( cd web && npm ci
+    for app in dashboard admin; do
+      VITE_APP="$app" npm run build   # → server/internal/ui/dist/<app>, self-contained
+    done )
 }
 ```
 
-`build_web` runs before `build_one` in the `host` and `all` targets. `clean`
-also clears `dist/`.
+Each app owns its own `dist/<app>/`, so `emptyOutDir: true` per app is safe with
+no cross-app ordering hacks. `build_web` runs before `build_one` in the `host`
+and `all` targets; `clean` clears `dist/`.
 
 ## The Embed (kept simple)
 
-- `dist/` is fully gitignored:
+- `dist/` is fully gitignored: `/server/internal/ui/dist/`.
+- Embed with `//go:embed dist`. On a fresh checkout (no frontend build) the
+  directory is absent and `go build` fails with "no matching files" — the
+  intended signal to run `build/build.sh`. No sentinel, no `all:`, no runtime
+  fallback page.
 
-  ```gitignore
-  /server/internal/ui/dist/
-  ```
-
-- Embed with `//go:embed dist`. On a fresh checkout (no frontend build yet) the
-  directory is absent and `go build` fails with "no matching files" — that is the
-  intended signal to run `build/build.sh`. No sentinel, no `all:` prefix, no
-  runtime "not built" page.
-
-`build/build.sh` is the supported build path (already true per the README); it
-always builds the frontend before `go build`, so the embed directory exists.
+(If independent embedding of a single app is ever wanted, switch to per-app
+directives like `//go:embed dist/dashboard` in separate files/build tags; the
+self-contained layout already supports it.)
 
 ## Repo Layout
-
-Folder-per-app layout, adapted from the reference project:
 
 ```
 web/
   package.json
-  vite.config.ts             # root: src/apps; dev hosts both apps; single multi-entry build
+  vite.config.ts             # root: src/apps; per-VITE_APP base + outDir; dev hosts all apps
   tsconfig.json
   src/
     apps/
@@ -179,11 +197,11 @@ web/
         router.ts            # Users, Single sign-on, Doctrines
         pages/
     shared/
-      bootstrap.ts           # createMemdApp(BaseApp, routes): installs router, theme, globals, mounts #app
+      bootstrap.ts           # createMemdApp(RootComponent, routes): installs router, theme, globals, mounts #app
+      bus.ts                 # tiny mitt event bus (toasts, full-page loader) — the upgrade seam
       api.ts                 # typed fetch client against /api/* (replaces the api() helper)
       session.ts             # useSession composable
       theme.ts               # useTheme composable (dark mode, layout width)
-      bus.ts                 # tiny mitt event bus (toasts, full-page loader)
       utils.ts               # isEmpty / isEqual / formatting helpers
       components/            # MButton, MField, MIcon, MToast, MLoader … (wrap existing CSS)
       css/                   # style.css ported: design tokens + base, then scoped per component
@@ -192,33 +210,32 @@ web/
 server/internal/ui/
   ui.go                      # //go:embed dist  (was assets/*)
   dist/                      # Vite output — gitignored, created by build.sh
-    dashboard/index.html
-    admin/index.html
-    assets/*                 # content-hashed JS/CSS + static (img, fonts, icons)
+    dashboard/{index.html, assets/*}   # self-contained, base '/'
+    admin/{index.html, assets/*}       # self-contained, base '/admin/'
 ```
 
-Vite `base: '/'` for both apps; the shared `dist/assets/` holds content-hashed
-bundles for both. The current `assets/` contents (favicon, logos, icons, css)
-migrate into the Vue project: static files into `public/`, `style.css` imported
-and split into tokens + per-component scoped styles over time.
+The current `assets/` contents (favicon, logos, icons, css) migrate into the Vue
+project: static files into `public/`, `style.css` imported and split into tokens
++ per-component scoped styles over time.
 
 ## Patterns Borrowed From The Reference Project
 
 Reviewed a Vue 3 + TS multi-app reference (Ulaa/Puvi: `vite.config.ts`,
 `build.py`, `router.ts`, app `index.html`, `BaseApp.vue`, `BaseSetup.js`,
-`DevIndex.vue`, `i18n.ts`, and a page component + scoped CSS). Adopt / adapt /
-reject:
+`DevIndex.vue`, `i18n.ts`, a page component + scoped CSS). The reference is a
+corp product; these are the distilled patterns, minified of its specifics.
 
 **Adopt**
 
-- `src/apps/<app>/index.html` folder-per-app layout (with Vite `root: src/apps`),
-  which naturally yields `dist/<app>/index.html`.
-- Tiny per-app `index.html` stub deferring to a **shared bootstrap factory**
+- `src/apps/<app>/index.html` folder-per-app layout, with **`VITE_APP`-selected
+  per-app builds** so each app is self-contained and independently embeddable
+  (the core principle above).
+- Tiny per-app `index.html` stub deferring to a **shared bootstrap template**
   (the reference's `BaseSetup.js` / `InitializeApp(routes)` → one `createApp`
-  wiring), so the two apps don't duplicate app setup.
+  wiring) — the seam for upgrading all apps at once.
 - A small **event bus** for ephemeral global signals (toasts, full-page loader,
   as in `BaseApp.vue`), pairing with composables for persistent state — fits the
-  "no Pinia" choice.
+  "no Pinia" choice and is a second upgrade seam.
 - `@` → `src` alias, `<script setup lang="ts">`, co-located scoped CSS per
   component, and a centralized typed `shared/api.ts` + `shared/utils.ts`.
 
@@ -229,23 +246,16 @@ reject:
   only because its dev origin differs from its backend; memd is same-origin via
   the proxy).
 - Build orchestration in `build.sh` (bash), not a separate Python `build.py`.
-
-**Optional (not the default)**
-
-- `VITE_APP`-selected **per-app build loop** for fully isolated bundles (no shared
-  chunk graph between dashboard and admin). Adds a second build pass and
-  `--emptyOutDir` ordering; only worth it if we later want the admin bundle to
-  share nothing with the dashboard. Route-level code-splitting in the single
-  build already prevents the dashboard from loading admin view code.
-- A dev-only **`DevIndex`** landing page listing the apps (reference uses a
+- Optional dev-only **`DevIndex`** landing page listing the apps (reference uses a
   `__APP_DIRECTORIES__` define). Marginal for two apps; cheap if wanted.
 
-**Reject (reference-specific, not memd's context)**
+**Reject (reference-specific, or against the principles)**
 
-- HTTPS dev server with real corp certs and a hardcoded
-  `ulaa.csez.zohocorpin.com:8443` host.
+- **Single multi-entry build** — couples hosting and embedding; the whole point
+  is separate per-app builds.
 - `createWebHistory` (history mode) — keep **hash mode** for back-compat with
   memd's `#view=` URLs and to avoid a server SPA-fallback catch-all.
+- HTTPS dev server with real corp certs and a hardcoded corp host.
 - `vue-i18n` (memd is English-only), `pinia` and `axios` (composables + the fetch
   wrapper are enough), and SEO/OpenGraph/Twitter meta (memd is an auth-gated
   local tool).
@@ -253,22 +263,20 @@ reject:
 ## Migration Phases
 
 **Phase 0 — Pipeline + boundaries.** Stand up `web/` (Vite + Vue 3 + TS + Router),
-the shared bootstrap, the dev proxy, the single multi-entry build into `dist/`,
-the `go:embed dist` switch, the `.gitignore` entry, and the `build.sh`
-`build_web` step. Prove the full chain (dev proxy → build → embed → serve) with
-placeholder pages before porting real views.
+the shared bootstrap + bus, the dev proxy, per-app `VITE_APP` builds into
+`dist/<app>/`, the `go:embed dist` switch, the `.gitignore` entry, and the
+`build.sh` `build_web` step. Prove the full chain (dev proxy → per-app build →
+embed → serve) with placeholder pages before porting real views.
 
 **Phase 1 — Admin console pilot (`/admin`).** Port the super-admin console first:
-it is small (~295 HTML / ~437 JS lines), self-contained, and security-sensitive
-enough to deserve a clean rebuild. It exercises login, session, theme, the api
-client, and the embed end-to-end at low risk. Ship it serving from Vue while the
-dashboard is still Alpine (the two pages are independent documents, so they can
-diverge in framework during the migration).
+small (~295 HTML / ~437 JS lines), self-contained, security-sensitive enough to
+deserve a clean rebuild. It exercises login, session, theme, the api client, and
+the embed end-to-end at low risk. Ship it from Vue while the dashboard is still
+Alpine (independent apps, so they can diverge in framework mid-migration).
 
 **Phase 2 — Dashboard (`/`).** Port view-by-view behind Vue Router, one existing
 hash view at a time (Teams, Directories, Tasks, Connectors, Activity, Info),
-reusing `style.css` initially. Keep the `#view=` / `#tasks=<dir>` URL scheme for
-back-compat.
+reusing `style.css` initially. Keep the `#view=` / `#tasks=<dir>` URL scheme.
 
 **Phase 3 — Cleanup.** Remove `alpine.min.js`, the old `index.html` / `admin.html`
 / `script.js` / `admin.js`, refactor shared CSS into components, and tighten
@@ -278,8 +286,9 @@ caching headers now that assets are content-hashed.
 
 - `server/internal/ui/ui.go`: change the embed directive to `//go:embed dist`;
   point `index()` / `adminIndex()` at `dist/dashboard/index.html` /
-  `dist/admin/index.html`; serve `/assets/` from `fs.Sub(embedFS, "dist")`; relax
-  cache headers for the hashed assets.
+  `dist/admin/index.html`; serve `/assets/` from the dashboard tree and
+  `/admin/assets/` from the admin tree (each via `fs.Sub`); relax cache headers
+  for the hashed assets.
 - No changes to `/api/*`, auth, session, OIDC, MCP, or HTTP-connector handlers.
 
 ## Open Items / Risks
@@ -288,6 +297,13 @@ caching headers now that assets are content-hashed.
   this); cache `node_modules`. Optionally lint/type-check the frontend.
 - **SSO in dev.** Not proxyable due to the absolute callback URL; documented as a
   known limitation (use password login locally).
-- **Asset path stability.** Existing deep links to `/assets/...` (icons in
-  external docs, if any) change to hashed names; keep stable public paths for
-  anything externally referenced via Vite `public/`.
+- **Asset path stability.** Existing deep links to `/assets/...` change to hashed
+  names; keep stable public paths for anything externally referenced via Vite
+  `public/`.
+
+## See Also
+
+The reusable, project-agnostic version of this skeleton (one app per HTML page,
+shared bootstrap template, event bus, dev proxy, `go:embed` build path) is
+distilled into memd memory so future Vue apps can reuse it without re-deriving it
+from this plan.
