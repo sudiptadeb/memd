@@ -1,28 +1,45 @@
 <template>
-  <svg v-if="href" class="icon" aria-hidden="true"><use :href="href" /></svg>
+  <svg
+    v-if="icon"
+    class="icon"
+    :viewBox="icon.viewBox"
+    aria-hidden="true"
+    v-html="icon.inner"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 
-// The SVG icons are sprite files (each contains <symbol id="icon">). Vite hashes
-// them as URL assets; we reference the fragment so <use> pulls the symbol. Glob
-// patterns can't use the "@" alias, so the path is relative to this file.
-const modules = import.meta.glob("../assets/icons/*.svg", {
+// Inline the icon path data directly into a real <svg>. The source files are
+// sprite wrappers — <svg><symbol id="icon" viewBox="...">…paths…</symbol></svg> —
+// so we extract the viewBox and the symbol's inner markup and render them inline.
+//
+// We deliberately do NOT use <use href="icon.svg#icon">: external <use>
+// references don't render in Chromium/Safari, and Vite inlines these small SVGs
+// as data: URIs (under assetsInlineLimit) whose #fragment never resolves. The
+// content is our own build-time asset, so v-html is safe here.
+const raw = import.meta.glob("../assets/icons/*.svg", {
   eager: true,
-  query: "?url",
+  query: "?raw",
   import: "default",
 }) as Record<string, string>;
 
-const urlByName: Record<string, string> = {};
-for (const path in modules) {
+interface IconSvg {
+  viewBox: string;
+  inner: string;
+}
+
+const icons: Record<string, IconSvg> = {};
+for (const path in raw) {
   const name = path.split("/").pop()!.replace(/\.svg$/, "");
-  urlByName[name] = modules[path];
+  const svg = raw[path];
+  const viewBox = /viewBox="([^"]+)"/.exec(svg)?.[1] ?? "0 0 24 24";
+  const symbol = /<symbol[^>]*>([\s\S]*?)<\/symbol>/.exec(svg);
+  const inner = (symbol ? symbol[1] : svg.replace(/<\/?svg[^>]*>/gi, "")).trim();
+  icons[name] = { viewBox, inner };
 }
 
 const props = defineProps<{ name: string }>();
-const href = computed(() => {
-  const url = urlByName[props.name];
-  return url ? `${url}#icon` : "";
-});
+const icon = computed<IconSvg | undefined>(() => icons[props.name]);
 </script>
