@@ -529,6 +529,12 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* The detail page reads better as a capped column than stretched across a wide
+   monitor — the members/invites tables otherwise spread their columns far apart. */
+.app-section {
+  max-width: 880px;
+}
+
 .detail-loading {
   display: flex;
   align-items: center;
@@ -631,6 +637,13 @@ onMounted(load);
   .invite-form {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  /* In a stacked column the desktop `flex: 1 1 12rem` would turn 12rem into a
+     row HEIGHT, ballooning these inputs — reset to their natural height. */
+  .add-row > .input:first-child,
+  .invite-form > input[type="datetime-local"] {
+    flex: 0 0 auto;
   }
 
   .add-row .btn,
