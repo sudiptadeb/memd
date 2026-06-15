@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -272,12 +273,14 @@ func TestNormalizeGitDirectoryAuthStripsInlineCredentials(t *testing.T) {
 	}
 }
 
-// Embedded assets have no modtime, so without explicit revalidation headers
-// browsers keep stale CSS/JS across deploys.
-func TestUIAndAssetsRequireRevalidation(t *testing.T) {
+// The two app shells must revalidate (no-cache) so a deploy's new asset hashes
+// are picked up immediately, while content-hashed bundles are served immutable.
+func TestUIServesAppsWithCaching(t *testing.T) {
 	accounts := openTestAccountStore(t)
 	mux, _ := newTestUI(t, accounts)
-	for _, target := range []string{"/", "/assets/style.css", "/assets/script.js"} {
+
+	// History-mode deep links all serve the app shell HTML, no-cache.
+	for _, target := range []string{"/", "/directories", "/admin", "/admin/users"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 		if rec.Code != http.StatusOK {
@@ -286,6 +289,27 @@ func TestUIAndAssetsRequireRevalidation(t *testing.T) {
 		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
 			t.Fatalf("%s Cache-Control = %q, want no-cache", target, got)
 		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Fatalf("%s Content-Type = %q, want text/html", target, ct)
+		}
+	}
+
+	// A content-hashed bundle (discovered from the embedded build) is immutable.
+	entries, err := fs.ReadDir(distFS, "dist/dashboard/assets")
+	if err != nil {
+		t.Fatalf("read embedded dashboard assets: %v (was the web UI built?)", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no embedded dashboard assets (run build/build.sh)")
+	}
+	asset := "/assets/" + entries[0].Name()
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, asset, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s status = %d", asset, rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("%s Cache-Control = %q, want immutable", asset, got)
 	}
 }
 

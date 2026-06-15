@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,8 +24,12 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/storage"
 )
 
-//go:embed assets/*
-var fsys embed.FS
+// The web UI is two independently-built Vue apps under dist/<app> (produced by
+// build/build.sh → web/ vite build). `all:` is required: Vite emits some chunks
+// whose names start with "_", which a plain embed would skip.
+//
+//go:embed all:dist
+var distFS embed.FS
 
 // Handler is the web UI handler.
 type Handler struct {
@@ -59,9 +64,18 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("/", h.index)
-	mux.HandleFunc("/admin", h.adminIndex)
-	mux.Handle("/assets/", noCache(http.FileServer(http.FS(fsys))))
+	// Each app is self-contained under dist/<app>: the dashboard is served at the
+	// root, the admin console under /admin/. Content-hashed bundles are immutable;
+	// the two app shells revalidate so a deploy is picked up at once.
+	dashFS := mustSub(distFS, "dist/dashboard")
+	adminFS := mustSub(distFS, "dist/admin")
+	mux.Handle("/assets/", immutable(http.FileServer(http.FS(dashFS))))
+	mux.Handle("/admin/assets/", immutable(http.StripPrefix("/admin", http.FileServer(http.FS(adminFS)))))
+	// History-mode SPA fallbacks: any non-asset, non-API path serves the app's
+	// index.html so deep links and reloads boot the SPA, which then client-routes.
+	mux.HandleFunc("/admin", spaPage(mustReadFile(adminFS, "index.html")))
+	mux.HandleFunc("/admin/", spaPage(mustReadFile(adminFS, "index.html")))
+	mux.HandleFunc("/", spaPage(mustReadFile(dashFS, "index.html")))
 	mux.HandleFunc("/api/session", h.sessionAPI)
 	mux.HandleFunc("/api/auth/login", h.loginAPI)
 	mux.HandleFunc("/api/auth/logout", h.logoutAPI)
@@ -87,14 +101,47 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logs", h.requireUser(h.logsAPI))
 }
 
-// noCache forces browsers and intermediaries to revalidate on every use.
-// Embedded assets carry no modtime, so without this there is no validator at
-// all and clients keep stale CSS/JS across deploys until a manual hard reload.
-func noCache(next http.Handler) http.Handler {
+// immutable marks content-hashed bundles as long-lived: the hash in the filename
+// is the cache-buster, so they never need revalidation.
+func immutable(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// spaPage serves an app's index.html for any GET/HEAD under its route prefix, so
+// history-mode deep links and reloads boot the SPA (which then client-routes).
+// The HTML revalidates (no-cache) so a deploy's new asset hashes are seen at once.
+func spaPage(indexHTML []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(indexHTML)
+	}
+}
+
+// mustSub / mustReadFile fail fast at startup if the embedded dist is malformed.
+// build/build.sh always builds the apps before the binary, so a failure here
+// means a broken build that should not start serving.
+func mustSub(f embed.FS, dir string) fs.FS {
+	sub, err := fs.Sub(f, dir)
+	if err != nil {
+		panic("ui: embedded dist missing " + dir + ": " + err.Error())
+	}
+	return sub
+}
+
+func mustReadFile(fsys fs.FS, name string) []byte {
+	b, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		panic("ui: embedded dist missing file " + name + ": " + err.Error())
+	}
+	return b
 }
 
 type pageData struct {
@@ -143,36 +190,6 @@ type connectorView struct {
 	DirectoryNames string   `json:"directory_names"`
 	Owned          bool     `json:"owned"`
 	CanManage      bool     `json:"can_manage"`
-}
-
-func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	b, err := fsys.ReadFile("assets/index.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(b)
-}
-
-func (h *Handler) adminIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/admin" {
-		http.NotFound(w, r)
-		return
-	}
-	b, err := fsys.ReadFile("assets/admin.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(b)
 }
 
 func (h *Handler) pageData(ownerUserID string) pageData {
