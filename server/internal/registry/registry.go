@@ -166,7 +166,7 @@ func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
 		if err := l.EnsureIndex(d.Description); err != nil {
 			return nil, err
 		}
-		return l, nil
+		return storage.WrapIndexed(l), nil
 	case "git":
 		if d.Git == nil {
 			return nil, errors.New("git directory missing config")
@@ -194,7 +194,7 @@ func (r *Registry) openBackend(d config.Directory) (storage.Backend, error) {
 		if err := g.EnsureIndex(d.Description); err != nil {
 			return nil, err
 		}
-		return g, nil
+		return storage.WrapIndexed(g), nil
 	}
 	return nil, fmt.Errorf("unknown backend %q", d.Backend)
 }
@@ -352,7 +352,7 @@ func (r *Registry) openBranchBackend(d config.Directory, c *Connector) (storage.
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewGit(storage.GitConfig{
+	g, err := storage.NewGit(storage.GitConfig{
 		// Separate clone per (directory, connector-owner, connector).
 		WorkDir:          filepath.Join(workdirs, d.ID+"--"+c.OwnerUserID+"--"+c.ID),
 		RemoteURL:        d.Git.RemoteURL,
@@ -368,6 +368,10 @@ func (r *Registry) openBranchBackend(d config.Directory, c *Connector) (storage.
 		SaveEvery:        parseDurationOrZero(d.Git.SaveEvery),
 		DisableReadStats: true,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return storage.WrapIndexed(g), nil
 }
 
 // connectorAuthor resolves the commit identity for a connector's branch clone:

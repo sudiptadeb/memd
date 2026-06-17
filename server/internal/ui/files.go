@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/memd/server/internal/graph"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/storage"
 )
@@ -53,6 +54,23 @@ func (h *Handler) directoryFilesAPI(w http.ResponseWriter, r *http.Request, user
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": entries})
+}
+
+// directoryGraphAPI returns the link graph (nodes + edges + orphans + broken
+// links) of a directory the user can view, for the dashboard's visual
+// navigator. It is the same graph the memory_graph MCP tool serves.
+func (h *Handler) directoryGraphAPI(w http.ResponseWriter, r *http.Request, user *account.User, id string) {
+	dv := h.directoryForViewer(w, user, id)
+	if dv == nil {
+		return
+	}
+	g, err := graph.Build(dv.Backend)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, g)
 }
 
 // renderCSP is sent with markup rendered as text/html (or image/svg+xml).

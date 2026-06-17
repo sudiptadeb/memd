@@ -16,6 +16,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
 	"github.com/sudiptadeb/memd/server/internal/feature"
+	"github.com/sudiptadeb/memd/server/internal/graph"
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/registry"
 	"github.com/sudiptadeb/memd/server/internal/storage"
@@ -228,7 +229,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 // bodies embed their own memory_load step — stay unguarded.
 func guardedByLoad(name string) bool {
 	switch name {
-	case "memory_search", "memory_read", "memory_list",
+	case "memory_search", "memory_read", "memory_list", "memory_graph",
 		"memory_write", "memory_move", "memory_delete", "memory_delete_folder":
 		return true
 	}
@@ -702,6 +703,18 @@ var toolsCatalog = []map[string]any{
 			"properties": map[string]any{},
 		},
 	},
+	{
+		"name":        "memory_graph",
+		"description": "[Agent-internal storage primitive.] Return the link graph of a directory: how files connect via markdown links. With no path, returns a summary — totals, orphan files (no links in or out), and broken links (targets that don't exist). With a path, returns that file's neighbours (outbound + inbound links). Use it to navigate by relationship, find disconnected memory, or spot dead links before a housekeep.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"path":         map[string]any{"type": "string", "description": "Optional: a file to centre on. Omit for a whole-directory summary."},
+			},
+			"required": []string{"directory_id"},
+		},
+	},
 	// Workflow tools — equivalent to the MCP prompts of the same root name.
 	// MCP prompts only surface as slash commands in some clients (Claude
 	// Code yes; Codex CLI no). Exposing the same workflows as tools means
@@ -823,6 +836,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 		text, isErr = s.toolDeleteFolder(conn, params.Arguments)
 	case "memory_status":
 		text = s.toolStatus(conn)
+	case "memory_graph":
+		text, isErr = s.toolGraph(conn, params.Arguments)
 	case "memd_reorganise", "memd_harvest", "memd_dream", "memd_recall", "memd_housekeep":
 		text, isErr = s.toolWorkflow(params.Name, params.Arguments)
 	default:
@@ -1061,6 +1076,67 @@ func (s *Server) toolListPath(conn *registry.Connector, args json.RawMessage) (s
 		} else {
 			fmt.Fprintf(&sb, "%s\n", e.Name)
 		}
+	}
+	return sb.String(), false
+}
+
+// toolGraph renders the directory link graph as a compact text report. With a
+// path it centres on one file's neighbours; otherwise it summarises orphans
+// and broken links across the whole directory.
+func (s *Server) toolGraph(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	var a struct {
+		DirectoryID string `json:"directory_id"`
+		Path        string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "invalid arguments: " + err.Error(), true
+	}
+	d := s.reg.DirectoryForConnector(conn, a.DirectoryID)
+	if d == nil {
+		return "directory not accessible: " + a.DirectoryID, true
+	}
+	g, err := graph.Build(d.Backend)
+	if err != nil {
+		return err.Error(), true
+	}
+
+	var sb strings.Builder
+	if a.Path != "" {
+		out, in := g.Neighbors(a.Path)
+		fmt.Fprintf(&sb, "Neighbours of %s\n\n", a.Path)
+		fmt.Fprintf(&sb, "Links out (%d):\n", len(out))
+		for _, t := range out {
+			fmt.Fprintf(&sb, "  → %s\n", t)
+		}
+		if len(out) == 0 {
+			sb.WriteString("  (none)\n")
+		}
+		fmt.Fprintf(&sb, "Linked from (%d):\n", len(in))
+		for _, t := range in {
+			fmt.Fprintf(&sb, "  ← %s\n", t)
+		}
+		if len(in) == 0 {
+			sb.WriteString("  (none)\n")
+		}
+		return sb.String(), false
+	}
+
+	fmt.Fprintf(&sb, "Graph: %d files, %d links, %d orphans, %d broken links.\n",
+		len(g.Nodes), len(g.Edges), len(g.Orphans), len(g.Broken))
+	if len(g.Orphans) > 0 {
+		sb.WriteString("\nOrphans (no links in or out):\n")
+		for _, p := range g.Orphans {
+			fmt.Fprintf(&sb, "  • %s\n", p)
+		}
+	}
+	if len(g.Broken) > 0 {
+		sb.WriteString("\nBroken links (target missing):\n")
+		for _, e := range g.Broken {
+			fmt.Fprintf(&sb, "  ✗ %s → %s\n", e.From, e.To)
+		}
+	}
+	if len(g.Orphans) == 0 && len(g.Broken) == 0 {
+		sb.WriteString("\nNo orphans or broken links — the graph is well connected.\n")
 	}
 	return sb.String(), false
 }

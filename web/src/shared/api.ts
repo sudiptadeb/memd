@@ -25,6 +25,7 @@ import type {
   CreateTeamRequest,
   DirectoryFilesResponse,
   DirectoryTasksResponse,
+  GraphResponse,
   Doctrine,
   DoctrineMutateResponse,
   DoctrinesResponse,
@@ -245,6 +246,12 @@ export const directories = {
     return request<DirectoryFilesResponse>(
       `/api/directories/${encodeURIComponent(id)}/files${query({ path })}`,
     );
+  },
+
+  // GET /api/directories/:id/graph — ui.directoryGraphAPI. The directory's link
+  // graph (nodes, edges, orphans, broken links) for the visual navigator.
+  graph(id: string): Promise<GraphResponse> {
+    return request<GraphResponse>(`/api/directories/${encodeURIComponent(id)}/graph`);
   },
 
   // GET /api/directories/:id/raw?path= — ui.directoryRawAPI. Serves one file's

@@ -393,6 +393,31 @@ export interface DirectoryFilesResponse {
   entries: DirEntry[];
 }
 
+// One node in the link graph (graph.Node).
+export interface GraphNode {
+  path: string;
+  type?: string;
+  title: string;
+  description?: string;
+  inbound: number;
+  outbound: number;
+}
+
+// One directed markdown link between two files (graph.Edge).
+export interface GraphEdge {
+  from: string;
+  to: string;
+  broken: boolean;
+}
+
+// Response of GET /api/directories/:id/graph (ui.directoryGraphAPI / graph.Graph).
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  orphans: string[];
+  broken: GraphEdge[];
+}
+
 // One subdirectory in the server-filesystem browser (ui.browseAPI).
 export interface BrowseEntry {
   name: string;
