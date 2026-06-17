@@ -120,12 +120,16 @@
         <div class="detail-card-head">
           <div class="eyebrow">Files</div>
           <span class="spacer"></span>
+          <RouterLink class="btn ghost" :to="`/directories/${directory.id}/graph`">
+            <MIcon name="git-branch" />
+            View graph
+          </RouterLink>
           <button class="btn ghost" type="button" @click="browseOpen = true">
             <MIcon name="folder-open" />
             Browse files
           </button>
         </div>
-        <p class="field-hint">Browse the files this directory serves to agents.</p>
+        <p class="field-hint">Browse the files this directory serves to agents, or explore how they link together.</p>
       </div>
     </template>
   </section>

@@ -433,6 +433,8 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 		switch action {
 		case "files":
 			h.directoryFilesAPI(w, r, user, id)
+		case "graph":
+			h.directoryGraphAPI(w, r, user, id)
 		case "raw":
 			h.directoryRawAPI(w, r, user, id)
 		default:

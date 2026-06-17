@@ -323,10 +323,13 @@ func splitLines(s string) (lines []string, ending string) {
 }
 
 // IsListFile reports whether a tasks/ entry is a user list file (a .md file that
-// is not a feature/board marker).
+// is not a feature/board marker or the server-generated index.md manifest).
 func IsListFile(name string) bool {
 	if !strings.HasSuffix(strings.ToLower(name), ".md") {
 		return false
+	}
+	if strings.EqualFold(name, "index.md") {
+		return false // server-generated OKF manifest, not a task list
 	}
 	return !strings.HasPrefix(name, "_")
 }
