@@ -7,16 +7,16 @@
       <div class="detail-titles">
         <div class="detail-title">Link graph</div>
         <div class="detail-sub" v-if="data">
-          {{ data.nodes.length }} files · {{ data.edges.length }} links
-          <template v-if="data.orphans.length"> · {{ data.orphans.length }} orphans</template>
-          <template v-if="data.broken.length"> · {{ data.broken.length }} broken</template>
+          {{ data.nodes?.length || 0 }} files · {{ data.edges?.length || 0 }} links
+          <template v-if="data.orphans?.length"> · {{ data.orphans.length }} orphans</template>
+          <template v-if="data.broken?.length"> · {{ data.broken.length }} broken</template>
         </div>
       </div>
     </header>
 
     <div class="detail-loading" v-if="loading">Building graph…</div>
 
-    <div class="empty" v-else-if="!data || data.nodes.length === 0">
+    <div class="empty" v-else-if="!data || !data.nodes || data.nodes.length === 0">
       <div class="empty-icon"><MIcon name="folder-search" /></div>
       <h4>Nothing to graph yet</h4>
       <p>This directory has no memory files with links between them.</p>
@@ -77,7 +77,7 @@
         </aside>
         <aside class="graph-side muted" v-else>
           <p class="field-hint">Click a node to inspect it. Drag to rearrange. Bigger nodes have more links; ringed nodes are orphans; red dashed lines are broken links.</p>
-          <div class="side-list" v-if="data.broken.length">
+          <div class="side-list" v-if="data.broken?.length">
             <div class="eyebrow">Broken links</div>
             <div v-for="(e, i) in data.broken" :key="`b-${i}`" class="broken-row">{{ base(e.from) }} → {{ base(e.to) }}</div>
           </div>

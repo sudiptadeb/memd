@@ -97,11 +97,15 @@ func Build(b storage.Backend) (*Graph, error) {
 		}
 	}
 
-	g := &Graph{}
+	// Initialise every slice so the JSON contract is always arrays, never
+	// null — the dashboard reads .length on these during render.
+	g := &Graph{Nodes: []Node{}, Edges: []Edge{}, Orphans: []string{}, Broken: []Edge{}}
 	for _, p := range order {
 		g.Nodes = append(g.Nodes, *nodeIdx[p])
 	}
-	g.Edges = edges
+	if edges != nil {
+		g.Edges = edges
+	}
 	for _, e := range edges {
 		if e.Broken {
 			g.Broken = append(g.Broken, e)

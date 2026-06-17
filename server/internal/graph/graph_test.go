@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/sudiptadeb/memd/server/internal/storage"
@@ -52,6 +54,26 @@ func TestBuild_EdgesOrphansBroken(t *testing.T) {
 	out, _ := g.Neighbors("hub.md")
 	if len(out) != 2 {
 		t.Errorf("hub should have 2 outbound links, got %v", out)
+	}
+}
+
+func TestBuild_SlicesNeverNil(t *testing.T) {
+	// A directory with no links → no orphans, no broken edges. Every slice
+	// must still marshal as [] (not null), or the dashboard throws on .length.
+	dir := t.TempDir()
+	l, _ := storage.NewLocal(dir)
+	_ = l.Write("a.md", []byte("---\ntitle: A\n---\n\n# A\nlinks [b](b.md)\n"), "")
+	_ = l.Write("b.md", []byte("---\ntitle: B\n---\n\n# B\nlinks [a](a.md)\n"), "")
+
+	g, err := Build(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, _ := json.Marshal(g)
+	for _, key := range []string{`"nodes":null`, `"edges":null`, `"orphans":null`, `"broken":null`} {
+		if strings.Contains(string(js), key) {
+			t.Errorf("graph JSON must not contain %s: %s", key, js)
+		}
 	}
 }
 
