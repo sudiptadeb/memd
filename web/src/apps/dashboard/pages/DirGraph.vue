@@ -214,13 +214,18 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     data.value = await directoriesApi.graph(dirId.value);
-    await nextTick();
-    buildGraph();
   } catch (e) {
     toast(e instanceof ApiError ? e.message : String(e), "error");
+    return;
   } finally {
     loading.value = false;
   }
+  // Wait for the canvas (rendered only once loading is false) to be in the DOM,
+  // then mount Cytoscape into a container that actually has a size.
+  await nextTick();
+  buildGraph();
+  cy?.resize();
+  cy?.fit(undefined, 30);
 }
 
 onMounted(load);
