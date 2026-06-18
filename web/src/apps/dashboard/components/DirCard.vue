@@ -42,6 +42,20 @@
         <MIcon name="list-checks" />
         Tasks
       </RouterLink>
+      <!-- Git repos link straight out to the remote in a new tab. @click.stop
+           keeps the click from bubbling to the card's router-link. -->
+      <a
+        class="btn-inline"
+        v-if="directory.backend === 'git' && directory.repo_url"
+        :href="directory.repo_url"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open repository in a new tab"
+        @click.stop
+      >
+        <MIcon name="external-link" />
+        Repo
+      </a>
     </div>
   </router-link>
 </template>

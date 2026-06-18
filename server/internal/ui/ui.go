@@ -159,6 +159,7 @@ type directoryView struct {
 	Description      string `json:"description,omitempty"`
 	Backend          string `json:"backend"`
 	Detail           string `json:"detail"`
+	RepoURL          string `json:"repo_url,omitempty"`
 	Error            string `json:"error,omitempty"`
 	Owned            bool   `json:"owned"`
 	CanManage        bool   `json:"can_manage"`
@@ -213,9 +214,11 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 	for _, d := range dirs {
 		dirNameByID[d.ID] = d.Name
 		detail := d.LocalPath
+		repoURL := ""
 		errMsg := ""
 		if d.Backend == "git" && d.Git != nil {
 			detail = fmt.Sprintf("%s @ %s : %s", config.RedactGitRemoteURL(d.Git.RemoteURL), d.Git.Branch, d.Git.BasePath)
+			repoURL = config.GitRemoteWebURL(d.Git.RemoteURL)
 		} else if d.Backend == "local" {
 			if info, err := os.Stat(d.LocalPath); err != nil {
 				errMsg = err.Error()
@@ -233,6 +236,7 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Description:      d.Description,
 			Backend:          d.Backend,
 			Detail:           detail,
+			RepoURL:          repoURL,
 			Error:            errMsg,
 			Owned:            d.OwnerUserID == ownerUserID,
 			CanManage:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -125,6 +126,67 @@ func RedactGitRemoteURL(raw string) string {
 	}
 	u.User = url.User("redacted")
 	return u.String()
+}
+
+// GitRemoteWebURL turns a git remote into a browsable https URL suitable for an
+// "open repository" link in the UI. It strips inline credentials and the
+// trailing ".git", and rewrites ssh/scp-style remotes
+// ("git@host:owner/repo.git", "ssh://git@host/owner/repo.git") to https. It
+// returns "" when the remote isn't a recognisable http(s)/ssh remote (e.g. a
+// local filesystem path), so callers can hide the link rather than render a
+// dead one.
+func GitRemoteWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	// scp-style remote ("git@github.com:owner/repo.git"): no scheme, the host
+	// and path split on a colon. Only treat it as such when the host half looks
+	// like a real host (carries '@' or '.'), so we don't mangle a local path
+	// like "C:\repos\memory".
+	if !strings.Contains(raw, "://") {
+		host, path, ok := strings.Cut(raw, ":")
+		if !ok || (!strings.Contains(host, "@") && !strings.Contains(host, ".")) {
+			return ""
+		}
+		return gitWebURL(host, path)
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	switch u.Scheme {
+	case "http", "https":
+		u.User = nil
+		u.RawQuery = ""
+		u.Fragment = ""
+		u.Path = strings.TrimSuffix(strings.TrimRight(u.Path, "/"), ".git")
+		return u.String()
+	case "ssh", "git":
+		return gitWebURL(u.Hostname(), u.Path)
+	default:
+		return ""
+	}
+}
+
+// gitWebURL assembles an https web URL from a host (which may still carry a
+// "user@" prefix) and a repo path, dropping any credentials, leading slash and
+// trailing ".git".
+func gitWebURL(host, path string) string {
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		host = host[at+1:]
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	path = strings.Trim(strings.TrimSuffix(strings.TrimRight(path, "/"), ".git"), "/")
+	if path == "" {
+		return "https://" + host
+	}
+	return "https://" + host + "/" + path
 }
 
 // Connector grants an agent access to one or more directories.
