@@ -3224,14 +3224,19 @@ button.crumb:hover {
  *  (team detail, directory detail): back button + title + actions.            *
  * ========================================================================== */
 /* Secondary navbar: a tight, one-line toolbar that sits flush under the top
-   bar and against the sidebar. Negative margins cancel .main's padding so no
-   space is lost to it; it must be a direct child of a full-width page root. */
+   bar and against the sidebar. Horizontal negative margins cancel .main's side
+   padding for full bleed; the top gap is removed by zeroing .main's top padding
+   on pages that carry a sub-navbar (below) — a negative top margin would be
+   clipped by .main's overflow. It must live in a full-width page root. */
+.main:has(.detail-head) {
+  padding-top: 0;
+}
 .detail-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   min-height: 40px;
-  margin: -24px -32px 0;
+  margin: 0 -32px 0;
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -3290,7 +3295,7 @@ button.crumb:hover {
   margin-left: auto;
 }
 @media (max-width: 680px) {
-  .detail-head { margin: -16px -16px 0; padding: 0 8px; }
+  .detail-head { margin: 0 -16px 0; padding: 0 8px; }
 }
 @media (max-width: 640px) {
   /* Let page toolbars (title + filters/actions) wrap instead of cramming. */
