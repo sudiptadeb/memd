@@ -85,6 +85,10 @@ export interface DirectoryView {
   description?: string;
   backend: DirectoryBackend;
   detail: string;
+  // For git backends: a browsable https URL for the repo (credentials and the
+  // trailing ".git" stripped). Empty/omitted for local folders or unrecognised
+  // remotes. The card and detail page surface it as an "open repository" link.
+  repo_url?: string;
   error?: string;
   owned: boolean;
   can_manage: boolean;

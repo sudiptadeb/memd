@@ -45,6 +45,17 @@
         <p class="card-desc detail-desc" v-if="directory.description">{{ directory.description }}</p>
         <p class="card-desc detail-desc muted" v-else>No description.</p>
         <code class="card-path">{{ directory.detail }}</code>
+        <a
+          class="btn ghost repo-link"
+          v-if="directory.backend === 'git' && directory.repo_url"
+          :href="directory.repo_url"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open repository in a new tab"
+        >
+          <MIcon name="external-link" />
+          <span class="btn-label">Open repository</span>
+        </a>
         <div class="error-msg" v-if="directory.error">
           <MIcon name="triangle-alert" />
           <span>{{ directory.error }}</span>
@@ -287,6 +298,11 @@ onMounted(load);
 
 .detail-desc.muted {
   color: var(--fg-3);
+}
+
+/* Sit the repo link under the path without stretching across the card. */
+.repo-link {
+  align-self: flex-start;
 }
 
 /* Detail page has room — let the selects breathe past the card-sized cap. */
