@@ -24,8 +24,21 @@
 
     <div class="card-desc" v-if="directory.description">{{ directory.description }}</div>
 
-    <div class="card-foot" v-if="!directory.error && tasksEnabled">
-      <RouterLink class="btn-inline" :to="{ name: 'tasks', query: { dir: directory.id } }" @click.stop>
+    <div class="card-foot" v-if="!directory.error">
+      <button class="btn-inline" type="button" @click.stop.prevent="emit('browse', directory)">
+        <MIcon name="folder-open" />
+        Browse
+      </button>
+      <RouterLink class="btn-inline" :to="`/directories/${directory.id}/graph`" @click.stop>
+        <MIcon name="git-branch" />
+        Graph
+      </RouterLink>
+      <RouterLink
+        class="btn-inline"
+        v-if="tasksEnabled"
+        :to="{ name: 'tasks', query: { dir: directory.id } }"
+        @click.stop
+      >
         <MIcon name="list-checks" />
         Tasks
       </RouterLink>
@@ -41,12 +54,15 @@ import type { DirectoryView } from "@/shared/types";
 
 // A directory at a glance: name, backend, team scope, and a one-line description.
 // The whole card links to the directory detail page, where the full management
-// surface (connector, features, files, edit, delete, team scope) lives. One
-// optional quick affordance — a Tasks link — shows when the feature is enabled.
+// surface (connector, features, files, edit, delete, team scope) lives. The
+// footer carries quick affordances that skip the detail page: Browse (opens the
+// file browser, handled by the parent), Graph (the link graph), and Tasks (only
+// when the feature is enabled).
 const props = defineProps<{
   directory: DirectoryView;
   teamLabel: string;
 }>();
+const emit = defineEmits<{ (e: "browse", directory: DirectoryView): void }>();
 
 const backendLabel = computed(() => (props.directory.backend === "git" ? "git" : "local"));
 

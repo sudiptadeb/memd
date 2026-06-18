@@ -21,6 +21,7 @@
         :key="directory.id"
         :directory="directory"
         :team-label="teamName(directory.team_id)"
+        @browse="openBrowse"
       />
     </div>
 
@@ -36,12 +37,14 @@
   </section>
 
   <DirForm :open="addOpen" :teams="manageableTeams" :can-browse-fs="canBrowseFs" @close="addOpen = false" @created="onCreated" />
+  <DirFiles :open="browseOpen" :directory="browseDir" @close="browseOpen = false" />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import MIcon from "@/shared/components/MIcon.vue";
 import DirCard from "../components/DirCard.vue";
+import DirFiles from "../components/DirFiles.vue";
 import DirForm from "../components/DirForm.vue";
 import { directories as directoriesApi, teams as teamsApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
@@ -54,6 +57,11 @@ const directories = ref<DirectoryView[]>([]);
 const teams = ref<Team[]>([]);
 
 const addOpen = ref(false);
+
+// The file browser is hosted once at the page level; directory cards ask to open
+// it for themselves via the @browse event, so we never mount a sheet per card.
+const browseOpen = ref(false);
+const browseDir = ref<DirectoryView | null>(null);
 
 // Add buttons are hidden for super admins (they manage everyone's, not their
 // own), matching the Alpine UI.
@@ -95,6 +103,11 @@ async function reload(): Promise<void> {
 
 function openAdd(): void {
   addOpen.value = true;
+}
+
+function openBrowse(directory: DirectoryView): void {
+  browseDir.value = directory;
+  browseOpen.value = true;
 }
 
 async function onCreated(): Promise<void> {
