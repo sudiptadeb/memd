@@ -13,13 +13,22 @@
         </div>
       </div>
       <div class="detail-actions" v-if="data && data.nodes && data.nodes.length">
-        <button class="btn ghost btn-sm" type="button" @click="toggleIndex">
-          {{ hideIndex ? "Show MEMORY.md" : "Hide MEMORY.md" }}
+        <button
+          class="btn ghost btn-sm"
+          type="button"
+          :title="hideIndex ? 'Show MEMORY.md' : 'Hide MEMORY.md'"
+          @click="toggleIndex"
+        >
+          <MIcon :name="hideIndex ? 'eye' : 'eye-off'" />
+          <span class="btn-label">{{ hideIndex ? "Show MEMORY.md" : "Hide MEMORY.md" }}</span>
         </button>
-        <button class="btn ghost btn-sm" type="button" @click="fit">Fit</button>
-        <button class="btn ghost btn-sm" type="button" @click="toggleFullscreen">
+        <button class="btn ghost btn-sm" type="button" title="Fit graph to view" @click="fit">
+          <MIcon name="crosshair" />
+          <span class="btn-label">Fit</span>
+        </button>
+        <button class="btn ghost btn-sm" type="button" title="Fullscreen" @click="toggleFullscreen">
           <MIcon name="maximize" />
-          Fullscreen
+          <span class="btn-label">Fullscreen</span>
         </button>
       </div>
     </header>
@@ -36,9 +45,15 @@
       <div class="graph-stage">
         <div class="graph-canvas-wrap">
           <div ref="cyEl" class="graph-canvas"></div>
-          <button v-if="fullscreen" class="fs-exit btn ghost btn-sm" type="button" @click="toggleFullscreen">
+          <button
+            v-if="fullscreen"
+            class="fs-exit btn ghost btn-sm"
+            type="button"
+            title="Exit fullscreen"
+            @click="toggleFullscreen"
+          >
             <MIcon name="minimize" />
-            Exit
+            <span class="btn-label">Exit</span>
           </button>
         </div>
 
