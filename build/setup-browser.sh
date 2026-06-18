@@ -28,7 +28,16 @@ command -v node >/dev/null 2>&1 || { echo "node is required but not found on PAT
 echo "→ Installing Playwright (${PW_VERSION}) into ${DIR}"
 mkdir -p "$DIR"
 cd "$DIR"
-[ -f package.json ] || npm init -y >/dev/null
+# `npm init -y` derives the package name from the directory; a leading-dot dir
+# such as ".browser-tools" is an invalid npm package name and aborts the script,
+# so write an explicit minimal manifest instead.
+[ -f package.json ] || cat > package.json <<'JSON'
+{
+  "name": "browser-tools",
+  "version": "1.0.0",
+  "private": true
+}
+JSON
 npm install --no-fund --no-audit "playwright@${PW_VERSION}"
 
 echo "→ Installing the Chromium browser binary"
