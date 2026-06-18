@@ -1,7 +1,6 @@
 <template>
-  <section class="app-section">
-    <!-- Loading -->
-    <div class="detail-loading" v-if="loading">
+  <!-- Loading -->
+  <div class="detail-loading" v-if="loading">
       <MIcon name="refresh-cw" />
       <span>Loading team…</span>
     </div>
@@ -52,6 +51,7 @@
         </div>
       </div>
 
+      <section class="app-section">
       <!-- Members -->
       <div class="detail-block">
         <div class="section-head">
@@ -218,6 +218,7 @@
         </div>
         <p class="empty-note" v-else>No invite links yet.</p>
       </div>
+      </section>
     </template>
 
     <!-- Rename dialog -->
@@ -252,7 +253,6 @@
         </footer>
       </div>
     </div>
-  </section>
 </template>
 
 <script setup lang="ts">

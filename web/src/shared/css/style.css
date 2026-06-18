@@ -3223,52 +3223,76 @@ button.crumb:hover {
  *  Detail-page header  —  shared chrome for route-based master/detail pages   *
  *  (team detail, directory detail): back button + title + actions.            *
  * ========================================================================== */
+/* Secondary navbar: a tight, one-line toolbar that sits flush under the top
+   bar and against the sidebar. Negative margins cancel .main's padding so no
+   space is lost to it; it must be a direct child of a full-width page root. */
 .detail-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.55rem;
-  margin-bottom: 0.65rem;
+  gap: 0.5rem;
+  min-height: 40px;
+  margin: -24px -32px 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 .detail-back {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border: 1px solid var(--border);
+  width: 1.55rem;
+  height: 1.55rem;
   border-radius: var(--radius-md);
-  background: var(--surface);
   color: var(--fg-2);
-  transition: border-color var(--dur-fast) var(--ease-out),
+  transition: background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 .detail-back:hover {
-  border-color: var(--border-strong);
+  background: var(--surface-2);
   color: var(--fg-1);
 }
 .detail-back .icon { width: 0.95rem; height: 0.95rem; }
-.detail-titles { flex: 1; min-width: 0; }
+.detail-titles {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
 .detail-title {
-  font-size: 1.1rem;
+  flex-shrink: 0;
+  max-width: 55%;
+  font-size: 0.95rem;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.2;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .detail-sub {
-  margin-top: 0.05rem;
+  margin: 0;
   color: var(--fg-3);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .detail-actions {
   display: flex;
   flex-shrink: 0;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+@media (max-width: 680px) {
+  .detail-head { margin: -16px -16px 0; padding: 0 8px; }
 }
 @media (max-width: 640px) {
-  .detail-actions { width: 100%; }
   /* Let page toolbars (title + filters/actions) wrap instead of cramming. */
   .section-head { flex-wrap: wrap; }
 }
