@@ -1,8 +1,7 @@
 <template>
-  <section class="app-section">
-    <div class="detail-loading" v-if="loading">Loading directory…</div>
+  <div class="detail-loading" v-if="loading">Loading directory…</div>
 
-    <div class="empty" v-else-if="!directory">
+  <div class="empty" v-else-if="!directory">
       <div class="empty-icon"><MIcon name="folder-search" /></div>
       <h4>Directory not found</h4>
       <p>This directory may have been removed, or you no longer have access to it.</p>
@@ -39,6 +38,7 @@
         </div>
       </header>
 
+      <section class="app-section">
       <!-- Overview ------------------------------------------------------- -->
       <div class="card detail-card">
         <div class="eyebrow">Overview</div>
@@ -131,8 +131,8 @@
         </div>
         <p class="field-hint">Browse the files this directory serves to agents, or explore how they link together.</p>
       </div>
+      </section>
     </template>
-  </section>
 
   <DirEditForm :open="editOpen" :directory="directory" @close="editOpen = false" @saved="onSaved" />
   <DirFiles :open="browseOpen" :directory="directory" @close="browseOpen = false" />
