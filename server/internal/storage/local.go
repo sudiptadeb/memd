@@ -476,7 +476,7 @@ func (l *Local) EnsureIndex(description string) error {
 // the content actually clusters into.
 func starterMemoryMD(description string, now time.Time) string {
 	date := now.Format("2006-01-02")
-	agentFM := fmt.Sprintf("last_reorganised: %s\nentries: 0\nlimit: 30\n", date)
+	agentFM := fmt.Sprintf("last_reorganised: %s\nentries: 0\nlimit: 50\n", date)
 	body := fmt.Sprintf(`
 # %s
 
