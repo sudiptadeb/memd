@@ -2478,11 +2478,13 @@ section {
     row-gap: 8px;
   }
 
-  /* Keep the name and badges together on the first line and move the
-     action cluster (Browse / team select / delete) to its own row instead
-     of wrapping mid-control. Connector heads only hold badges and the
-     expand chevron, so they keep the single-line flow. */
-  .card:not(.connector-card) .card-head .spacer {
+  /* Cards whose head ends in an action cluster (e.g. the admin user card's
+     Unlink / Reset / Disable buttons) move that cluster to its own row on a
+     phone instead of wrapping mid-control. Cards whose head only ends in a
+     single "go" affordance — the directory card's chevron, the team card's
+     "Manage", the connector card's expand chevron — keep it inline, pinned
+     top-right, so it never drops onto a lonely second line. */
+  .card:not(.connector-card):not(.dir-card):not(.team-card) .card-head .spacer {
     flex-basis: 100%;
   }
 
