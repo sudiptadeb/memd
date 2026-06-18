@@ -2473,6 +2473,11 @@ section {
     display: none;
   }
 
+  /* Same for the sub-navbar's actions: icon-only on mobile, title tooltip. */
+  .detail-actions .btn .btn-label {
+    display: none;
+  }
+
   .card-head {
     flex-wrap: wrap;
     row-gap: 8px;

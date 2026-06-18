@@ -27,13 +27,13 @@
           </div>
         </div>
         <div class="detail-actions" v-if="directory.can_manage">
-          <button class="btn ghost" type="button" @click="editOpen = true">
+          <button class="btn ghost" type="button" title="Edit" @click="editOpen = true">
             <MIcon name="pencil" />
-            Edit
+            <span class="btn-label">Edit</span>
           </button>
-          <button class="btn danger" type="button" @click="remove" :disabled="deleting">
+          <button class="btn danger" type="button" title="Delete" @click="remove" :disabled="deleting">
             <MIcon name="trash-2" />
-            Delete
+            <span class="btn-label">Delete</span>
           </button>
         </div>
       </header>

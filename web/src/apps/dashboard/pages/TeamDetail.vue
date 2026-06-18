@@ -33,6 +33,7 @@
           <button
             class="btn secondary"
             type="button"
+            title="Rename"
             v-if="team.can_manage"
             @click="openRename"
           >
@@ -42,6 +43,7 @@
           <button
             class="btn danger"
             type="button"
+            title="Delete team"
             v-if="team.can_delete"
             @click="removeTeam"
           >
