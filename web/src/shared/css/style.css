@@ -334,6 +334,59 @@ a {
   display: none;
 }
 
+/* Account + log-out block in the mobile nav drawer. Hidden on desktop (above);
+   the 920px media query flips it to flex and adds the top divider. */
+.mobile-account {
+  gap: 10px;
+  align-items: center;
+  padding: 14px 12px;
+  margin: 0 12px;
+}
+
+.mobile-account-id {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mobile-account-name {
+  overflow: hidden;
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-account-sub {
+  overflow: hidden;
+  color: var(--fg-3);
+  font-size: 11.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-account-logout {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 650;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
+}
+
+.mobile-account-logout:hover {
+  color: var(--fg-1);
+  background: var(--surface);
+}
+
 [data-layout="centered"] .topbar {
   width: min(100%, 1440px);
   margin: 0 auto;
