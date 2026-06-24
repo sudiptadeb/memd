@@ -33,6 +33,18 @@
         </router-link>
       </div>
     </nav>
+
+    <!-- Account + log-out, shown only inside the mobile drawer; on desktop the
+         top-bar user pill carries this and `.mobile-account` is display:none. -->
+    <div class="mobile-account" v-if="user">
+      <div class="mobile-account-id">
+        <span class="mobile-account-name">{{ displayName }}</span>
+        <span class="mobile-account-sub" v-if="subText">{{ subText }}</span>
+      </div>
+      <button type="button" class="mobile-account-logout" @click="onLogout">
+        Log out
+      </button>
+    </div>
   </aside>
 </template>
 
@@ -50,7 +62,31 @@ import { useSession } from "@/shared/session";
 defineProps<{ open: boolean; isMobile: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
-const { isSuperAdmin } = useSession();
+const { user, isSuperAdmin, logout } = useSession();
+
+const displayName = computed(() => {
+  const u = user.value;
+  return u ? u.display_name || u.username : "";
+});
+
+// Secondary line: prefer email, fall back to username when it differs from the
+// name already shown, so we never print the same string twice.
+const subText = computed(() => {
+  const u = user.value;
+  if (!u) return "";
+  if (u.email) return u.email;
+  return u.username !== displayName.value ? u.username : "";
+});
+
+async function onLogout(): Promise<void> {
+  emit("close");
+  const url = await logout();
+  if (url) {
+    window.location.href = url;
+  } else {
+    window.location.reload();
+  }
+}
 
 interface NavItem {
   to: string;
