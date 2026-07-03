@@ -62,9 +62,9 @@ func (s *Server) now() time.Time {
 }
 
 // loadState tracks whether a client session has called memory_load, and
-// whether the one-time before-load nudge already fired. State is in-memory
-// only: a server restart merely lets one nudge fire again. seen is the last
-// time the session touched the guard, used to expire idle sessions.
+// whether the one-time before-load reminder already fired. State is in-memory
+// only: a server restart merely lets one reminder fire again. seen is the
+// last time the session touched the guard, used to expire idle sessions.
 type loadState struct {
 	loaded bool
 	nudged bool
@@ -234,10 +234,10 @@ func (s *Server) dispatch(conn *registry.Connector, req *rpcReq, sid string) (re
 func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) (*rpcResp, string) {
 	// A new initialize marks a new client session: issue a session ID and
 	// arm a fresh load-first guard for it, so the conversation gets its own
-	// nudge if it skips memory_load. Guard state for other live sessions on
-	// this connector is untouched — a reconnect's initialize must not reset
-	// a sibling session that already loaded. Only the per-connector fallback
-	// (clients that never echo Mcp-Session-Id) is re-armed here.
+	// reminder if it skips memory_load. Guard state for other live sessions
+	// on this connector is untouched — a reconnect's initialize must not
+	// reset a sibling session that already loaded. Only the per-connector
+	// fallback (clients that never echo Mcp-Session-Id) is re-armed here.
 	sid := newSessionID()
 	s.armSession(sessionKey(conn, sid))
 	s.resetLoad(sessionKey(conn, ""))
@@ -263,9 +263,10 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) (*rpcRe
 }
 
 // guardedByLoad reports whether a tool reads or mutates memory content and
-// therefore expects memory_load to have run first this session. Introspection
-// tools (memory_directories, memory_status) and the memd_* workflows — whose
-// bodies embed their own memory_load step — stay unguarded.
+// therefore expects memory_load to have run first this session; called before
+// that, the tool still runs but its first result carries a load reminder.
+// Introspection tools (memory_directories, memory_status) and the memd_*
+// workflows — whose bodies embed their own memory_load step — stay unguarded.
 func guardedByLoad(name string) bool {
 	switch name {
 	case "memory_search", "memory_read", "memory_list", "memory_graph",
@@ -276,11 +277,11 @@ func guardedByLoad(name string) bool {
 }
 
 // nudgeBeforeLoad reports, exactly once per session, that a guarded tool was
-// called before memory_load — the caller returns a soft error telling the
-// agent to load first and retry. Later calls pass through, so an agent that
-// ignores the nudge can never livelock on it. A session key the server does
-// not know (e.g. after a restart) gets fresh zero state: one nudge, then
-// pass-through.
+// called before memory_load — the caller prepends a reminder to the (still
+// served) tool result telling the agent to load. Later calls carry no
+// reminder, so an agent that ignores it is never nagged twice. A session key
+// the server does not know (e.g. after a restart) gets fresh zero state: one
+// reminder, then clean results.
 func (s *Server) nudgeBeforeLoad(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -857,18 +858,11 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq, sid stri
 
 	logs.InfoUser(conn.OwnerUserID, "MCP tools/call %s from %q", params.Name, conn.Name)
 	key := sessionKey(conn, sid)
-	if guardedByLoad(params.Name) && s.nudgeBeforeLoad(key) {
-		return &rpcResp{
-			Jsonrpc: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"content": []map[string]any{
-					{"type": "text", "text": "memory_load has not been called in this session — call memory_load first to load active memory, then retry " + params.Name + "."},
-				},
-				"isError": true,
-			},
-		}
-	}
+	// The load-first guard never blocks: a guarded tool called before
+	// memory_load still runs, but its result carries a one-time reminder to
+	// load active memory. The agent gets what it asked for and the pointer
+	// to catch up, with no failed call or retry round trip.
+	loadReminder := guardedByLoad(params.Name) && s.nudgeBeforeLoad(key)
 	var (
 		text  string
 		isErr bool
@@ -905,6 +899,10 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq, sid stri
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32601, Message: "unknown tool: " + params.Name},
 		}
+	}
+
+	if loadReminder {
+		text = "[memd: memory_load has not been called in this session — call memory_load to load active memory, then continue.]\n\n" + text
 	}
 
 	return &rpcResp{
