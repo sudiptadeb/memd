@@ -6,6 +6,7 @@ package mcp
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -49,7 +50,7 @@ type Server struct {
 	clock func() time.Time
 
 	mu    sync.Mutex
-	loads map[string]loadState // connector ID → memory_load tracking for the current client session
+	loads map[string]loadState // session key (see sessionKey) → memory_load tracking
 }
 
 // now returns the current date/time used for derived rendering.
@@ -60,13 +61,38 @@ func (s *Server) now() time.Time {
 	return time.Now().UTC()
 }
 
-// loadState tracks whether a connector's current client session has called
-// memory_load, and whether the one-time before-load nudge already fired.
-// State is in-memory only: each MCP initialize re-arms the guard for a fresh
-// conversation, and a server restart merely lets one nudge fire again.
+// loadState tracks whether a client session has called memory_load, and
+// whether the one-time before-load nudge already fired. State is in-memory
+// only: a server restart merely lets one nudge fire again. seen is the last
+// time the session touched the guard, used to expire idle sessions.
 type loadState struct {
 	loaded bool
 	nudged bool
+	seen   time.Time
+}
+
+// sessionTTL bounds the in-memory session map: sessions idle this long are
+// pruned on the next initialize.
+const sessionTTL = 24 * time.Hour
+
+// sessionKey derives the loads-map key for a request. Sessions are keyed by
+// the Mcp-Session-Id the server issued on initialize, so reconnects and
+// parallel clients on the same connector each track their own load state —
+// one client's initialize must never wipe another session's "already loaded"
+// flag (that reset loop showed up as endless "call memory_load first" nudges
+// on flaky mobile connections). Clients that never echo the header share a
+// per-connector fallback key with the old semantics.
+func sessionKey(conn *registry.Connector, sid string) string {
+	if sid != "" {
+		return "sid:" + sid
+	}
+	return "conn:" + conn.ID
+}
+
+// newSessionID returns a fresh unguessable Mcp-Session-Id (visible ASCII, per
+// the MCP Streamable HTTP spec).
+func newSessionID() string {
+	return rand.Text()
 }
 
 func New(reg *registry.Registry, live *doctrine.Live, features *feature.Registry, name, version string) *Server {
@@ -124,7 +150,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, prefix string) {
 		return
 	}
 
-	resp := s.dispatch(conn, &req)
+	sid := strings.TrimSpace(r.Header.Get("Mcp-Session-Id"))
+	resp, newSID := s.dispatch(conn, &req, sid)
 	if resp == nil {
 		// JSON-RPC notification — MCP Streamable HTTP spec requires
 		// 202 Accepted with no body. Strict clients (rmcp / Codex CLI)
@@ -132,6 +159,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, prefix string) {
 		// transport.
 		w.WriteHeader(http.StatusAccepted)
 		return
+	}
+	if newSID != "" {
+		w.Header().Set("Mcp-Session-Id", newSID)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -170,38 +200,47 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 
 // --- Dispatch ---
 
-func (s *Server) dispatch(conn *registry.Connector, req *rpcReq) *rpcResp {
+// dispatch routes one JSON-RPC request. sid is the client's echoed
+// Mcp-Session-Id (empty for header-less clients); the returned newSID is
+// non-empty only for initialize, whose response must carry the freshly
+// issued session ID header.
+func (s *Server) dispatch(conn *registry.Connector, req *rpcReq, sid string) (resp *rpcResp, newSID string) {
 	switch req.Method {
 	case "initialize":
 		logs.InfoUser(conn.OwnerUserID, "MCP initialize from connector %q", conn.Name)
 		return s.handleInitialize(conn, req)
 	case "notifications/initialized":
-		return nil
+		return nil, ""
 	case "tools/list":
-		return s.handleToolsList(req)
+		return s.handleToolsList(req), ""
 	case "tools/call":
-		return s.handleToolsCall(conn, req)
+		return s.handleToolsCall(conn, req, sid), ""
 	case "prompts/list":
-		return s.handlePromptsList(req)
+		return s.handlePromptsList(req), ""
 	case "prompts/get":
 		logs.InfoUser(conn.OwnerUserID, "MCP prompts/get from connector %q", conn.Name)
-		return s.handlePromptsGet(conn, req)
+		return s.handlePromptsGet(conn, req), ""
 	case "ping":
-		return &rpcResp{Jsonrpc: "2.0", ID: req.ID, Result: map[string]any{}}
+		return &rpcResp{Jsonrpc: "2.0", ID: req.ID, Result: map[string]any{}}, ""
 	default:
 		return &rpcResp{
 			Jsonrpc: "2.0",
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32601, Message: "method not found: " + req.Method},
-		}
+		}, ""
 	}
 }
 
-func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcResp {
-	// A new initialize marks a new client session: re-arm the load-first
-	// guard so the next conversation gets its own nudge if it skips
-	// memory_load.
-	s.resetLoad(conn.ID)
+func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) (*rpcResp, string) {
+	// A new initialize marks a new client session: issue a session ID and
+	// arm a fresh load-first guard for it, so the conversation gets its own
+	// nudge if it skips memory_load. Guard state for other live sessions on
+	// this connector is untouched — a reconnect's initialize must not reset
+	// a sibling session that already loaded. Only the per-connector fallback
+	// (clients that never echo Mcp-Session-Id) is re-armed here.
+	sid := newSessionID()
+	s.armSession(sessionKey(conn, sid))
+	s.resetLoad(sessionKey(conn, ""))
 	// The instructions field carries the doctrine only (stable, small).
 	// Active memory content arrives via the memory_load tool, which the
 	// doctrine instructs the agent to call as its first action.
@@ -220,7 +259,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) *rpcRes
 			},
 			"instructions": s.instructionsText(),
 		},
-	}
+	}, sid
 }
 
 // guardedByLoad reports whether a tool reads or mutates memory content and
@@ -239,31 +278,50 @@ func guardedByLoad(name string) bool {
 // nudgeBeforeLoad reports, exactly once per session, that a guarded tool was
 // called before memory_load — the caller returns a soft error telling the
 // agent to load first and retry. Later calls pass through, so an agent that
-// ignores the nudge can never livelock on it.
-func (s *Server) nudgeBeforeLoad(connID string) bool {
+// ignores the nudge can never livelock on it. A session key the server does
+// not know (e.g. after a restart) gets fresh zero state: one nudge, then
+// pass-through.
+func (s *Server) nudgeBeforeLoad(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := s.loads[connID]
+	st := s.loads[key]
+	st.seen = s.now()
 	if st.loaded || st.nudged {
+		s.loads[key] = st
 		return false
 	}
 	st.nudged = true
-	s.loads[connID] = st
+	s.loads[key] = st
 	return true
 }
 
-func (s *Server) markLoaded(connID string) {
+func (s *Server) markLoaded(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := s.loads[connID]
+	st := s.loads[key]
 	st.loaded = true
-	s.loads[connID] = st
+	st.seen = s.now()
+	s.loads[key] = st
 }
 
-func (s *Server) resetLoad(connID string) {
+// armSession registers fresh guard state for a newly issued session and
+// prunes sessions idle past sessionTTL, keeping the in-memory map bounded.
+func (s *Server) armSession(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.loads, connID)
+	cutoff := s.now().Add(-sessionTTL)
+	for k, st := range s.loads {
+		if st.seen.Before(cutoff) {
+			delete(s.loads, k)
+		}
+	}
+	s.loads[key] = loadState{seen: s.now()}
+}
+
+func (s *Server) resetLoad(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.loads, key)
 }
 
 // activeMemorySection composes a snapshot of the connector's accessible
@@ -784,7 +842,7 @@ func (s *Server) handleToolsList(req *rpcReq) *rpcResp {
 
 // --- Tool execution ---
 
-func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp {
+func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq, sid string) *rpcResp {
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -798,7 +856,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 	}
 
 	logs.InfoUser(conn.OwnerUserID, "MCP tools/call %s from %q", params.Name, conn.Name)
-	if guardedByLoad(params.Name) && s.nudgeBeforeLoad(conn.ID) {
+	key := sessionKey(conn, sid)
+	if guardedByLoad(params.Name) && s.nudgeBeforeLoad(key) {
 		return &rpcResp{
 			Jsonrpc: "2.0",
 			ID:      req.ID,
@@ -816,7 +875,7 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq) *rpcResp
 	)
 	switch params.Name {
 	case "memory_load":
-		s.markLoaded(conn.ID)
+		s.markLoaded(key)
 		text = s.activeMemorySection(conn)
 	case "memory_directories":
 		text = s.toolDirectories(conn)
