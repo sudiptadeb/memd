@@ -127,10 +127,18 @@ func TestMCPReadOnlyConnectorBlocksMutationsAllowsReads(t *testing.T) {
 	// read tool ran, so it isolates the four write-gated tools.
 }
 
-// callTool drives one tools/call JSON-RPC request and returns the tool result
-// text, its isError flag, and whether the response was a JSON-RPC envelope
-// error (as opposed to a tool-level error inside result).
+// callTool drives one tools/call JSON-RPC request without a session header
+// (a header-less legacy client) and returns the tool result text, its isError
+// flag, and whether the response was a JSON-RPC envelope error (as opposed to
+// a tool-level error inside result).
 func callTool(t *testing.T, mux *http.ServeMux, token, name string, args map[string]any) (text string, isErr, rpcErrored bool) {
+	t.Helper()
+	return callToolSession(t, mux, token, "", name, args)
+}
+
+// callToolSession is callTool for a client that echoes the Mcp-Session-Id the
+// server issued on initialize. An empty sid sends no session header.
+func callToolSession(t *testing.T, mux *http.ServeMux, token, sid, name string, args map[string]any) (text string, isErr, rpcErrored bool) {
 	t.Helper()
 	params := map[string]any{"name": name, "arguments": args}
 	paramsJSON, err := json.Marshal(params)
@@ -148,6 +156,9 @@ func callTool(t *testing.T, mux *http.ServeMux, token, name string, args map[str
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp/"+token, strings.NewReader(string(body)))
+	if sid != "" {
+		req.Header.Set("Mcp-Session-Id", sid)
+	}
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
