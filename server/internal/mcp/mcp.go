@@ -49,6 +49,11 @@ type Server struct {
 	// tasks). nil means time.Now().UTC(); tests override it for determinism.
 	clock func() time.Time
 
+	// started is the wall-clock process start, reported by memory_status so a
+	// gateway 502 can be classified after the fact: a fresh uptime means this
+	// server restarted; a long one means the failure was upstream of it.
+	started time.Time
+
 	mu    sync.Mutex
 	loads map[string]loadState // session key (see sessionKey) → memory_load tracking
 }
@@ -102,6 +107,7 @@ func New(reg *registry.Registry, live *doctrine.Live, features *feature.Registry
 		features:   features,
 		serverName: name,
 		serverVer:  version,
+		started:    time.Now().UTC(),
 		loads:      map[string]loadState{},
 	}
 }
@@ -1474,11 +1480,16 @@ func (s *Server) toolWorkflow(toolName string, rawArgs json.RawMessage) (string,
 }
 
 func (s *Server) toolStatus(conn *registry.Connector) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "server: %s %s (up %s, started %s)\n",
+		s.serverName, s.serverVer,
+		time.Since(s.started).Round(time.Second),
+		s.started.Format("2006-01-02 15:04:05 MST"))
 	dirs := s.reg.DirectoriesForConnector(conn)
 	if len(dirs) == 0 {
-		return "(no directories accessible)"
+		sb.WriteString("(no directories accessible)")
+		return sb.String()
 	}
-	var sb strings.Builder
 	for _, d := range dirs {
 		st := d.Backend.Status()
 		fmt.Fprintf(&sb, "%s: backend=%s path=%s last_sync=%s\n",

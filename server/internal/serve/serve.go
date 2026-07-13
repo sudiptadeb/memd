@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -103,7 +104,7 @@ func RunOptions(opts Options) error {
 	}
 
 	srv := &http.Server{
-		Handler:           withSecurityHeaders(withMaxBody(mux, maxRequestBody)),
+		Handler:           withRecovery(withSecurityHeaders(withMaxBody(mux, maxRequestBody))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
@@ -147,6 +148,31 @@ func withMaxBody(next http.Handler, limit int64) http.Handler {
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withRecovery converts a handler panic into a logged 500. Without it,
+// net/http closes the connection with no response, which a reverse proxy
+// reports as a bare 502 — indistinguishable from the process being down, and
+// with the stack visible only on stderr. Recovering here keeps the connection
+// well-formed and puts the stack in the log ring where the admin UI shows it.
+func withRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				// Deliberate abort (e.g. a client gone mid-copy): keep
+				// net/http's suppressed handling.
+				panic(rec)
+			}
+			logs.Error("panic serving %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
+			// Best-effort: a no-op if the handler already started the response.
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}()
 		next.ServeHTTP(w, r)
 	})
 }
