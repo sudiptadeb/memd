@@ -161,9 +161,11 @@ type directoryView struct {
 	Detail           string `json:"detail"`
 	RepoURL          string `json:"repo_url,omitempty"`
 	Error            string `json:"error,omitempty"`
+	ShareMode        string `json:"share_mode,omitempty"`
 	Owned            bool   `json:"owned"`
 	CanManage        bool   `json:"can_manage"`
 	CanAttach        bool   `json:"can_attach"`
+	CanWrite         bool   `json:"can_write"`
 
 	Features []featureToggle `json:"features"`
 }
@@ -226,6 +228,9 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 				errMsg = "not a directory"
 			}
 		}
+		owned := d.OwnerUserID == ownerUserID
+		canWrite := owned ||
+			(d.TeamID != "" && writableTeam[d.TeamID] && d.ShareMode != config.ShareModeReadOnly)
 		dirViews = append(dirViews, directoryView{
 			ID:               d.ID,
 			OwnerUserID:      d.OwnerUserID,
@@ -238,10 +243,14 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			Detail:           detail,
 			RepoURL:          repoURL,
 			Error:            errMsg,
-			Owned:            d.OwnerUserID == ownerUserID,
-			CanManage:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && manageableTeam[d.TeamID]),
-			CanAttach:        d.OwnerUserID == ownerUserID || (d.TeamID != "" && writableTeam[d.TeamID]),
-			Features:         h.featureToggles(d),
+			ShareMode:        d.ShareMode,
+			Owned:            owned,
+			CanManage:        owned || (d.TeamID != "" && manageableTeam[d.TeamID]),
+			// Every visible directory can be attached to a connector; ones the
+			// user cannot write are served read-only within it (CanWrite).
+			CanAttach: true,
+			CanWrite:  canWrite,
+			Features:  h.featureToggles(d),
 		})
 	}
 	cs := h.reg.ConnectorsForUser(ownerUserID)
@@ -327,6 +336,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string      `json:"name"`
 		TeamID      string      `json:"team_id"`
+		ShareMode   string      `json:"share_mode"`
 		Description string      `json:"description"`
 		Backend     string      `json:"backend"`
 		LocalPath   string      `json:"local_path"`
@@ -347,6 +357,7 @@ func (h *Handler) directoriesAPI(w http.ResponseWriter, r *http.Request) {
 	id, err := h.reg.AddDirectoryForUserManaged(user.ID, config.Directory{
 		Name:        body.Name,
 		TeamID:      body.TeamID,
+		ShareMode:   body.ShareMode,
 		Description: body.Description,
 		Backend:     body.Backend,
 		LocalPath:   body.LocalPath,
@@ -465,6 +476,7 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			Name             *string `json:"name"`
 			Description      *string `json:"description"`
 			TeamID           *string `json:"team_id"`
+			ShareMode        *string `json:"share_mode"`
 			OwnerConnectorID *string `json:"owner_connector_id"`
 			Feature          *struct {
 				Key     string `json:"key"`
@@ -485,13 +497,26 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			logs.InfoUser(user.ID, "updated directory details id=%s name=%q", id, d.Name)
 		}
-		if body.TeamID != nil {
-			d, err = h.reg.UpdateDirectoryTeamForActor(user.ID, id, *body.TeamID)
+		if body.TeamID != nil || body.ShareMode != nil {
+			// Either field may arrive alone; carry the other over from the
+			// directory's current state.
+			teamID, shareMode := "", ""
+			if view := h.reg.DirectoryViewForUser(user.ID, id); view != nil {
+				teamID = view.Directory.TeamID
+				shareMode = view.Directory.ShareMode
+			}
+			if body.TeamID != nil {
+				teamID = *body.TeamID
+			}
+			if body.ShareMode != nil {
+				shareMode = *body.ShareMode
+			}
+			d, err = h.reg.UpdateDirectoryTeamForActor(user.ID, id, teamID, shareMode)
 			if err != nil {
 				httpErr(w, statusForAccountError(err), err)
 				return
 			}
-			logs.InfoUser(user.ID, "updated directory team scope id=%s team=%s", id, d.TeamID)
+			logs.InfoUser(user.ID, "updated directory team scope id=%s team=%s share_mode=%s", id, d.TeamID, d.ShareMode)
 		}
 		if body.OwnerConnectorID != nil {
 			d, err = h.reg.UpdateDirectoryOwnerConnectorForActor(user.ID, id, *body.OwnerConnectorID)
@@ -509,11 +534,11 @@ func (h *Handler) directoryAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			logs.InfoUser(user.ID, "set directory feature id=%s feature=%s enabled=%v", id, body.Feature.Key, body.Feature.Enabled)
 		}
-		if body.Name == nil && body.Description == nil && body.TeamID == nil && body.OwnerConnectorID == nil && body.Feature == nil {
+		if body.Name == nil && body.Description == nil && body.TeamID == nil && body.ShareMode == nil && body.OwnerConnectorID == nil && body.Feature == nil {
 			httpErr(w, http.StatusBadRequest, fmt.Errorf("nothing to update"))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "name": d.Name, "description": d.Description, "team_id": d.TeamID, "owner_connector_id": d.OwnerConnectorID})
+		writeJSON(w, http.StatusOK, map[string]string{"id": d.ID, "name": d.Name, "description": d.Description, "team_id": d.TeamID, "share_mode": d.ShareMode, "owner_connector_id": d.OwnerConnectorID})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

@@ -32,12 +32,19 @@ type Connector = config.Connector
 //
 // CanWrite reports whether the resolving connector may mutate this directory.
 // It is true when the connector's owner owns the directory, or when the
-// directory is team-shared and the owner holds a write-capable team role
-// (owner/admin/member). Viewers get read-only team access.
+// directory is team-shared read-write and the owner holds a write-capable team
+// role (owner/admin/member). Viewers — and every non-owner when the directory
+// is shared read-only — get read-only team access.
+//
+// SharedBy is the directory owner's label (display name or username) when the
+// directory belongs to someone other than the resolving connector's owner;
+// empty for the owner's own directories. The MCP layer uses it to tell agents
+// whose memory a shared directory is.
 type DirectoryView struct {
 	Directory config.Directory
 	Backend   storage.Backend
 	CanWrite  bool
+	SharedBy  string
 }
 
 // Registry holds directories + connectors and the open backends behind them.
@@ -268,7 +275,7 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 			if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 				continue
 			}
-			view := DirectoryView{Directory: d, CanWrite: owned || writeTeams[d.TeamID]}
+			view := DirectoryView{Directory: d, CanWrite: owned || teamCanWriteDir(d, writeTeams)}
 			// On a git directory the branch (main) is written directly only by
 			// the designated main connector, or — when none is designated — by
 			// the owner's own connectors. Every other connector works on its
@@ -308,7 +315,46 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 		view.Backend = b
 		out = append(out, view)
 	}
+	// Label foreign-owned directories with their owner, so agents can be told
+	// whose memory they are reading. Outside the lock: it reads the account DB.
+	labels := map[string]string{}
+	for i := range out {
+		ownerID := out[i].Directory.OwnerUserID
+		if ownerID == c.OwnerUserID {
+			continue
+		}
+		label, ok := labels[ownerID]
+		if !ok {
+			label = r.ownerLabel(ownerID)
+			labels[ownerID] = label
+		}
+		out[i].SharedBy = label
+	}
 	return out
+}
+
+// ownerLabel resolves a user ID to a human label (display name, else
+// username) for attribution in agent-facing output. Best-effort: an unknown
+// user or a registry without accounts yields "".
+func (r *Registry) ownerLabel(userID string) string {
+	if r.accounts == nil || userID == "" {
+		return ""
+	}
+	user, err := r.accounts.UserByID(context.Background(), userID)
+	if err != nil {
+		return ""
+	}
+	if user.DisplayName != "" {
+		return user.DisplayName
+	}
+	return user.Username
+}
+
+// teamCanWriteDir reports whether a write-capable team role may mutate d: the
+// directory must be team-shared, the role write-capable, and the share not
+// read-only. Ownership is checked separately by callers.
+func teamCanWriteDir(d config.Directory, writeTeams map[string]bool) bool {
+	return d.TeamID != "" && writeTeams[d.TeamID] && d.ShareMode != config.ShareModeReadOnly
 }
 
 // openBranchBackendCached returns the per-connector branch backend for a team
@@ -465,6 +511,10 @@ func (r *Registry) addDirectory(ownerUserID string, d config.Directory, allowCus
 		}
 	}
 	d.OwnerUserID = ownerUserID
+	d.ShareMode = config.NormalizeShareMode(d.ShareMode)
+	if d.TeamID == "" {
+		d.ShareMode = ""
+	}
 	if d.ID == "" {
 		d.ID = newID()
 	}
@@ -531,7 +581,15 @@ func (r *Registry) DeleteDirectoryForUser(ownerUserID, id string) error {
 	return r.save()
 }
 
-func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (config.Directory, error) {
+// UpdateDirectoryTeamForActor rescopes a directory to a team (or back to
+// personal when teamID is empty) and sets its share mode. shareMode is
+// normalised via config.NormalizeShareMode; it is forced back to read-write
+// when the directory ends up personal, where it has no meaning.
+func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID, shareMode string) (config.Directory, error) {
+	shareMode = config.NormalizeShareMode(shareMode)
+	if teamID == "" {
+		shareMode = ""
+	}
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
 			return config.Directory{}, err
@@ -580,6 +638,7 @@ func (r *Registry) UpdateDirectoryTeamForActor(actorUserID, id, teamID string) (
 		})
 	}
 	current.TeamID = teamID
+	current.ShareMode = shareMode
 	r.cfg.Directories[idx] = current
 	r.mu.Unlock()
 	if r.accounts != nil {
@@ -1401,7 +1460,7 @@ func (r *Registry) DirectoryViewForUser(userID, id string) *DirectoryView {
 		return &DirectoryView{
 			Directory: d,
 			Backend:   r.backends[backendKey(d.OwnerUserID, d.ID)],
-			CanWrite:  owned || (d.TeamID != "" && writeTeams[d.TeamID]),
+			CanWrite:  owned || teamCanWriteDir(d, writeTeams),
 		}
 	}
 	return nil
@@ -1455,10 +1514,13 @@ func (r *Registry) teamAccessForUser(userID string) (view, write, manage map[str
 // validateConnectorDirectoriesLocked checks that every directory a connector
 // references is reachable by ownerUserID — either owned outright, or team-shared
 // with a team the owner can view. When the connector itself is team-scoped
-// (teamID != ""), each directory must belong to that same team. A writable
-// connector may only reference directories the owner can write (owned, or a
-// write-capable team role); referencing a read-only team directory from a
-// write connector is rejected up front rather than silently downgraded.
+// (teamID != ""), each directory must belong to that same team.
+//
+// A write connector may freely reference directories the owner can only read
+// (a viewer role, or a read-only share): those directories are served
+// read-only within the connector (DirectoryView.CanWrite is per directory and
+// the MCP layer enforces it), so one connector can mix the owner's writable
+// directories with read-only team ones.
 //
 // viewTeams/writeTeams are the owner's team-access sets, resolved by the caller
 // before acquiring the lock so this method performs no I/O.
@@ -1475,9 +1537,6 @@ func (r *Registry) validateConnectorDirectoriesLocked(ownerUserID, teamID string
 			}
 			if teamID != "" && d.TeamID != teamID {
 				return fmt.Errorf("directory %s is not in connector team scope", did)
-			}
-			if write && !owned && !writeTeams[d.TeamID] {
-				return fmt.Errorf("you have read-only access to directory %s", did)
 			}
 			found = true
 			break
