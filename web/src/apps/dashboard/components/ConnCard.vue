@@ -127,8 +127,8 @@ const directoryNames = computed(() => {
     });
     names = resolved.join(", ");
   }
-  // Followed teams contribute their shared directories dynamically.
-  const followed = (c.attach_team_names || []).map((n) => `all ${n} shared directories`);
+  // Followed teams contribute their read-only shares dynamically.
+  const followed = (c.attach_team_names || []).map((n) => `all ${n} read-only shared directories`);
   const parts = [names, ...followed].filter(Boolean);
   if (names === "(none)" && followed.length) return followed.join(", ");
   return parts.length ? parts.join(", ") : "(none)";

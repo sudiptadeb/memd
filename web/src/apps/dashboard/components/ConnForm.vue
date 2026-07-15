@@ -52,65 +52,83 @@
         </div>
       </div>
 
-      <div class="field" v-if="followableTeams.length">
-        <label class="field-label">Team directories</label>
-        <div class="check-list">
-          <label
-            v-for="team in followableTeams"
-            :key="team.id"
-            class="check-row"
-            :class="form.attach_teams.includes(team.id) ? 'on' : ''"
-          >
-            <input
-              type="checkbox"
-              :value="team.id"
-              :checked="form.attach_teams.includes(team.id)"
-              @change="toggleTeam(team.id, $event)"
-            />
-            <div>
-              <div class="label">Attach {{ team.name }}'s shared directories</div>
-              <span class="sub">Everything shared with the team, including directories shared later.</span>
-            </div>
-          </label>
-        </div>
-      </div>
-
       <div class="field">
         <label class="field-label">
           {{ isEdit ? "Directories this connector can see" : "Directories" }}<span v-if="!isEdit" class="req">*</span>
         </label>
-        <div class="check-list">
-          <label
-            v-for="directory in attachable"
-            :key="directory.id"
-            class="check-row"
-            :class="form.selected.includes(directory.id) || coveredByTeam(directory) ? 'on' : ''"
-          >
-            <input
-              type="checkbox"
-              :value="directory.id"
-              :checked="form.selected.includes(directory.id) || coveredByTeam(directory)"
-              :disabled="coveredByTeam(directory)"
-              @change="toggle(directory.id, $event)"
-            />
-            <div>
-              <div class="label">
-                {{ directory.name }}
-                <span class="dot" v-if="coveredByTeam(directory)" title="Included because its team is attached above">
-                  via team
-                </span>
-                <span
-                  class="dot"
-                  v-if="!directory.can_write"
-                  title="Served read-only: the owner shared it without write access"
-                >
-                  read-only
+
+        <!-- Personal directories -->
+        <template v-if="personalDirs.length">
+          <div class="check-group-label" v-if="teamGroups.length">Your directories</div>
+          <div class="check-list">
+            <label
+              v-for="directory in personalDirs"
+              :key="directory.id"
+              class="check-row"
+              :class="form.selected.includes(directory.id) ? 'on' : ''"
+            >
+              <input
+                type="checkbox"
+                :value="directory.id"
+                :checked="form.selected.includes(directory.id)"
+                @change="toggle(directory.id, $event)"
+              />
+              <div>
+                <div class="label">{{ directory.name }}</div>
+                <span class="sub">{{ directory.detail }}</span>
+              </div>
+            </label>
+          </div>
+        </template>
+
+        <!-- One group per team: the follow-the-team toggle, then its
+             directories (implicitly included while the team is followed). -->
+        <template v-for="group in teamGroups" :key="group.team.id">
+          <div class="check-group-label">{{ group.team.name }}</div>
+          <div class="check-list">
+            <label class="check-row" :class="form.attach_teams.includes(group.team.id) ? 'on' : ''">
+              <input
+                type="checkbox"
+                :value="group.team.id"
+                :checked="form.attach_teams.includes(group.team.id)"
+                @change="toggleTeam(group.team.id, $event)"
+              />
+              <div>
+                <div class="label">All {{ group.team.name }} read-only shared directories</div>
+                <span class="sub">
+                  Teammates' memories you can read but not write, including ones shared later.
                 </span>
               </div>
-              <span class="sub">{{ directory.detail }}</span>
-            </div>
-          </label>
-        </div>
+            </label>
+            <label
+              v-for="directory in group.dirs"
+              :key="directory.id"
+              class="check-row check-row-nested"
+              :class="form.selected.includes(directory.id) || coveredByTeam(directory) ? 'on' : ''"
+            >
+              <input
+                type="checkbox"
+                :value="directory.id"
+                :checked="form.selected.includes(directory.id) || coveredByTeam(directory)"
+                :disabled="coveredByTeam(directory)"
+                @change="toggle(directory.id, $event)"
+              />
+              <div>
+                <div class="label">
+                  {{ directory.name }}
+                  <span
+                    class="dot"
+                    v-if="!directory.can_write"
+                    title="Served read-only: the owner shared it without write access"
+                  >
+                    read-only
+                  </span>
+                </div>
+                <span class="sub">{{ directory.detail }}</span>
+              </div>
+            </label>
+          </div>
+        </template>
       </div>
 
       <div class="field">
@@ -195,9 +213,27 @@ const followableTeams = computed<Team[]>(() => {
   return props.teams.filter((t) => t.id === scope);
 });
 
-// A directory already covered by a followed team is included implicitly.
+// The picker groups directories by where they come from: the user's own
+// first, then one group per team. Each team group is one "all read-only
+// shares" toggle (teammates' memories, current and future) plus individual
+// rows for the team directories this user can write — writable memory stays
+// a deliberate, explicit choice. A read-only directory that is still
+// explicitly selected (from before the toggle existed) stays visible until
+// deselected or covered by the toggle.
+const personalDirs = computed<DirectoryView[]>(() => attachable.value.filter((d) => !d.team_id));
+const teamGroups = computed(() =>
+  followableTeams.value.map((team) => ({
+    team,
+    dirs: attachable.value.filter(
+      (d) => d.team_id === team.id && (d.can_write || form.selected.includes(d.id)),
+    ),
+  })),
+);
+
+// A read-only directory covered by a followed team is included implicitly;
+// writable directories are never covered by the team toggle.
 function coveredByTeam(d: DirectoryView): boolean {
-  return Boolean(d.team_id) && form.attach_teams.includes(d.team_id || "");
+  return Boolean(d.team_id) && !d.can_write && form.attach_teams.includes(d.team_id || "");
 }
 
 function toggleTeam(id: string, event: Event): void {
@@ -205,8 +241,10 @@ function toggleTeam(id: string, event: Event): void {
   const index = form.attach_teams.indexOf(id);
   if (checked && index === -1) {
     form.attach_teams.push(id);
-    // Covered directories no longer need an explicit selection.
-    const covered = new Set(props.directories.filter((d) => d.team_id === id).map((d) => d.id));
+    // Covered read-only directories no longer need an explicit selection.
+    const covered = new Set(
+      props.directories.filter((d) => d.team_id === id && !d.can_write).map((d) => d.id),
+    );
     form.selected = form.selected.filter((did) => !covered.has(did));
   } else if (!checked && index >= 0) {
     form.attach_teams.splice(index, 1);
@@ -290,3 +328,25 @@ async function submit(): Promise<void> {
   }
 }
 </script>
+
+<style scoped>
+/* Group headers inside the directory picker ("Your directories", team names). */
+.check-group-label {
+  margin: 0.65rem 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.check-group-label:first-of-type {
+  margin-top: 0.1rem;
+}
+/* A team's individual directories sit under its follow-the-team toggle. */
+.check-row-nested {
+  margin-left: 1.25rem;
+}
+.check-row input:disabled {
+  opacity: 0.6;
+}
+</style>

@@ -267,9 +267,11 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	r.mu.RLock()
 	// Resolve the effective directory list: the explicitly attached IDs in
 	// their stored order, then — for every team the connector follows and the
-	// owner still belongs to — that team's shared directories, deduplicated.
-	// Team resolution is dynamic: directories shared after the connector was
+	// owner still belongs to — that team's READ-ONLY shared directories
+	// (teammates' memories the owner cannot write), deduplicated. Team
+	// resolution is dynamic: directories shared after the connector was
 	// created appear automatically, and leaving a team drops its directories.
+	// Writable directories never attach implicitly.
 	attachTeams := map[string]bool{}
 	for _, teamID := range c.AttachTeams {
 		if viewTeams[teamID] {
@@ -295,6 +297,9 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	for _, d := range r.cfg.Directories {
 		if seen[d.ID] || d.TeamID == "" || !attachTeams[d.TeamID] {
 			continue
+		}
+		if d.OwnerUserID == c.OwnerUserID || teamCanWriteDir(d, writeTeams) {
+			continue // writable for this owner: attach explicitly, never via team
 		}
 		candidates = append(candidates, d)
 		seen[d.ID] = true
