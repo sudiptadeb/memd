@@ -51,8 +51,11 @@
 
     <a class="top-link" href="/admin/" v-if="isSuperAdmin">Admin</a>
     <span class="bind">{{ host }}</span>
-    <div class="user-pill">
-      <span>{{ displayName }}</span>
+    <div class="user-pill" :title="usernameTitle">
+      <span class="user-pill-id">
+        <span>{{ displayName }}</span>
+        <span class="user-pill-handle" v-if="handle">@{{ handle }}</span>
+      </span>
       <button type="button" @click="onLogout">Log out</button>
     </div>
     <button
@@ -111,6 +114,18 @@ const displayName = computed(() => {
   return u ? u.display_name || u.username : "";
 });
 
+// The username is what teammates need to add this user to a team, so make it
+// discoverable: shown next to the display name when they differ, and always
+// available in the pill's tooltip.
+const handle = computed(() => {
+  const u = user.value;
+  return u && u.username !== displayName.value ? u.username : "";
+});
+const usernameTitle = computed(() => {
+  const u = user.value;
+  return u ? `Your username: ${u.username} — teammates use it to add you to a team` : "";
+});
+
 async function onLogout(): Promise<void> {
   const url = await logout();
   if (url) {
@@ -122,6 +137,20 @@ async function onLogout(): Promise<void> {
 </script>
 
 <style scoped>
+.user-pill-id {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.user-pill-handle {
+  color: var(--fg-3);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The mobile quick-switch reuses the original .quicknav button look; here the
    items are <router-link> anchors, so mirror the same sizing/active styles the
    global stylesheet defines for `.quicknav button`. */
