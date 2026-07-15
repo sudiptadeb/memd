@@ -44,7 +44,7 @@
         </div>
       </div>
       <div class="url-row">
-        <code :class="revealed ? 'revealed' : ''">{{ revealed ? connector.url : truncate(connector.url) }}</code>
+        <code :class="revealed ? 'revealed' : ''">{{ revealed ? displayURL : truncate(displayURL) }}</code>
         <div class="url-actions">
           <button type="button" @click="revealed = !revealed" :title="revealed ? 'Hide URL' : 'Reveal URL'">
             <MIcon v-if="!revealed" name="eye" />
@@ -112,6 +112,10 @@ const expanded = ref(false);
 const revealed = ref(false);
 
 const instructionURL = computed(() => connectorInstructionURL(props.connector));
+
+// The backend stores connector URLs against its own bind address (e.g.
+// http://127.0.0.1:7878); display them rebased onto the origin being served.
+const displayURL = computed(() => publicURL(props.connector.url));
 
 const directoryNames = computed(() => {
   const c = props.connector;
