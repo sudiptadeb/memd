@@ -205,10 +205,13 @@ type Connector struct {
 	Token        string   `json:"token"`
 	DirectoryIDs []string `json:"directory_ids"`
 
-	// AttachTeams lists teams whose shared directories this connector includes
-	// dynamically: every directory currently shared with the team, including
-	// ones shared after the connector was created. Resolution re-checks team
-	// membership, so leaving a team silently drops its directories.
+	// AttachTeams lists teams whose read-only shared directories this
+	// connector includes dynamically: every team directory the owner can
+	// read but not write (teammates' memories), including ones shared after
+	// the connector was created. Directories the owner CAN write — their own
+	// and read-write shares — are always attached explicitly via
+	// DirectoryIDs, so writable memory stays a deliberate choice. Resolution
+	// re-checks team membership, so leaving a team drops its directories.
 	AttachTeams []string `json:"attach_teams,omitempty"`
 
 	Write     bool      `json:"write"`

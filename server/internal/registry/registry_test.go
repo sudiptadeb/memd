@@ -545,6 +545,7 @@ func TestConnectorAttachTeams(t *testing.T) {
 	first := config.Directory{
 		ID:        "dir1",
 		TeamID:    team.ID,
+		ShareMode: config.ShareModeReadOnly,
 		Name:      "First",
 		Backend:   "local",
 		LocalPath: t.TempDir(),
@@ -558,7 +559,8 @@ func TestConnectorAttachTeams(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = r.Close() })
 
-	// A member's connector can follow the team with no explicit directories.
+	// A member's connector can follow the team with no explicit directories;
+	// it picks up the team's read-only shares.
 	conn, err := r.AddConnectorForUser(member.ID, config.Connector{
 		Name:        "member-agent",
 		Kind:        config.ConnectorKindMCP,
@@ -569,32 +571,43 @@ func TestConnectorAttachTeams(t *testing.T) {
 		t.Fatalf("AddConnectorForUser with attach team: %v", err)
 	}
 	views := r.DirectoriesForConnector(&conn)
-	if len(views) != 1 || views[0].Directory.ID != first.ID {
-		t.Fatalf("connector dirs = %+v, want the team's shared dir", views)
+	if len(views) != 1 || views[0].Directory.ID != first.ID || views[0].CanWrite {
+		t.Fatalf("connector dirs = %+v, want the team's read-only shared dir", views)
 	}
 
-	// A directory shared with the team AFTER the connector was created appears
-	// automatically — that is the point of following the team.
+	// A read-only directory shared with the team AFTER the connector was
+	// created appears automatically — that is the point of following the team.
 	secondID, err := r.AddDirectoryForUser(owner.ID, config.Directory{
 		Name:      "Second",
 		TeamID:    team.ID,
+		ShareMode: config.ShareModeReadOnly,
 		Backend:   "local",
 		LocalPath: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("AddDirectoryForUser second: %v", err)
 	}
+	// A WRITABLE team share must NOT attach implicitly: writable memory is a
+	// deliberate, explicit choice.
+	if _, err := r.AddDirectoryForUser(owner.ID, config.Directory{
+		Name:      "Writable",
+		TeamID:    team.ID,
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("AddDirectoryForUser writable: %v", err)
+	}
 	views = r.DirectoriesForConnector(&conn)
 	if len(views) != 2 {
-		t.Fatalf("connector dirs after new share = %+v, want both team dirs", views)
-	}
-	if views[0].Directory.ID != first.ID && views[1].Directory.ID != first.ID {
-		t.Fatalf("connector dirs missing first dir: %+v", views)
+		t.Fatalf("connector dirs after new shares = %+v, want the two read-only dirs only", views)
 	}
 	found := false
 	for _, v := range views {
 		if v.Directory.ID == secondID {
 			found = true
+		}
+		if v.CanWrite {
+			t.Fatalf("team-attached dir %s should be read-only", v.Directory.ID)
 		}
 	}
 	if !found {
