@@ -179,20 +179,22 @@ type featureToggle struct {
 }
 
 type connectorView struct {
-	ID             string   `json:"id"`
-	OwnerUserID    string   `json:"owner_user_id,omitempty"`
-	TeamID         string   `json:"team_id,omitempty"`
-	TeamName       string   `json:"team_name,omitempty"`
-	Name           string   `json:"name"`
-	Kind           string   `json:"kind"`
-	URL            string   `json:"url"`
-	AuthURL        string   `json:"auth_url"`
-	AuthHeader     string   `json:"auth_header"`
-	Write          bool     `json:"write"`
-	DirectoryIDs   []string `json:"directory_ids"`
-	DirectoryNames string   `json:"directory_names"`
-	Owned          bool     `json:"owned"`
-	CanManage      bool     `json:"can_manage"`
+	ID              string   `json:"id"`
+	OwnerUserID     string   `json:"owner_user_id,omitempty"`
+	TeamID          string   `json:"team_id,omitempty"`
+	TeamName        string   `json:"team_name,omitempty"`
+	Name            string   `json:"name"`
+	Kind            string   `json:"kind"`
+	URL             string   `json:"url"`
+	AuthURL         string   `json:"auth_url"`
+	AuthHeader      string   `json:"auth_header"`
+	Write           bool     `json:"write"`
+	DirectoryIDs    []string `json:"directory_ids"`
+	DirectoryNames  string   `json:"directory_names"`
+	AttachTeams     []string `json:"attach_teams,omitempty"`
+	AttachTeamNames []string `json:"attach_team_names,omitempty"`
+	Owned           bool     `json:"owned"`
+	CanManage       bool     `json:"can_manage"`
 }
 
 func (h *Handler) pageData(ownerUserID string) pageData {
@@ -215,7 +217,14 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 	dirViews := make([]directoryView, 0, len(dirs))
 	for _, d := range dirs {
 		dirNameByID[d.ID] = d.Name
-		detail := d.LocalPath
+		owned := d.OwnerUserID == ownerUserID
+		// Never expose the server's filesystem layout: managed local paths
+		// render as their user/dir suffix, and another owner's custom local
+		// path is not shown at all.
+		detail := config.RedactLocalPath(d.LocalPath)
+		if d.Backend == "local" && !owned && detail == d.LocalPath {
+			detail = "local folder"
+		}
 		repoURL := ""
 		errMsg := ""
 		if d.Backend == "git" && d.Git != nil {
@@ -223,12 +232,11 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 			repoURL = config.GitRemoteWebURL(d.Git.RemoteURL)
 		} else if d.Backend == "local" {
 			if info, err := os.Stat(d.LocalPath); err != nil {
-				errMsg = err.Error()
+				errMsg = "directory unavailable on the server"
 			} else if !info.IsDir() {
 				errMsg = "not a directory"
 			}
 		}
-		owned := d.OwnerUserID == ownerUserID
 		canWrite := owned ||
 			(d.TeamID != "" && writableTeam[d.TeamID] && d.ShareMode != config.ShareModeReadOnly)
 		dirViews = append(dirViews, directoryView{
@@ -274,24 +282,34 @@ func (h *Handler) pageData(ownerUserID string) pageData {
 		if ids == nil {
 			ids = []string{}
 		}
+		attachTeamNames := make([]string, 0, len(c.AttachTeams))
+		for _, teamID := range c.AttachTeams {
+			if n := teamNameByID[teamID]; n != "" {
+				attachTeamNames = append(attachTeamNames, n)
+			} else {
+				attachTeamNames = append(attachTeamNames, "(team)")
+			}
+		}
 		kind := c.EffectiveKind()
 		url := h.connectorURL(c)
 		authURL := h.connectorAuthURL(c)
 		cViews = append(cViews, connectorView{
-			ID:             c.ID,
-			OwnerUserID:    c.OwnerUserID,
-			TeamID:         c.TeamID,
-			TeamName:       teamNameByID[c.TeamID],
-			Name:           c.Name,
-			Kind:           kind,
-			URL:            url,
-			AuthURL:        authURL,
-			AuthHeader:     "Authorization: Bearer " + c.Token,
-			Write:          c.Write,
-			DirectoryIDs:   ids,
-			DirectoryNames: names,
-			Owned:          c.OwnerUserID == ownerUserID,
-			CanManage:      c.OwnerUserID == ownerUserID || (c.TeamID != "" && manageableTeam[c.TeamID]),
+			ID:              c.ID,
+			OwnerUserID:     c.OwnerUserID,
+			TeamID:          c.TeamID,
+			TeamName:        teamNameByID[c.TeamID],
+			Name:            c.Name,
+			Kind:            kind,
+			URL:             url,
+			AuthURL:         authURL,
+			AuthHeader:      "Authorization: Bearer " + c.Token,
+			Write:           c.Write,
+			DirectoryIDs:    ids,
+			DirectoryNames:  names,
+			AttachTeams:     c.AttachTeams,
+			AttachTeamNames: attachTeamNames,
+			Owned:           c.OwnerUserID == ownerUserID,
+			CanManage:       c.OwnerUserID == ownerUserID || (c.TeamID != "" && manageableTeam[c.TeamID]),
 		})
 	}
 	return pageData{Directories: dirViews, Connectors: cViews}
@@ -565,14 +583,15 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		TeamID       string   `json:"team_id"`
 		Kind         string   `json:"kind"`
 		DirectoryIDs []string `json:"directory_ids"`
+		AttachTeams  []string `json:"attach_teams"`
 		Write        bool     `json:"write"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if body.Name == "" || len(body.DirectoryIDs) == 0 {
-		httpErr(w, http.StatusBadRequest, fmt.Errorf("name and at least one directory are required"))
+	if body.Name == "" || (len(body.DirectoryIDs) == 0 && len(body.AttachTeams) == 0) {
+		httpErr(w, http.StatusBadRequest, fmt.Errorf("name and at least one directory or team are required"))
 		return
 	}
 	c, err := h.reg.AddConnectorForUser(user.ID, config.Connector{
@@ -580,6 +599,7 @@ func (h *Handler) connectorsAPI(w http.ResponseWriter, r *http.Request) {
 		TeamID:       body.TeamID,
 		Kind:         body.Kind,
 		DirectoryIDs: body.DirectoryIDs,
+		AttachTeams:  body.AttachTeams,
 		Write:        body.Write,
 	})
 	if err != nil {
@@ -619,13 +639,14 @@ func (h *Handler) connectorAPI(w http.ResponseWriter, r *http.Request) {
 			TeamID       string   `json:"team_id"`
 			Kind         string   `json:"kind"`
 			DirectoryIDs []string `json:"directory_ids"`
+			AttachTeams  []string `json:"attach_teams"`
 			Write        bool     `json:"write"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		c, err := h.reg.UpdateConnectorForActor(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.Write, body.TeamID)
+		c, err := h.reg.UpdateConnectorForActor(user.ID, id, body.Name, body.Kind, body.DirectoryIDs, body.AttachTeams, body.Write, body.TeamID)
 		if err != nil {
 			logs.ErrorUser(user.ID, "update connector id=%s failed: %v", id, err)
 			httpErr(w, statusForAccountError(err), err)

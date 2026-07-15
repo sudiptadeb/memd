@@ -104,6 +104,10 @@ export interface DirectoryView {
 
 export type DirectoryShareMode = "" | "readonly";
 
+// Team IDs a connector follows: all directories shared with these teams are
+// attached dynamically, including ones shared after the connector was created.
+export type AttachTeams = string[];
+
 // config.Git — the git backend configuration for a directory. Sent in create /
 // git-check request bodies and (without secrets) is part of stored directories.
 export interface GitConfig {
@@ -196,6 +200,9 @@ export interface ConnectorView {
   write: boolean;
   directory_ids: string[];
   directory_names: string;
+  // Teams this connector follows: their shared directories attach dynamically.
+  attach_teams?: string[];
+  attach_team_names?: string[];
   owned: boolean;
   can_manage: boolean;
 }
@@ -219,6 +226,7 @@ export interface ConnectorRequest {
   team_id?: string;
   kind?: ConnectorKind;
   directory_ids: string[];
+  attach_teams?: string[];
   write: boolean;
 }
 

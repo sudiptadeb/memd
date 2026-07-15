@@ -261,6 +261,9 @@ func (s *Store) Init(ctx context.Context) error {
 	if err := ensureUserDirectoryColumns(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureUserConnectorColumns(ctx, tx); err != nil {
+		return err
+	}
 	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
 		return err
 	}
@@ -467,6 +470,19 @@ func ensureUserDirectoryColumns(ctx context.Context, tx *sql.Tx) error {
 	}
 	if !cols["share_mode"] {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_directories ADD COLUMN share_mode TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureUserConnectorColumns(ctx context.Context, tx *sql.Tx) error {
+	cols, err := tableColumns(ctx, tx, "user_connectors")
+	if err != nil {
+		return err
+	}
+	if !cols["attach_teams"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_connectors ADD COLUMN attach_teams TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
