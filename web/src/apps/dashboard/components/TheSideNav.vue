@@ -69,13 +69,14 @@ const displayName = computed(() => {
   return u ? u.display_name || u.username : "";
 });
 
-// Secondary line: prefer email, fall back to username when it differs from the
-// name already shown, so we never print the same string twice.
+// Secondary line: the @username (what teammates need to add this user to a
+// team) when it differs from the name shown, else the email — never the same
+// string twice.
 const subText = computed(() => {
   const u = user.value;
   if (!u) return "";
-  if (u.email) return u.email;
-  return u.username !== displayName.value ? u.username : "";
+  if (u.username !== displayName.value) return "@" + u.username;
+  return u.email || "";
 });
 
 async function onLogout(): Promise<void> {

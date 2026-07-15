@@ -132,6 +132,11 @@
             Add
           </button>
         </form>
+        <p class="field-hint" v-if="team.can_manage">
+          Add people by their memd username — everyone can see their own next to their name in the
+          top bar. Someone who has never signed in here won't have an account yet; send them an
+          invite link below instead.
+        </p>
         <span class="err" v-if="memberForm.err" v-text="memberForm.err"></span>
       </div>
 
