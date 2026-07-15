@@ -28,7 +28,8 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import { stashInviteToken, takeInviteToken } from "./inviteStash";
 import LoginScreen from "./components/LoginScreen.vue";
 import TheTopBar from "./components/TheTopBar.vue";
 import TheSideNav from "./components/TheSideNav.vue";
@@ -43,6 +44,40 @@ import { useSession } from "@/shared/session";
 
 const { user, checked, refresh } = useSession();
 const route = useRoute();
+const router = useRouter();
+
+// Invite links: the server historically issued "?invite=TOKEN" links, but the
+// SPA's routes live behind "#" — translate the query form into the invite
+// route once on boot so both formats work.
+function adoptLegacyInviteQuery(): void {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get("invite");
+  if (!token) return;
+  url.searchParams.delete("invite");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  void router.replace(`/invite/${token}`);
+}
+
+// A signed-out visitor on the invite route only sees the login screen; stash
+// the token and return to the invite as soon as the session is signed in
+// (covers local login in-page and the SSO redirect, which drops the hash).
+watch(
+  [checked, user, () => route.fullPath],
+  () => {
+    if (!checked.value) return;
+    if (!user.value) {
+      if (route.name === "invite" && route.params.token) {
+        stashInviteToken(String(route.params.token));
+      }
+      return;
+    }
+    const pending = takeInviteToken();
+    if (pending && route.params.token !== pending) {
+      void router.replace(`/invite/${pending}`);
+    }
+  },
+  { immediate: true },
+);
 
 const navOpen = ref(false);
 
@@ -71,6 +106,7 @@ function onMediaChange(e: MediaQueryListEvent): void {
 
 onMounted(() => {
   mobileQuery.addEventListener("change", onMediaChange);
+  adoptLegacyInviteQuery();
   void refresh();
 });
 

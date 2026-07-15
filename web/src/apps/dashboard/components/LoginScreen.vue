@@ -15,6 +15,13 @@
         <li><MIcon name="git-branch" />Local folder or Git</li>
       </ul>
 
+      <!-- Pending team invite: the visitor followed an invite link while signed
+           out; tell them signing in completes the join. -->
+      <div class="invite-callout" v-if="inviteTeamName">
+        <div class="label">You're invited to join {{ inviteTeamName }}</div>
+        <div class="sub">Log in below to accept the invite.</div>
+      </div>
+
       <span class="err" v-if="err">{{ err }}</span>
 
       <!-- Default flow: single sign-on via the configured identity provider. -->
@@ -71,12 +78,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import logoLight from "@/shared/assets/logo-light.png";
 import logoDark from "@/shared/assets/logo-dark.png";
 import MIcon from "@/shared/components/MIcon.vue";
 import { useSession } from "@/shared/session";
-import { ApiError } from "@/shared/api";
+import { ApiError, invites } from "@/shared/api";
+import { peekInviteToken } from "../inviteStash";
 
 // Full-page login. Local username/password via useSession().login(); SSO (when
 // configured) navigates the browser into the server-side OIDC flow. Mirrors the
@@ -93,6 +102,30 @@ const username = ref("");
 const password = ref("");
 const submitting = ref(false);
 const err = ref("");
+
+// When the visitor arrived through an invite link, preview it (public
+// endpoint) so the login screen can say which team is waiting for them.
+// Watched, not mounted-once: the router's initial navigation resolves
+// asynchronously, so the invite route may not be current yet at mount.
+const route = useRoute();
+const inviteTeamName = ref("");
+const previewedToken = ref("");
+watch(
+  () => (route.name === "invite" && route.params.token ? String(route.params.token) : peekInviteToken()),
+  async (token) => {
+    if (!token || token === previewedToken.value) return;
+    previewedToken.value = token;
+    try {
+      const data = await invites.preview(token);
+      if (data.invite?.valid) {
+        inviteTeamName.value = data.invite.team_name || "a team";
+      }
+    } catch {
+      // Invalid/expired invite: the invite page reports details after sign-in.
+    }
+  },
+  { immediate: true },
+);
 
 async function submit(): Promise<void> {
   err.value = "";

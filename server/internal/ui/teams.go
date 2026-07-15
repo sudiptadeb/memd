@@ -345,7 +345,11 @@ func (h *Handler) teamInviteAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) inviteURL(tokenValue string) string {
-	return h.baseURL + "/?invite=" + tokenValue
+	// The dashboard is a hash-routed SPA: client routes live after "#", so the
+	// invite must target the #/invite/:token route. A bare "?invite=" query
+	// (the pre-SPA format) never reaches the router; the app still accepts it
+	// for old links and rewrites it into this route on boot.
+	return h.baseURL + "/#/invite/" + tokenValue
 }
 
 func teamViews(teams []account.Team) []teamView {
