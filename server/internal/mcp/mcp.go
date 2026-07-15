@@ -336,10 +336,22 @@ func (s *Server) resetLoad(key string) {
 //
 // For deeper navigation the agent uses memory_list / memory_read.
 func (s *Server) activeMemorySection(conn *registry.Connector) string {
-	dirs := s.reg.DirectoriesForConnector(conn)
+	all := s.reg.DirectoriesForConnector(conn)
+	// Teammates' read-only memories are not preloaded: with a whole team
+	// sharing their work memories, preloading every MEMORY.md would drown the
+	// agent's context. They get a one-line mention instead, and the agent
+	// pulls detail on demand (memory_search / memory_list / memory_read).
+	var dirs, lazy []registry.DirectoryView
+	for _, d := range all {
+		if d.SharedBy != "" && !d.CanWrite {
+			lazy = append(lazy, d)
+		} else {
+			dirs = append(dirs, d)
+		}
+	}
 	var sb strings.Builder
 	sb.WriteString("# Active Memory\n\n")
-	if len(dirs) == 0 {
+	if len(all) == 0 {
 		sb.WriteString("_No directories are accessible through this connector._\n")
 		return sb.String()
 	}
@@ -353,18 +365,11 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 			fmt.Fprintf(&sb, "- purpose: %s\n", d.Directory.Description)
 		}
 		if d.SharedBy != "" {
-			if d.CanWrite {
-				fmt.Fprintf(&sb, "- shared: this is %s's memory, shared with you read-write via a team\n", d.SharedBy)
-			} else {
-				fmt.Fprintf(&sb, "- shared: this is %s's memory, shared with you READ-ONLY via a team\n", d.SharedBy)
-			}
+			fmt.Fprintf(&sb, "- shared: this is %s's memory, shared with you read-write via a team\n", d.SharedBy)
 		} else if !d.CanWrite {
 			sb.WriteString("- access: READ-ONLY through this connector\n")
 		}
 		sb.WriteString("\n")
-		if d.SharedBy != "" && !d.CanWrite {
-			fmt.Fprintf(&sb, "_Note: this directory belongs to %s, not your user. Treat it as reference material — its MEMORY.md records their context and preferences, not your user's, and you cannot write here._\n\n", d.SharedBy)
-		}
 
 		root, err := d.Backend.ListPath("")
 		if err != nil {
@@ -392,6 +397,18 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 			fmt.Fprintf(&sb, "[memd: MEMORY.md truncated at %d lines / %dKB for preload — memory_read(\"MEMORY.md\") returns the full index; consider a reorganise pass]\n", lines, memoryIndexPreloadMaxBytes>>10)
 		}
 		sb.WriteString("```\n\n")
+	}
+	if len(lazy) > 0 {
+		sb.WriteString("## Shared memories (not preloaded)\n\n")
+		sb.WriteString("Read-only memories teammates shared with you. They are NOT loaded into context — when a question touches a teammate's area, explore one on demand with `memory_search`, `memory_list`, or `memory_read` on its id. They belong to their owners: treat them as reference material, never write targets.\n\n")
+		for _, d := range lazy {
+			line := fmt.Sprintf("- **%s** (id: `%s`) — %s's memory, read-only", d.Directory.Name, d.Directory.ID, d.SharedBy)
+			if d.Directory.Description != "" {
+				line += ". " + d.Directory.Description
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }
