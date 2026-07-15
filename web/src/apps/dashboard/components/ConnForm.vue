@@ -52,6 +52,29 @@
         </div>
       </div>
 
+      <div class="field" v-if="followableTeams.length">
+        <label class="field-label">Team directories</label>
+        <div class="check-list">
+          <label
+            v-for="team in followableTeams"
+            :key="team.id"
+            class="check-row"
+            :class="form.attach_teams.includes(team.id) ? 'on' : ''"
+          >
+            <input
+              type="checkbox"
+              :value="team.id"
+              :checked="form.attach_teams.includes(team.id)"
+              @change="toggleTeam(team.id, $event)"
+            />
+            <div>
+              <div class="label">Attach {{ team.name }}'s shared directories</div>
+              <span class="sub">Everything shared with the team, including directories shared later.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <div class="field">
         <label class="field-label">
           {{ isEdit ? "Directories this connector can see" : "Directories" }}<span v-if="!isEdit" class="req">*</span>
@@ -61,17 +84,21 @@
             v-for="directory in attachable"
             :key="directory.id"
             class="check-row"
-            :class="form.selected.includes(directory.id) ? 'on' : ''"
+            :class="form.selected.includes(directory.id) || coveredByTeam(directory) ? 'on' : ''"
           >
             <input
               type="checkbox"
               :value="directory.id"
-              :checked="form.selected.includes(directory.id)"
+              :checked="form.selected.includes(directory.id) || coveredByTeam(directory)"
+              :disabled="coveredByTeam(directory)"
               @change="toggle(directory.id, $event)"
             />
             <div>
               <div class="label">
                 {{ directory.name }}
+                <span class="dot" v-if="coveredByTeam(directory)" title="Included because its team is attached above">
+                  via team
+                </span>
                 <span
                   class="dot"
                   v-if="!directory.can_write"
@@ -122,6 +149,7 @@ const props = defineProps<{
   mode: "create" | "edit";
   connector: ConnectorView | null;
   manageableTeams: Team[];
+  teams: Team[];
   directories: DirectoryView[];
 }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "saved"): void }>();
@@ -132,6 +160,7 @@ interface ConnFormState {
   name: string;
   kind: ConnectorKind;
   selected: string[];
+  attach_teams: string[];
   write: boolean;
 }
 
@@ -140,7 +169,7 @@ const formId = computed(() => (isEdit.value ? "edit-conn-form" : "add-conn-form"
 const originalName = ref("");
 
 function defaults(): ConnFormState {
-  return { id: "", team_id: "", name: "", kind: "mcp", selected: [], write: true };
+  return { id: "", team_id: "", name: "", kind: "mcp", selected: [], attach_teams: [], write: true };
 }
 
 const form = reactive<ConnFormState>(defaults());
@@ -158,8 +187,37 @@ const attachable = computed<DirectoryView[]>(() => {
   });
 });
 
+// Teams the connector may follow: any team the user belongs to for a personal
+// connector, only its own team for a team-scoped one.
+const followableTeams = computed<Team[]>(() => {
+  const scope = form.team_id || "";
+  if (scope === "") return props.teams;
+  return props.teams.filter((t) => t.id === scope);
+});
+
+// A directory already covered by a followed team is included implicitly.
+function coveredByTeam(d: DirectoryView): boolean {
+  return Boolean(d.team_id) && form.attach_teams.includes(d.team_id || "");
+}
+
+function toggleTeam(id: string, event: Event): void {
+  const checked = (event.target as HTMLInputElement).checked;
+  const index = form.attach_teams.indexOf(id);
+  if (checked && index === -1) {
+    form.attach_teams.push(id);
+    // Covered directories no longer need an explicit selection.
+    const covered = new Set(props.directories.filter((d) => d.team_id === id).map((d) => d.id));
+    form.selected = form.selected.filter((did) => !covered.has(did));
+  } else if (!checked && index >= 0) {
+    form.attach_teams.splice(index, 1);
+  }
+}
+
 const submitDisabled = computed(
-  () => submitting.value || !form.selected.length || (isEdit.value && !form.name),
+  () =>
+    submitting.value ||
+    (!form.selected.length && !form.attach_teams.length) ||
+    (isEdit.value && !form.name),
 );
 
 watch(
@@ -177,6 +235,7 @@ watch(
         name: c.name,
         kind: c.kind || "mcp",
         selected: (c.directory_ids || []).slice(),
+        attach_teams: (c.attach_teams || []).slice(),
         write: Boolean(c.write),
       });
     } else {
@@ -196,11 +255,14 @@ function toggle(id: string, event: Event): void {
   }
 }
 
-// Switching team scope drops any now-unattachable selections.
+// Switching team scope drops any now-unattachable selections and any followed
+// teams outside the new scope.
 function onTeamChange(event: Event): void {
   form.team_id = (event.target as HTMLSelectElement).value || "";
   const allowed = new Set(attachable.value.map((d) => d.id));
   form.selected = form.selected.filter((id) => allowed.has(id));
+  const followable = new Set(followableTeams.value.map((t) => t.id));
+  form.attach_teams = form.attach_teams.filter((id) => followable.has(id));
 }
 
 async function submit(): Promise<void> {
@@ -211,6 +273,7 @@ async function submit(): Promise<void> {
     team_id: form.team_id || "",
     kind: form.kind,
     directory_ids: form.selected,
+    attach_teams: form.attach_teams,
     write: form.write,
   };
   try {

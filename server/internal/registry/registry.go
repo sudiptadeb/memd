@@ -233,10 +233,11 @@ func (r *Registry) Connectors() []config.Connector {
 	return out
 }
 
-// cloneConnector returns a copy whose DirectoryIDs has its own backing array,
+// cloneConnector returns a copy whose slices have their own backing arrays,
 // so callers can't observe (or race with) later in-place registry mutations.
 func cloneConnector(c config.Connector) config.Connector {
 	c.DirectoryIDs = append([]string(nil), c.DirectoryIDs...)
+	c.AttachTeams = append([]string(nil), c.AttachTeams...)
 	return c
 }
 
@@ -264,8 +265,19 @@ func (r *Registry) ConnectorByToken(tok string) *Connector {
 func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 	viewTeams, writeTeams, _ := r.teamAccessForUser(c.OwnerUserID)
 	r.mu.RLock()
-	var out []DirectoryView
-	var pending []DirectoryView // git dirs needing a per-connector branch backend
+	// Resolve the effective directory list: the explicitly attached IDs in
+	// their stored order, then — for every team the connector follows and the
+	// owner still belongs to — that team's shared directories, deduplicated.
+	// Team resolution is dynamic: directories shared after the connector was
+	// created appear automatically, and leaving a team drops its directories.
+	attachTeams := map[string]bool{}
+	for _, teamID := range c.AttachTeams {
+		if viewTeams[teamID] {
+			attachTeams[teamID] = true
+		}
+	}
+	var candidates []config.Directory
+	seen := map[string]bool{}
 	for _, id := range c.DirectoryIDs {
 		for _, d := range r.cfg.Directories {
 			if d.ID != id {
@@ -275,32 +287,47 @@ func (r *Registry) DirectoriesForConnector(c *Connector) []DirectoryView {
 			if !owned && (d.TeamID == "" || !viewTeams[d.TeamID]) {
 				continue
 			}
-			view := DirectoryView{Directory: d, CanWrite: owned || teamCanWriteDir(d, writeTeams)}
-			// On a git directory the branch (main) is written directly only by
-			// the designated main connector, or — when none is designated — by
-			// the owner's own connectors. Every other connector works on its
-			// own branch, so its commits are attributable and the directory
-			// branch changes only by merging. This is uniform for personal and
-			// team directories: the rule is about ownership and designation, not
-			// team scope. (Local directories have no branches; all connectors
-			// share the folder.)
-			designated := owned && d.OwnerConnectorID != "" && d.OwnerConnectorID == c.ID
-			ownerDefault := owned && d.OwnerConnectorID == ""
-			writesMainBranch := designated || ownerDefault
-			if d.Backend == "git" && !writesMainBranch {
-				if b := r.branchBackends[branchBackendKey(d, c)]; b != nil {
-					view.Backend = b
-					out = append(out, view)
-				} else {
-					pending = append(pending, view)
-				}
-				break
-			}
-			if b := r.backends[backendKey(d.OwnerUserID, id)]; b != nil {
+			candidates = append(candidates, d)
+			seen[d.ID] = true
+			break
+		}
+	}
+	for _, d := range r.cfg.Directories {
+		if seen[d.ID] || d.TeamID == "" || !attachTeams[d.TeamID] {
+			continue
+		}
+		candidates = append(candidates, d)
+		seen[d.ID] = true
+	}
+
+	var out []DirectoryView
+	var pending []DirectoryView // git dirs needing a per-connector branch backend
+	for _, d := range candidates {
+		owned := d.OwnerUserID == c.OwnerUserID
+		view := DirectoryView{Directory: d, CanWrite: owned || teamCanWriteDir(d, writeTeams)}
+		// On a git directory the branch (main) is written directly only by
+		// the designated main connector, or — when none is designated — by
+		// the owner's own connectors. Every other connector works on its
+		// own branch, so its commits are attributable and the directory
+		// branch changes only by merging. This is uniform for personal and
+		// team directories: the rule is about ownership and designation, not
+		// team scope. (Local directories have no branches; all connectors
+		// share the folder.)
+		designated := owned && d.OwnerConnectorID != "" && d.OwnerConnectorID == c.ID
+		ownerDefault := owned && d.OwnerConnectorID == ""
+		writesMainBranch := designated || ownerDefault
+		if d.Backend == "git" && !writesMainBranch {
+			if b := r.branchBackends[branchBackendKey(d, c)]; b != nil {
 				view.Backend = b
 				out = append(out, view)
+			} else {
+				pending = append(pending, view)
 			}
-			break
+			continue
+		}
+		if b := r.backends[backendKey(d.OwnerUserID, d.ID)]; b != nil {
+			view.Backend = b
+			out = append(out, view)
 		}
 	}
 	r.mu.RUnlock()
@@ -355,6 +382,28 @@ func (r *Registry) ownerLabel(userID string) string {
 // read-only. Ownership is checked separately by callers.
 func teamCanWriteDir(d config.Directory, writeTeams map[string]bool) bool {
 	return d.TeamID != "" && writeTeams[d.TeamID] && d.ShareMode != config.ShareModeReadOnly
+}
+
+// normalizeAttachTeams validates and dedupes a connector's follow-the-team
+// list: the owner must belong to every listed team (viewTeams), and a
+// team-scoped connector may only follow its own team.
+func normalizeAttachTeams(attachTeams []string, connectorTeamID string, viewTeams map[string]bool) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, teamID := range attachTeams {
+		if teamID == "" || seen[teamID] {
+			continue
+		}
+		if !viewTeams[teamID] {
+			return nil, fmt.Errorf("you are not a member of team %s", teamID)
+		}
+		if connectorTeamID != "" && teamID != connectorTeamID {
+			return nil, errors.New("a team connector may only attach its own team's directories")
+		}
+		seen[teamID] = true
+		out = append(out, teamID)
+	}
+	return out, nil
 }
 
 // openBranchBackendCached returns the per-connector branch backend for a team
@@ -918,6 +967,11 @@ func (r *Registry) AddConnectorForUser(ownerUserID string, c config.Connector) (
 		c.CreatedAt = time.Now()
 	}
 	viewTeams, writeTeams, _ := r.teamAccessForUser(ownerUserID)
+	attachTeams, err := normalizeAttachTeams(c.AttachTeams, c.TeamID, viewTeams)
+	if err != nil {
+		return config.Connector{}, err
+	}
+	c.AttachTeams = attachTeams
 	r.mu.Lock()
 	if r.accounts != nil || len(r.cfg.Directories) > 0 {
 		if err := r.validateConnectorDirectoriesLocked(ownerUserID, c.TeamID, c.DirectoryIDs, c.Write, viewTeams, writeTeams); err != nil {
@@ -976,10 +1030,10 @@ func (r *Registry) storeConnectorInMemory(updated config.Connector) {
 // write flag. The token, ID, and creation time are preserved.
 // Returns the updated connector.
 func (r *Registry) UpdateConnector(id, name, kind string, directoryIDs []string, write bool) (config.Connector, error) {
-	return r.UpdateConnectorForUser("", id, name, kind, directoryIDs, write)
+	return r.UpdateConnectorForUser("", id, name, kind, directoryIDs, nil, write)
 }
 
-func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, directoryIDs []string, write bool) (config.Connector, error) {
+func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, directoryIDs, attachTeams []string, write bool) (config.Connector, error) {
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), ownerUserID); err != nil {
 			return config.Connector{}, err
@@ -988,8 +1042,8 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 	if name == "" {
 		return config.Connector{}, errors.New("name is required")
 	}
-	if len(directoryIDs) == 0 {
-		return config.Connector{}, errors.New("at least one directory is required")
+	if len(directoryIDs) == 0 && len(attachTeams) == 0 {
+		return config.Connector{}, errors.New("at least one directory or team is required")
 	}
 	kind = config.NormalizeConnectorKind(kind)
 	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
@@ -1012,10 +1066,16 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
+	normalizedAttach, err := normalizeAttachTeams(attachTeams, r.cfg.Connectors[idx].TeamID, viewTeams)
+	if err != nil {
+		r.mu.Unlock()
+		return config.Connector{}, err
+	}
 	updated := r.cfg.Connectors[idx]
 	updated.Name = name
 	updated.Kind = kind
 	updated.DirectoryIDs = append([]string(nil), directoryIDs...)
+	updated.AttachTeams = normalizedAttach
 	updated.Write = write
 	if r.accounts != nil {
 		// Persist first; memory only reflects writes that actually landed.
@@ -1036,7 +1096,7 @@ func (r *Registry) UpdateConnectorForUser(ownerUserID, id, name, kind string, di
 	return updated, nil
 }
 
-func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, directoryIDs []string, write bool, teamID string) (config.Connector, error) {
+func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, directoryIDs, attachTeams []string, write bool, teamID string) (config.Connector, error) {
 	if r.accounts != nil {
 		if err := r.accounts.EnsureUserDataOwner(context.Background(), actorUserID); err != nil {
 			return config.Connector{}, err
@@ -1054,14 +1114,30 @@ func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, d
 	if name == "" {
 		return config.Connector{}, errors.New("name is required")
 	}
-	if len(directoryIDs) == 0 {
-		return config.Connector{}, errors.New("at least one directory is required")
+	if len(directoryIDs) == 0 && len(attachTeams) == 0 {
+		return config.Connector{}, errors.New("at least one directory or team is required")
 	}
 	kind = config.NormalizeConnectorKind(kind)
 	if kind != config.ConnectorKindMCP && kind != config.ConnectorKindHTTP {
 		return config.Connector{}, fmt.Errorf("unknown connector kind: %s", kind)
 	}
 	viewTeams, writeTeams, manageTeams := r.teamAccessForUser(actorUserID)
+	// Attach-teams follow the connector OWNER's memberships (an admin actor
+	// editing a team connector must not smuggle in their own teams). Resolve
+	// the owner's team set before taking the lock: team lookups do DB I/O.
+	ownerViewTeams := viewTeams
+	r.mu.RLock()
+	connOwnerID := ""
+	for _, c := range r.cfg.Connectors {
+		if c.ID == id {
+			connOwnerID = c.OwnerUserID
+			break
+		}
+	}
+	r.mu.RUnlock()
+	if connOwnerID != "" && connOwnerID != actorUserID {
+		ownerViewTeams, _, _ = r.teamAccessForUser(connOwnerID)
+	}
 	r.mu.Lock()
 	idx := -1
 	for i, c := range r.cfg.Connectors {
@@ -1090,11 +1166,17 @@ func (r *Registry) UpdateConnectorForActor(actorUserID, id, name, kind string, d
 		r.mu.Unlock()
 		return config.Connector{}, err
 	}
+	normalizedAttach, err := normalizeAttachTeams(attachTeams, teamID, ownerViewTeams)
+	if err != nil {
+		r.mu.Unlock()
+		return config.Connector{}, err
+	}
 	prev := current
 	current.Name = name
 	current.Kind = kind
 	current.TeamID = teamID
 	current.DirectoryIDs = append([]string(nil), directoryIDs...)
+	current.AttachTeams = normalizedAttach
 	current.Write = write
 	if r.accounts != nil {
 		// Persist first; memory only reflects writes that actually landed.

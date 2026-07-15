@@ -119,12 +119,19 @@ const displayURL = computed(() => publicURL(props.connector.url));
 
 const directoryNames = computed(() => {
   const c = props.connector;
-  if (c.directory_names) return c.directory_names;
-  const names = (c.directory_ids || []).map((id) => {
-    const directory = props.directories.find((d) => d.id === id);
-    return directory ? directory.name : "(missing)";
-  });
-  return names.length ? names.join(", ") : "(none)";
+  let names = c.directory_names;
+  if (!names) {
+    const resolved = (c.directory_ids || []).map((id) => {
+      const directory = props.directories.find((d) => d.id === id);
+      return directory ? directory.name : "(missing)";
+    });
+    names = resolved.join(", ");
+  }
+  // Followed teams contribute their shared directories dynamically.
+  const followed = (c.attach_team_names || []).map((n) => `all ${n} shared directories`);
+  const parts = [names, ...followed].filter(Boolean);
+  if (names === "(none)" && followed.length) return followed.join(", ");
+  return parts.length ? parts.join(", ") : "(none)";
 });
 
 async function copy(text: string, label: string): Promise<void> {

@@ -520,6 +520,112 @@ func TestReadOnlyShareMode(t *testing.T) {
 	}
 }
 
+func TestConnectorAttachTeams(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "member", Password: "member-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	stranger, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "stranger", Password: "stranger-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser stranger: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, member.ID, account.RoleMember, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember: %v", err)
+	}
+	first := config.Directory{
+		ID:        "dir1",
+		TeamID:    team.ID,
+		Name:      "First",
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	}
+	if err := store.UpsertUserDirectory(ctx, owner.ID, first); err != nil {
+		t.Fatalf("UpsertUserDirectory: %v", err)
+	}
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	// A member's connector can follow the team with no explicit directories.
+	conn, err := r.AddConnectorForUser(member.ID, config.Connector{
+		Name:        "member-agent",
+		Kind:        config.ConnectorKindMCP,
+		AttachTeams: []string{team.ID},
+		Write:       true,
+	})
+	if err != nil {
+		t.Fatalf("AddConnectorForUser with attach team: %v", err)
+	}
+	views := r.DirectoriesForConnector(&conn)
+	if len(views) != 1 || views[0].Directory.ID != first.ID {
+		t.Fatalf("connector dirs = %+v, want the team's shared dir", views)
+	}
+
+	// A directory shared with the team AFTER the connector was created appears
+	// automatically — that is the point of following the team.
+	secondID, err := r.AddDirectoryForUser(owner.ID, config.Directory{
+		Name:      "Second",
+		TeamID:    team.ID,
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("AddDirectoryForUser second: %v", err)
+	}
+	views = r.DirectoriesForConnector(&conn)
+	if len(views) != 2 {
+		t.Fatalf("connector dirs after new share = %+v, want both team dirs", views)
+	}
+	if views[0].Directory.ID != first.ID && views[1].Directory.ID != first.ID {
+		t.Fatalf("connector dirs missing first dir: %+v", views)
+	}
+	found := false
+	for _, v := range views {
+		if v.Directory.ID == secondID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("connector dirs missing newly shared dir: %+v", views)
+	}
+
+	// The connector survives a reload with its attach list intact.
+	r2, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked reload: %v", err)
+	}
+	t.Cleanup(func() { _ = r2.Close() })
+	reloaded := r2.ConnectorsForUser(member.ID)
+	if len(reloaded) != 1 || len(reloaded[0].AttachTeams) != 1 || reloaded[0].AttachTeams[0] != team.ID {
+		t.Fatalf("reloaded connector = %+v, want attach_teams=[%s]", reloaded, team.ID)
+	}
+	views = r2.DirectoriesForConnector(&reloaded[0])
+	if len(views) != 2 {
+		t.Fatalf("reloaded connector dirs = %+v, want both team dirs", views)
+	}
+
+	// Following a team you are not a member of is rejected.
+	if _, err := r.AddConnectorForUser(stranger.ID, config.Connector{
+		Name:        "stranger-agent",
+		Kind:        config.ConnectorKindMCP,
+		AttachTeams: []string{team.ID},
+	}); err == nil {
+		t.Fatal("non-member should not be able to follow a team")
+	}
+}
+
 func TestMemberConnectorWritesToOwnBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git executable not available")

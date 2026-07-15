@@ -200,12 +200,19 @@ type Connector struct {
 	ID           string    `json:"id"`
 	OwnerUserID  string    `json:"owner_user_id,omitempty"`
 	TeamID       string    `json:"team_id,omitempty"`
-	Name         string    `json:"name"`
-	Kind         string    `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
-	Token        string    `json:"token"`
-	DirectoryIDs []string  `json:"directory_ids"`
-	Write        bool      `json:"write"`
-	CreatedAt    time.Time `json:"created_at"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
+	Token        string   `json:"token"`
+	DirectoryIDs []string `json:"directory_ids"`
+
+	// AttachTeams lists teams whose shared directories this connector includes
+	// dynamically: every directory currently shared with the team, including
+	// ones shared after the connector was created. Resolution re-checks team
+	// membership, so leaving a team silently drops its directories.
+	AttachTeams []string `json:"attach_teams,omitempty"`
+
+	Write     bool      `json:"write"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 const (
@@ -223,6 +230,26 @@ func NormalizeShareMode(mode string) string {
 		return ShareModeReadOnly
 	}
 	return ""
+}
+
+// RedactLocalPath hides the server's managed-root prefix from a local
+// directory path: managed (name-only) directories render as their
+// "<user-id>/<directory-id>" suffix instead of exposing where on the server's
+// filesystem memd keeps its data. User-chosen custom paths pass through
+// unchanged — the user typed them.
+func RedactLocalPath(path string) string {
+	if path == "" {
+		return path
+	}
+	root, err := ManagedLocalRoot()
+	if err != nil {
+		return path
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return rel
 }
 
 func NormalizeConnectorKind(kind string) string {

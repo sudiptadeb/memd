@@ -48,6 +48,7 @@
     :mode="formMode"
     :connector="editing"
     :manageable-teams="manageableTeams"
+    :teams="teams"
     :directories="directories"
     @close="formOpen = false"
     @saved="onSaved"

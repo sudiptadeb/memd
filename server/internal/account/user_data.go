@@ -199,7 +199,7 @@ func (s *Store) ListUserDirectories(ctx context.Context, ownerUserID string) ([]
 
 func (s *Store) ListUserConnectors(ctx context.Context, ownerUserID string) ([]config.Connector, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, team_id, name, kind, token, write, created_at
+		SELECT id, team_id, attach_teams, name, kind, token, write, created_at
 		  FROM user_connectors
 		 WHERE owner_user_id = ?
 		 ORDER BY lower(name)`, ownerUserID)
@@ -217,11 +217,13 @@ func (s *Store) ListUserConnectors(ctx context.Context, ownerUserID string) ([]c
 		var c config.Connector
 		var write int
 		var teamID sql.NullString
+		var attachTeams string
 		var created string
-		if err := rows.Scan(&c.ID, &teamID, &c.Name, &c.Kind, &c.Token, &write, &created); err != nil {
+		if err := rows.Scan(&c.ID, &teamID, &attachTeams, &c.Name, &c.Kind, &c.Token, &write, &created); err != nil {
 			return nil, err
 		}
 		c.Write = write != 0
+		c.AttachTeams = unmarshalStringList(attachTeams)
 		c.CreatedAt = mustParseTime(created)
 		c.OwnerUserID = ownerUserID
 		if teamID.Valid {
@@ -335,6 +337,32 @@ func upsertUserDirectory(ctx context.Context, tx *sql.Tx, ownerUserID string, d 
 	return err
 }
 
+// marshalStringList encodes a string slice as JSON for a TEXT column; an empty
+// list serialises to "" so the column default stays clean.
+func marshalStringList(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// unmarshalStringList decodes a JSON string-list column, tolerating an
+// empty/invalid value as "no entries".
+func unmarshalStringList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil
+	}
+	return list
+}
+
 // marshalFeatures encodes a directory's feature list for the features column.
 // An empty list serialises to "" so the column default stays clean.
 func marshalFeatures(features []config.DirectoryFeature) string {
@@ -372,16 +400,17 @@ func upsertUserConnector(ctx context.Context, tx *sql.Tx, ownerUserID string, c 
 		write = 1
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO user_connectors(owner_user_id, id, team_id, name, kind, token, write, created_at, updated_at)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
+		INSERT INTO user_connectors(owner_user_id, id, team_id, attach_teams, name, kind, token, write, created_at, updated_at)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(owner_user_id, id) DO UPDATE SET
 			team_id = excluded.team_id,
+			attach_teams = excluded.attach_teams,
 			name = excluded.name,
 			kind = excluded.kind,
 			token = excluded.token,
 			write = excluded.write,
 			updated_at = excluded.updated_at`,
-		ownerUserID, c.ID, c.TeamID, c.Name, c.EffectiveKind(), c.Token, write, created, now)
+		ownerUserID, c.ID, c.TeamID, marshalStringList(c.AttachTeams), c.Name, c.EffectiveKind(), c.Token, write, created, now)
 	if err != nil {
 		return err
 	}
