@@ -65,6 +65,12 @@ type Directory struct {
 	OwnerUserID string `json:"owner_user_id,omitempty"`
 	TeamID      string `json:"team_id,omitempty"`
 
+	// ShareMode controls what team members may do with a team-shared
+	// directory: "" (read-write — write-capable roles may mutate it) or
+	// ShareModeReadOnly (everyone but the owner reads only). Meaningless
+	// while TeamID is empty.
+	ShareMode string `json:"share_mode,omitempty"`
+
 	// OwnerConnectorID designates the one connector allowed to work directly on
 	// a git directory's branch (main); every other connector works on its own
 	// memd/<user>-<connector> branch. It must belong to the directory's owner.
@@ -206,6 +212,18 @@ const (
 	ConnectorKindMCP  = "mcp"
 	ConnectorKindHTTP = "http"
 )
+
+// Directory share modes. Empty means read-write (the default).
+const ShareModeReadOnly = "readonly"
+
+// NormalizeShareMode maps user input to a valid share mode, treating any
+// unknown value as the read-write default.
+func NormalizeShareMode(mode string) string {
+	if mode == ShareModeReadOnly {
+		return ShareModeReadOnly
+	}
+	return ""
+}
 
 func NormalizeConnectorKind(kind string) string {
 	switch kind {

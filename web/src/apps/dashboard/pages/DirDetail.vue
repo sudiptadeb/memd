@@ -124,6 +124,16 @@
           <option value="">Personal — only you</option>
           <option v-for="team in manageableTeams" :key="team.id" :value="team.id">{{ team.name }}</option>
         </select>
+        <select
+          class="mini-select wide-select"
+          v-if="directory.team_id"
+          aria-label="Team access"
+          :value="directory.share_mode || ''"
+          @change="setShareMode(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">Read &amp; write — members can update this memory</option>
+          <option value="readonly">Read-only — members read, only the owner writes</option>
+        </select>
       </div>
 
       <!-- Files ---------------------------------------------------------- -->
@@ -157,7 +167,7 @@ import DirEditForm from "../components/DirEditForm.vue";
 import DirFiles from "../components/DirFiles.vue";
 import { connectors as connectorsApi, directories as directoriesApi, teams as teamsApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
-import type { ConnectorView, DirectoryView, Team } from "@/shared/types";
+import type { ConnectorView, DirectoryShareMode, DirectoryView, Team } from "@/shared/types";
 
 // The directory detail page: the full management surface that used to crowd the
 // card — overview, main-branch connector, feature toggles, team scope, the file
@@ -237,6 +247,19 @@ async function setTeam(teamID: string): Promise<void> {
   if (!directory.value) return;
   try {
     await directoriesApi.update(directory.value.id, { team_id: teamID || "" });
+    await load();
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : String(e), "error");
+    await load();
+  }
+}
+
+async function setShareMode(mode: string): Promise<void> {
+  if (!directory.value) return;
+  try {
+    await directoriesApi.update(directory.value.id, {
+      share_mode: (mode === "readonly" ? "readonly" : "") as DirectoryShareMode,
+    });
     await load();
   } catch (e) {
     toast(e instanceof ApiError ? e.message : String(e), "error");

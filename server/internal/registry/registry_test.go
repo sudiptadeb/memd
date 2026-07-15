@@ -401,13 +401,20 @@ func TestMemberConnectorOnTeamDirectory(t *testing.T) {
 	if len(vviews) != 1 || vviews[0].CanWrite {
 		t.Fatalf("viewer connector dirs = %+v, want read-only access", vviews)
 	}
-	if _, err := r.AddConnectorForUser(viewer.ID, config.Connector{
+	// A viewer may also attach the shared directory to a write connector; the
+	// directory is simply served read-only within it (per-directory CanWrite).
+	viewerWriter, err := r.AddConnectorForUser(viewer.ID, config.Connector{
 		Name:         "viewer-writer",
 		Kind:         config.ConnectorKindMCP,
 		DirectoryIDs: []string{dir.ID},
 		Write:        true,
-	}); err == nil {
-		t.Fatal("viewer should not be able to create a write connector on a shared dir")
+	})
+	if err != nil {
+		t.Fatalf("viewer write-connector AddConnectorForUser: %v", err)
+	}
+	wviews := r.DirectoriesForConnector(&viewerWriter)
+	if len(wviews) != 1 || wviews[0].CanWrite {
+		t.Fatalf("viewer write-connector dirs = %+v, want read-only access", wviews)
 	}
 
 	// A non-member cannot reference the shared directory at all.
@@ -418,6 +425,98 @@ func TestMemberConnectorOnTeamDirectory(t *testing.T) {
 		Write:        false,
 	}); err == nil {
 		t.Fatal("non-member should not be able to reference a team directory")
+	}
+}
+
+func TestReadOnlyShareMode(t *testing.T) {
+	ctx := context.Background()
+	store := openRegistryTestStore(t)
+	owner, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "owner", Password: "owner-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser owner: %v", err)
+	}
+	member, err := store.CreateLocalUser(ctx, account.CreateUserInput{Username: "member", Password: "member-pass"})
+	if err != nil {
+		t.Fatalf("CreateLocalUser member: %v", err)
+	}
+	team, err := store.CreateTeam(ctx, account.CreateTeamInput{Name: "Family", OwnerUserID: owner.ID})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if err := store.AddTeamMember(ctx, team.ID, member.ID, account.RoleMember, owner.ID); err != nil {
+		t.Fatalf("AddTeamMember: %v", err)
+	}
+	dir := config.Directory{
+		ID:        "dir1",
+		TeamID:    team.ID,
+		ShareMode: config.ShareModeReadOnly,
+		Name:      "Shared",
+		Backend:   "local",
+		LocalPath: t.TempDir(),
+	}
+	if err := store.UpsertUserDirectory(ctx, owner.ID, dir); err != nil {
+		t.Fatalf("UpsertUserDirectory: %v", err)
+	}
+	r, err := NewAccountBacked(ctx, store)
+	if err != nil {
+		t.Fatalf("NewAccountBacked: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	// A write-capable member attaches the read-only-shared directory, but the
+	// share mode downgrades their access to read-only, and the view is labeled
+	// with the owner so agents can be told whose memory it is.
+	memberConn, err := r.AddConnectorForUser(member.ID, config.Connector{
+		Name:         "member-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("member AddConnectorForUser: %v", err)
+	}
+	views := r.DirectoriesForConnector(&memberConn)
+	if len(views) != 1 || views[0].Directory.ID != dir.ID {
+		t.Fatalf("member connector dirs = %+v, want shared dir", views)
+	}
+	if views[0].CanWrite {
+		t.Fatal("read-only share must not grant a member write access")
+	}
+	if views[0].SharedBy != "owner" {
+		t.Fatalf("SharedBy = %q, want owner's label", views[0].SharedBy)
+	}
+
+	// The owner keeps write access, and their own directory carries no label.
+	ownerConn, err := r.AddConnectorForUser(owner.ID, config.Connector{
+		Name:         "owner-agent",
+		Kind:         config.ConnectorKindMCP,
+		DirectoryIDs: []string{dir.ID},
+		Write:        true,
+	})
+	if err != nil {
+		t.Fatalf("owner AddConnectorForUser: %v", err)
+	}
+	oviews := r.DirectoriesForConnector(&ownerConn)
+	if len(oviews) != 1 || !oviews[0].CanWrite || oviews[0].SharedBy != "" {
+		t.Fatalf("owner connector dirs = %+v, want writable unlabeled dir", oviews)
+	}
+
+	// Switching the share back to read-write restores member write access.
+	if _, err := r.UpdateDirectoryTeamForActor(owner.ID, dir.ID, team.ID, ""); err != nil {
+		t.Fatalf("UpdateDirectoryTeamForActor: %v", err)
+	}
+	views = r.DirectoriesForConnector(&memberConn)
+	if len(views) != 1 || !views[0].CanWrite {
+		t.Fatalf("member connector dirs after read-write switch = %+v, want writable", views)
+	}
+
+	// Rescoping to personal clears the share mode.
+	d, err := r.UpdateDirectoryTeamForActor(owner.ID, dir.ID, "", config.ShareModeReadOnly)
+	if err != nil {
+		t.Fatalf("UpdateDirectoryTeamForActor personal: %v", err)
+	}
+	if d.TeamID != "" || d.ShareMode != "" {
+		t.Fatalf("personal directory = %+v, want no team and no share mode", d)
 	}
 }
 

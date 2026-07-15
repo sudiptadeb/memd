@@ -70,7 +70,16 @@
               @change="toggle(directory.id, $event)"
             />
             <div>
-              <div class="label">{{ directory.name }}</div>
+              <div class="label">
+                {{ directory.name }}
+                <span
+                  class="dot"
+                  v-if="!directory.can_write"
+                  title="Served read-only: the owner shared it without write access"
+                >
+                  read-only
+                </span>
+              </div>
               <span class="sub">{{ directory.detail }}</span>
             </div>
           </label>

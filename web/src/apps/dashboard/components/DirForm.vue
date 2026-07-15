@@ -35,6 +35,10 @@
           <option value="">Personal — only you</option>
           <option v-for="team in teams" :key="team.id" :value="team.id">{{ team.name }}</option>
         </select>
+        <select class="input" v-if="form.team_id" v-model="form.share_mode" aria-label="Team access">
+          <option value="">Read &amp; write — members can update this memory</option>
+          <option value="readonly">Read-only — members read, only you write</option>
+        </select>
         <div class="field-hint">
           Team members can use shared directories with their own connectors. You can change this later on the
           directory card.
@@ -95,7 +99,13 @@ import MIcon from "@/shared/components/MIcon.vue";
 import DirGitForm from "./DirGitForm.vue";
 import DirFsBrowser from "./DirFsBrowser.vue";
 import { directories, ApiError } from "@/shared/api";
-import type { CreateDirectoryRequest, DirectoryBackend, GitConfig, Team } from "@/shared/types";
+import type {
+  CreateDirectoryRequest,
+  DirectoryBackend,
+  DirectoryShareMode,
+  GitConfig,
+  Team,
+} from "@/shared/types";
 
 // The "Add directory" sheet. Creates a local or git directory; for local
 // accounts / super admins it offers the server-filesystem picker.
@@ -105,6 +115,7 @@ const emit = defineEmits<{ (e: "close"): void; (e: "created"): void }>();
 interface DirFormState {
   name: string;
   team_id: string;
+  share_mode: DirectoryShareMode;
   description: string;
   backend: DirectoryBackend;
   local_path: string;
@@ -128,6 +139,7 @@ function defaults(): DirFormState {
   return {
     name: "",
     team_id: "",
+    share_mode: "",
     description: "",
     backend: "local",
     local_path: "",
@@ -166,6 +178,7 @@ async function submit(): Promise<void> {
   const body: CreateDirectoryRequest = {
     name: form.name,
     team_id: form.team_id || "",
+    share_mode: form.team_id ? form.share_mode : "",
     description: form.description,
     backend: form.backend,
   };

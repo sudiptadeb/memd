@@ -352,7 +352,19 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		if d.Directory.Description != "" {
 			fmt.Fprintf(&sb, "- purpose: %s\n", d.Directory.Description)
 		}
+		if d.SharedBy != "" {
+			if d.CanWrite {
+				fmt.Fprintf(&sb, "- shared: this is %s's memory, shared with you read-write via a team\n", d.SharedBy)
+			} else {
+				fmt.Fprintf(&sb, "- shared: this is %s's memory, shared with you READ-ONLY via a team\n", d.SharedBy)
+			}
+		} else if !d.CanWrite {
+			sb.WriteString("- access: READ-ONLY through this connector\n")
+		}
 		sb.WriteString("\n")
+		if d.SharedBy != "" && !d.CanWrite {
+			fmt.Fprintf(&sb, "_Note: this directory belongs to %s, not your user. Treat it as reference material — its MEMORY.md records their context and preferences, not your user's, and you cannot write here._\n\n", d.SharedBy)
+		}
 
 		root, err := d.Backend.ListPath("")
 		if err != nil {
@@ -924,8 +936,18 @@ func (s *Server) toolDirectories(conn *registry.Connector) string {
 	}
 	var sb strings.Builder
 	for _, d := range dirs {
-		fmt.Fprintf(&sb, "id=%s  name=%q  backend=%s\n  description: %s\n",
-			d.Directory.ID, d.Directory.Name, d.Directory.Backend, d.Directory.Description)
+		access := ""
+		if d.SharedBy != "" {
+			if d.CanWrite {
+				access = fmt.Sprintf("  [shared by %s, read-write]", d.SharedBy)
+			} else {
+				access = fmt.Sprintf("  [shared by %s, READ-ONLY]", d.SharedBy)
+			}
+		} else if !d.CanWrite {
+			access = "  [READ-ONLY]"
+		}
+		fmt.Fprintf(&sb, "id=%s  name=%q  backend=%s%s\n  description: %s\n",
+			d.Directory.ID, d.Directory.Name, d.Directory.Backend, access, d.Directory.Description)
 	}
 	return sb.String()
 }

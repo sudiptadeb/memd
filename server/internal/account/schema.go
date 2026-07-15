@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 8
+const latestSchemaVersion = 9
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -73,6 +73,7 @@ var schemaStatements = []string{
 		owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		id TEXT NOT NULL,
 		team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+		share_mode TEXT NOT NULL DEFAULT '',
 		owner_connector_id TEXT NOT NULL DEFAULT '',
 		name TEXT NOT NULL,
 		description TEXT NOT NULL DEFAULT '',

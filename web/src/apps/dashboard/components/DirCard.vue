@@ -12,6 +12,14 @@
       </span>
       <span
         class="dot"
+        v-if="directory.team_id && (directory.share_mode === 'readonly' || !directory.can_write)"
+        :title="directory.owned ? 'Shared read-only: members read, only you write' : 'Read-only for you: only the owner writes'"
+      >
+        <MIcon name="eye" />
+        read-only
+      </span>
+      <span
+        class="dot"
         :class="directory.error ? 'danger' : ''"
         :title="directory.error || backendLabel + ' backend'"
       >

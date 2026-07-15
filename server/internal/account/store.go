@@ -465,6 +465,11 @@ func ensureUserDirectoryColumns(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
+	if !cols["share_mode"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_directories ADD COLUMN share_mode TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

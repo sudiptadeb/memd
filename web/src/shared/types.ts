@@ -90,11 +90,19 @@ export interface DirectoryView {
   // remotes. The card and detail page surface it as an "open repository" link.
   repo_url?: string;
   error?: string;
+  // "" / absent = team members with write roles may write; "readonly" = only
+  // the owner writes. Only meaningful on team-shared directories.
+  share_mode?: DirectoryShareMode;
   owned: boolean;
   can_manage: boolean;
   can_attach: boolean;
+  // Whether the current user could write this directory through a write
+  // connector (owner, or write-capable team role on a read-write share).
+  can_write: boolean;
   features: FeatureToggle[];
 }
+
+export type DirectoryShareMode = "" | "readonly";
 
 // config.Git — the git backend configuration for a directory. Sent in create /
 // git-check request bodies and (without secrets) is part of stored directories.
@@ -139,6 +147,7 @@ export interface DirectoryConfig {
 export interface CreateDirectoryRequest {
   name: string;
   team_id?: string;
+  share_mode?: DirectoryShareMode;
   description?: string;
   backend: DirectoryBackend;
   local_path?: string;
@@ -151,6 +160,7 @@ export interface UpdateDirectoryRequest {
   name?: string;
   description?: string;
   team_id?: string;
+  share_mode?: DirectoryShareMode;
   owner_connector_id?: string;
   feature?: { key: string; enabled: boolean };
 }
@@ -161,6 +171,7 @@ export interface UpdateDirectoryResponse {
   name: string;
   description: string;
   team_id: string;
+  share_mode?: DirectoryShareMode;
   owner_connector_id: string;
 }
 
