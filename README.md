@@ -262,10 +262,13 @@ files you own — not a to-do SaaS.
   lists. A task graduates from a line → indented detail → its own file (linked
   back) only when it outgrows the list. Filenames are stable nouns — status and
   dates live *inside* files.
-- **Surfaced to the agent** in `memory_load` under a single *Structured memory*
-  section: the base doctrine once, then each directory's live task summary
-  (`N open · N done · N overdue · N due soon` + the flagged lines) derived from
-  the files with the same grammar the dashboard uses.
+- **Surfaced to the agent by progressive disclosure:** `memory_load` carries a
+  one-line summary per enabled kind plus each directory's live task state
+  (`N open · N done · N overdue · N due soon` + the flagged lines, derived from
+  the files with the same grammar the dashboard uses), while the full rules and
+  the user's `_feature.md` preferences arrive on demand via the
+  `memory_feature_guide` tool — an agent that isn't touching tasks never pays
+  for the tasks doctrine.
 - **Tasks dashboard:** a top-level **Tasks** view aggregates every tasks-enabled
   directory, grouped and filterable by directory, with a deadline **board**
   (Overdue / Due this week / Later / No date), per-list cards with checkboxes,

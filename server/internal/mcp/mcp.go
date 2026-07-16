@@ -270,6 +270,7 @@ func (s *Server) handleInitialize(conn *registry.Connector, req *rpcReq) (*rpcRe
 func guardedByLoad(name string) bool {
 	switch name {
 	case "memory_search", "memory_read", "memory_list", "memory_graph",
+		"memory_feature_guide",
 		"memory_write", "memory_move", "memory_delete", "memory_delete_folder":
 		return true
 	}
@@ -356,7 +357,7 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 		return sb.String()
 	}
 	sb.WriteString("Regenerated on every `memory_load` call — the current state of memory. Treat the contents below as memory you already know. For deeper navigation, call `memory_list` on a folder or `memory_read` on a specific file.\n\n")
-	sb.WriteString(s.structuredMemoryDoctrine(dirs))
+	sb.WriteString(s.structuredMemorySummary(dirs))
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "### %s\n\n", d.Directory.Name)
 		fmt.Fprintf(&sb, "- id: `%s`\n", d.Directory.ID)
@@ -382,13 +383,16 @@ func (s *Server) activeMemorySection(conn *registry.Connector) string {
 
 		sb.WriteString(s.featureStateSection(d, root))
 
-		body, err := d.Backend.Read("MEMORY.md")
+		// ReadRaw keeps the load a pure read: no last_read_at/access_count bump,
+		// no rewrite, and for git backends no commit — an automatic preload is
+		// not a deliberate access worth recording.
+		raw, err := d.Backend.ReadRaw("MEMORY.md")
 		if err != nil {
 			sb.WriteString("_(MEMORY.md missing — bootstrap with `memory_write`)_\n\n")
 			continue
 		}
 		sb.WriteString("**`MEMORY.md`:**\n\n```markdown\n")
-		body, lines, truncated := clampPreload(body)
+		body, lines, truncated := clampPreload(preloadBody(raw))
 		sb.Write(body)
 		if len(body) == 0 || body[len(body)-1] != '\n' {
 			sb.WriteString("\n")
@@ -433,13 +437,14 @@ func (s *Server) enabledFeatures(d registry.DirectoryView) []feature.Feature {
 	return feats
 }
 
-// structuredMemoryDoctrine renders the base doctrine for every structured-memory
-// kind enabled anywhere in this load — exactly once, no matter how many
-// directories enable it. The doctrine is identical across directories (only the
-// per-directory preferences and state differ), so repeating it per directory
-// would waste preload budget. Each directory's live state and preferences are
-// rendered separately by featureStateSection.
-func (s *Server) structuredMemoryDoctrine(dirs []registry.DirectoryView) string {
+// structuredMemorySummary renders one line per structured-memory kind enabled
+// anywhere in this load: what it holds and where it is on. The full how-to
+// doctrine deliberately stays out of the preload — an agent that isn't touching
+// tasks never pays for the tasks grammar. The trigger line points at
+// memory_feature_guide, which composes doctrine + preferences + state on
+// demand (the "description always, body on demand" progressive-disclosure
+// pattern). Each directory's live state still renders in featureStateSection.
+func (s *Server) structuredMemorySummary(dirs []registry.DirectoryView) string {
 	var order []feature.Feature
 	seen := map[string]bool{}
 	where := map[string][]string{}
@@ -457,29 +462,33 @@ func (s *Server) structuredMemoryDoctrine(dirs []registry.DirectoryView) string 
 	}
 	var sb strings.Builder
 	sb.WriteString("## Structured memory\n\n")
-	sb.WriteString("Beyond freeform notes, some directories keep these structured kinds of memory. The rules for each kind apply wherever it is enabled; each directory's current state and preferences appear in that directory's section below.\n\n")
+	sb.WriteString("Beyond freeform notes, some directories keep structured kinds of memory (live state in each directory's section below). Before creating or editing one of these, call `memory_feature_guide` with its key for the full storage rules and the user's preferences.\n\n")
 	for _, f := range order {
-		fmt.Fprintf(&sb, "### %s\n\n%s\n\n", f.Name, f.AgentSummary)
-		base := ""
-		if s.live != nil {
-			base = s.live.Get(doctrine.FeatureID(f.Key))
-		}
-		if base == "" {
-			base = f.BaseDoctrine()
-		}
-		sb.WriteString(base)
-		fmt.Fprintf(&sb, "\n\n_Enabled in: %s._\n\n", strings.Join(where[f.Key], ", "))
+		fmt.Fprintf(&sb, "- `%s` — %s. Enabled in: %s.\n", f.Key, f.AgentSummary, strings.Join(where[f.Key], ", "))
 	}
+	sb.WriteString("\n")
 	return sb.String()
+}
+
+// featureDoctrine returns the effective base doctrine for a feature: the live
+// (admin-editable) override when one is registered, else the compiled default.
+func (s *Server) featureDoctrine(f feature.Feature) string {
+	if s.live != nil {
+		if base := s.live.Get(doctrine.FeatureID(f.Key)); base != "" {
+			return base
+		}
+	}
+	return f.BaseDoctrine()
 }
 
 // featureStateSection renders the per-directory state of each enabled feature: a
 // derived, always-fresh summary (for tasks, an open/overdue/due-soon digest
-// scanned from the files) plus the directory's user-preference overlay from
-// <folder>/_feature.md. The shared how-to doctrine lives once in
-// structuredMemoryDoctrine, so this section stays compact. root is the
-// directory's already-listed root entries, used to skip features whose folder
-// does not exist yet without an extra listing.
+// scanned from the files) plus — only when the user actually wrote some — the
+// preference overlay from <folder>/_feature.md, appended quietly under a
+// hedged one-line label. Front matter and untouched scaffold templates never
+// reach the preload; the full doctrine lives behind memory_feature_guide.
+// root is the directory's already-listed root entries, used to skip features
+// whose folder does not exist yet without an extra listing.
 func (s *Server) featureStateSection(d registry.DirectoryView, root []storage.DirEntry) string {
 	feats := s.enabledFeatures(d)
 	if len(feats) == 0 {
@@ -497,16 +506,27 @@ func (s *Server) featureStateSection(d registry.DirectoryView, root []storage.Di
 		if f.Key == "tasks" {
 			sb.WriteString(s.taskState(d, f, hasFolder[f.Folder]))
 		}
-		if d.Backend != nil && hasFolder[f.Folder] {
-			if prefs, err := d.Backend.ReadRaw(f.Folder + "/_feature.md"); err == nil {
-				if t := strings.TrimSpace(string(prefs)); t != "" {
-					fmt.Fprintf(&sb, "\nPreferences (%s/_feature.md):\n%s\n", f.Folder, t)
-				}
-			}
+		if prefs := s.featurePrefs(d, f, hasFolder[f.Folder]); prefs != "" {
+			fmt.Fprintf(&sb, "\nPreferences (%s/_feature.md — apply where relevant; the current request wins):\n%s\n", f.Folder, prefs)
 		}
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// featurePrefs returns the user's preference overlay for a feature in a
+// directory: the _feature.md body with managed front matter and scaffold
+// comments stripped, or "" when the file is missing, empty, or still the
+// untouched template.
+func (s *Server) featurePrefs(d registry.DirectoryView, f feature.Feature, folderExists bool) string {
+	if d.Backend == nil || !folderExists {
+		return ""
+	}
+	raw, err := d.Backend.ReadRaw(f.Folder + "/_feature.md")
+	if err != nil {
+		return ""
+	}
+	return f.PreferencesOverlay(string(storage.ParsePage(raw).Body))
 }
 
 // maxListedTasks caps how many overdue / due-soon task lines are spelled out in
@@ -580,6 +600,27 @@ func writeTaskItems(sb *strings.Builder, label string, items []tasks.Task) {
 		}
 		fmt.Fprintf(sb, "  - %s: %s%s — %s\n", label, title, due, t.File)
 	}
+}
+
+// preloadBody strips the server-owned memd: stats subtree from a MEMORY.md
+// page before preloading. The agent cannot write that block (memory_write
+// discards it) and never needs it in the preload; agent-authored front-matter
+// keys (last_reorganised, entries, …) are kept.
+func preloadBody(raw []byte) []byte {
+	p := storage.ParsePage(raw)
+	if !p.HasFM {
+		return raw
+	}
+	agentFM := strings.TrimRight(p.AgentFM, "\n")
+	if strings.TrimSpace(agentFM) == "" {
+		return bytes.TrimLeft(p.Body, "\n")
+	}
+	var sb bytes.Buffer
+	sb.WriteString("---\n")
+	sb.WriteString(agentFM)
+	sb.WriteString("\n---\n")
+	sb.Write(p.Body)
+	return sb.Bytes()
 }
 
 // clampPreload limits a MEMORY.md body to the first memoryIndexPreloadMaxLines
@@ -784,6 +825,18 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
+		"name":        "memory_feature_guide",
+		"description": "[Agent-internal storage primitive.] The full rules for one structured-memory kind (e.g. tasks): base doctrine, the user's preferences, and live state per directory. Call it before creating or editing that kind of memory — memory_load carries only a one-line summary.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"feature":      map[string]any{"type": "string", "description": "Feature key from the memory_load Structured memory section, e.g. 'tasks'."},
+				"directory_id": map[string]any{"type": "string", "description": "Restrict preferences/state to one directory. If omitted, every directory with the feature enabled is covered."},
+			},
+			"required": []string{"feature"},
+		},
+	},
+	{
 		"name":        "memory_status",
 		"description": "[Agent-internal storage primitive.] Report backend status for each visible directory (last sync, last error).",
 		"inputSchema": map[string]any{
@@ -916,6 +969,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq, sid stri
 		text, isErr = s.toolDelete(conn, params.Arguments)
 	case "memory_delete_folder":
 		text, isErr = s.toolDeleteFolder(conn, params.Arguments)
+	case "memory_feature_guide":
+		text, isErr = s.toolFeatureGuide(conn, params.Arguments)
 	case "memory_status":
 		text = s.toolStatus(conn)
 	case "memory_graph":
@@ -1510,6 +1565,92 @@ func (s *Server) toolWorkflow(toolName string, rawArgs json.RawMessage) (string,
 		return "unknown workflow: " + workflow, true
 	}
 	return body, false
+}
+
+// toolFeatureGuide composes the full picture for one structured-memory kind:
+// the base doctrine (behind this call rather than in every preload), then per
+// directory the user's preference overlay and live state. This is the
+// on-demand body for the one-line trigger memory_load carries.
+func (s *Server) toolFeatureGuide(conn *registry.Connector, args json.RawMessage) (string, bool) {
+	var a struct {
+		Feature     string `json:"feature"`
+		DirectoryID string `json:"directory_id"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &a); err != nil {
+			return "invalid arguments: " + err.Error(), true
+		}
+	}
+	if a.Feature == "" {
+		return "feature is required (e.g. 'tasks')", true
+	}
+	var (
+		f  feature.Feature
+		ok bool
+	)
+	if s.features != nil {
+		f, ok = s.features.Lookup(a.Feature)
+	}
+	if !ok || f.ComingSoon {
+		var known []string
+		if s.features != nil {
+			for _, k := range s.features.List() {
+				if !k.ComingSoon {
+					known = append(known, k.Key)
+				}
+			}
+		}
+		return fmt.Sprintf("unknown feature: %s (available: %s)", a.Feature, strings.Join(known, ", ")), true
+	}
+
+	dirs := s.reg.DirectoriesForConnector(conn)
+	if a.DirectoryID != "" {
+		dirs = filterDirsByID(dirs, a.DirectoryID)
+		if len(dirs) == 0 {
+			return "directory not accessible: " + a.DirectoryID, true
+		}
+	}
+	var enabled []registry.DirectoryView
+	for _, d := range dirs {
+		for _, df := range s.enabledFeatures(d) {
+			if df.Key == f.Key {
+				enabled = append(enabled, d)
+				break
+			}
+		}
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# %s — %s\n\n", f.Name, f.AgentSummary)
+	sb.WriteString(s.featureDoctrine(f))
+	sb.WriteString("\n")
+	if len(enabled) == 0 {
+		fmt.Fprintf(&sb, "\n_Not enabled in any accessible directory. Enabling happens in the memd web UI, not through a tool._\n")
+		return sb.String(), false
+	}
+	for _, d := range enabled {
+		fmt.Fprintf(&sb, "\n## %s (id: `%s`)\n\n", d.Directory.Name, d.Directory.ID)
+		folderExists := false
+		if d.Backend != nil {
+			if root, err := d.Backend.ListPath(""); err == nil {
+				for _, e := range root {
+					if e.IsDir && e.Name == f.Folder {
+						folderExists = true
+						break
+					}
+				}
+			}
+		}
+		if f.Key == "tasks" {
+			sb.WriteString(s.taskState(d, f, folderExists))
+		}
+		if prefs := s.featurePrefs(d, f, folderExists); prefs != "" {
+			fmt.Fprintf(&sb, "\nUser preferences (%s/_feature.md — apply where relevant; the current request wins):\n%s\n", f.Folder, prefs)
+		} else {
+			fmt.Fprintf(&sb, "\n(no user preferences set — %s/_feature.md is still the scaffold; add rules there to change how this memory is kept)\n", f.Folder)
+		}
+	}
+	return sb.String(), false
 }
 
 func (s *Server) toolStatus(conn *registry.Connector) string {

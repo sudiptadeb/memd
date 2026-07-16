@@ -59,6 +59,16 @@ func (s *Server) httpAction(conn *registry.Connector, action string, r *http.Req
 			return "method not allowed", http.StatusMethodNotAllowed
 		}
 		return s.toolStatus(conn), http.StatusOK
+	case "memory_feature_guide":
+		if r.Method != http.MethodGet {
+			return "method not allowed", http.StatusMethodNotAllowed
+		}
+		args, _ := json.Marshal(map[string]string{
+			"feature":      r.URL.Query().Get("feature"),
+			"directory_id": r.URL.Query().Get("directory_id"),
+		})
+		text, isErr := s.toolFeatureGuide(conn, args)
+		return httpResult(text, isErr)
 	case "memory_list":
 		if r.Method != http.MethodGet {
 			return "method not allowed", http.StatusMethodNotAllowed
@@ -200,6 +210,7 @@ Read endpoints:
 - ` + base + `/memory_list?directory_id=DIR_ID&path=memory
 - ` + base + `/memory_read?directory_id=DIR_ID&path=memory/topic.md
 - ` + base + `/memory_search?query=TERM&directory_id=DIR_ID&limit=20
+- ` + base + `/memory_feature_guide?feature=tasks&directory_id=DIR_ID
 - ` + base + `/memory_status
 
 Workflow endpoints:

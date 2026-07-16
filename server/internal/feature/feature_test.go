@@ -34,3 +34,35 @@ func TestBuiltins(t *testing.T) {
 		t.Errorf("List len = %d, want 2", len(r.List()))
 	}
 }
+
+func TestPreferencesOverlay(t *testing.T) {
+	tasks, _ := Builtins().Lookup("tasks")
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"empty file", "", ""},
+		{"untouched current scaffold", tasks.PreferencesTemplate(), ""},
+		{"untouched legacy scaffold", tasksLegacyPrefsTemplate, ""},
+		{"heading only", "# Tasks — your preferences\n", ""},
+		{"comment only", "<!-- guidance -->\n", ""},
+		{"unterminated comment", "# Tasks\n\n<!-- half a comment\n- not a real pref", ""},
+		{
+			"real preference under scaffold",
+			tasks.PreferencesTemplate() + "\n- Tag work with #work\n",
+			"- Tag work with #work",
+		},
+		{
+			"plain preference file",
+			"- Always schedule 1 hour early\n- Tag with #work\n",
+			"- Always schedule 1 hour early\n- Tag with #work",
+		},
+	}
+	for _, tc := range cases {
+		if got := tasks.PreferencesOverlay(tc.body); got != tc.want {
+			t.Errorf("%s: overlay = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

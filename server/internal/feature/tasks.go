@@ -6,9 +6,12 @@ var tasksFeature = Feature{
 	Key:           "tasks",
 	Name:          "Tasks",
 	Folder:        "tasks",
-	AgentSummary:  "Tasks — things the user needs to do, with status (open/done) and optional due dates.",
+	AgentSummary:  "things the user needs to do, with status (open/done) and optional due dates",
 	baseDoctrine:  tasksBaseDoctrine,
 	prefsTemplate: tasksPrefsTemplate,
+	legacyPrefsTemplates: []string{
+		tasksLegacyPrefsTemplate,
+	},
 }
 
 const tasksBaseDoctrine = `Tasks are a kind of memory you keep in this directory on the user's behalf:
@@ -35,7 +38,24 @@ Finding and summarising:
 Completing: switch "- [ ]" to "- [x]". Keep recently-completed tasks as a record; archive long-done lists
 when a list grows noisy.`
 
+// tasksPrefsTemplate is the scaffold for tasks/_feature.md. Guidance lives in
+// an HTML comment so a file the user never edited carries no visible rules:
+// memory_load's preference overlay strips comments, sees nothing left, and
+// stays silent until the user (or agent) writes a real preference.
 const tasksPrefsTemplate = `# Tasks — your preferences
+
+<!-- Rules written here layer on top of memd's built-in task behavior; you or
+the agent may edit this file freely. Add plain bullets below this comment, e.g.:
+
+- Always schedule tasks to be done 1 hour earlier than the real deadline.
+- Tag anything work-related with #work.
+-->
+`
+
+// tasksLegacyPrefsTemplate is the pre-comment-era scaffold. Directories enabled
+// before the template changed still hold this exact body; it carries no user
+// preferences, so the preload treats it as empty rather than echoing it.
+const tasksLegacyPrefsTemplate = `# Tasks — your preferences
 
 These rules are layered on top of memd's built-in task behavior. Add your own;
 you or the agent may edit this file freely. Examples:
