@@ -39,8 +39,8 @@ a `_feature.md` doctrine file:
   the server** (how the feature works, the grammar) plus the per-folder
   `_feature.md` **preference overlay** you (or the agent, self-improving) edit —
   e.g. *"always schedule tasks an hour earlier than the real deadline,"* *"tag
-  anything work-related with #work."* At `memory_load` memd composes base +
-  overlay for each enabled feature.
+  anything work-related with #work."* The `memory_feature_guide` tool composes
+  base + overlay on demand; `memory_load` carries only a one-line trigger.
 
 ### Two tiers
 
@@ -55,14 +55,28 @@ agent refining the prose doctrine can never break the dashboard.
 
 ## What the agent sees
 
-Each enabled feature reaches the agent through `memory_load`, in a single
-**Structured memory** section: the base doctrine is rendered once (with an
-"Enabled in: …" list of directories), and each directory carries its own derived
-state plus its `_feature.md` preferences. For tasks the derived state is a live
-summary — `N open · N done · N overdue · N due soon` plus the overdue / due-soon
-lines — recomputed from the files on every load using the same grammar/board the
-dashboard uses (no second parser, no agent-maintained index to trust). Scan reads
-never bump managed stats or trigger a git commit.
+Features reach the agent through **progressive disclosure** — a one-line
+trigger always in context, the full rules on demand (the same pattern as
+Claude Skills and Cursor's agent-requested rules):
+
+- **`memory_load` carries the trigger, not the doctrine.** Its *Structured
+  memory* section is one bullet per enabled kind — what it holds and where it
+  is on — plus a pointer to call `memory_feature_guide` before creating or
+  editing that kind of memory. Each directory's section still shows the live
+  derived state; for tasks that's `N open · N done · N overdue · N due soon`
+  plus the overdue / due-soon lines, recomputed from the files on every load
+  using the same grammar/board the dashboard uses (no second parser, no
+  agent-maintained index to trust). Scan reads never bump managed stats or
+  trigger a git commit.
+- **`memory_feature_guide(feature, directory_id?)` is the on-demand body:**
+  the base doctrine, then per directory the user's `_feature.md` preferences
+  layered on top and the live state. An agent that never touches tasks never
+  pays for the tasks grammar.
+- **Preferences are appended quietly.** The `_feature.md` overlay is rendered
+  without its managed front matter, and an untouched scaffold (whose guidance
+  lives in an HTML comment) renders nothing at all — only rules the user (or
+  agent) actually wrote reach context, under a hedged label ("apply where
+  relevant; the current request wins").
 
 ## Tasks
 

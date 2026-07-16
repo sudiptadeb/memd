@@ -55,29 +55,18 @@ Aligning with OKF is cheap because memd already works this way; treat it as the 
 ## Structured Memory (Features)
 
 A directory may also enable **features** — kinds of *structured memory* you keep
-on the user's behalf, each in its own folder. When one is enabled, `memory_load()`
-adds a **Structured memory** section: the feature's base doctrine (how to keep it)
-plus that directory's live state and the user's `<folder>/_feature.md` preferences.
-Follow both layers; you may refine the prose in `_feature.md` to self-improve how
-you manage the folder (it never affects the built-in parser/dashboard).
+on the user's behalf, each in its own folder (**Tasks**, in `tasks/`, is the
+first). When one is enabled, `memory_load()` adds a **Structured memory**
+section: a one-line summary per kind plus each directory's live state.
 
-**Tasks** is the first feature. Tasks are Markdown checklist lines in the
-directory's `tasks/` folder:
-
-- `- [ ] title due:YYYY-MM-DD prio:high|med|low #tag` — open; `- [x]` is done.
-- Indented `- [ ]` lines are subtasks; other indented lines (e.g. `note:`) are
-  free text, preserved verbatim.
-- Loose tasks go in `tasks/inbox.md`; group related ones into named lists
-  (`tasks/home-renovation.md`). Filenames are stable nouns — never encode status,
-  priority, or dates in a filename.
-- A task graduates from a line → indented detail → its own file
-  (`tasks/<slug>.md`, YAML front matter for status/due/prio) only when it outgrows
-  the list, leaving the original line as a link.
-
-The files are the single source of truth; a derived board (the directory's
-`MEMORY.md` or `tasks/_board.md`) is regenerated from them, never trusted blindly.
-The web dashboard edits the same files by surgical line operations, so keep the
-format clean and human.
+The full storage rules stay out of the preload. Before creating or editing a
+structured kind of memory, call `memory_feature_guide(feature)` — it returns
+the base doctrine, the user's `<folder>/_feature.md` preferences layered on
+top, and the live state. Follow both layers; you may refine the prose in
+`_feature.md` to self-improve how you manage the folder (it never affects the
+built-in parser/dashboard). The files are the single source of truth; the web
+dashboard edits the same files by surgical line operations, so keep the format
+clean and human.
 
 ## Tools
 
@@ -89,6 +78,7 @@ Storage primitives are agent-internal verbs:
 - `memory_search(query, directory_id?, limit?)` - search readable text files; binary-like files are skipped.
 - `memory_read(directory_id, path)` - read a file; managed files get read stats bumped.
 - `memory_graph(directory_id, path?)` - the directory's link graph; with no path, a summary of orphans and broken links; with a path, that file's neighbours. Navigate by relationship and find dead links.
+- `memory_feature_guide(feature, directory_id?)` - full rules for one structured-memory kind: base doctrine + user preferences + live state. Call before creating or editing that kind.
 - `memory_write(directory_id, path, content, message?)` - create/update a file; managed files get authoritative stats.
 - `memory_move(directory_id, src, dst, message?)` - move/rename file or folder; prefer this over write-then-delete.
 - `memory_delete(directory_id, path, message?)` - delete one file; cannot delete root `MEMORY.md`.

@@ -30,9 +30,9 @@ func testBudgetServer(t *testing.T) (*Server, config.Connector, string) {
 }
 
 // seedMemory writes MEMORY.md to the connector's directory via the backend. The
-// local backend injects a managed `memd:` front-matter block on write (and bumps
-// volatile stats such as access_count on every read), so tests read the stored
-// body back themselves and normalise the volatile fields before comparing.
+// local backend injects a managed `memd:` front-matter block on write; the
+// preload strips it again via preloadBody, so tests compare against the
+// stripped form of what they read back.
 func seedMemory(t *testing.T, s *Server, conn config.Connector, dirID, body string) {
 	t.Helper()
 	d := s.reg.DirectoryForConnector(&conn, dirID)
@@ -45,7 +45,8 @@ func seedMemory(t *testing.T, s *Server, conn config.Connector, dirID, body stri
 }
 
 // readMemory returns the stored MEMORY.md body via the backend. Note: reading
-// bumps the managed access_count stat, so callers normalise before comparing.
+// bumps the managed access_count stat, which is fine for callers because they
+// compare the preloadBody-stripped form (stats live in the stripped block).
 func readMemory(t *testing.T, s *Server, conn config.Connector, dirID string) string {
 	t.Helper()
 	d := s.reg.DirectoryForConnector(&conn, dirID)
@@ -57,18 +58,6 @@ func readMemory(t *testing.T, s *Server, conn config.Connector, dirID string) st
 		t.Fatalf("read MEMORY.md: %v", err)
 	}
 	return string(b)
-}
-
-// normalizeStats blanks the volatile server-managed access_count line so two
-// reads of the same body compare equal regardless of how many reads occurred.
-func normalizeStats(body string) string {
-	lines := strings.Split(body, "\n")
-	for i, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), "access_count:") {
-			lines[i] = "  access_count: <n>"
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // fencedIndex returns the content of the ```markdown fence that holds MEMORY.md
@@ -107,15 +96,18 @@ func TestActiveMemorySmallNoTruncation(t *testing.T) {
 	if strings.Contains(section, "[memd: MEMORY.md truncated") {
 		t.Fatalf("unexpected truncation marker for small index:\n%s", section)
 	}
-	// The fence holds the stored body verbatim (fencedIndex drops the single
-	// trailing newline that closes the fence), so an untruncated index renders
-	// byte-for-byte identical to the stored body (modulo the server-managed
-	// access_count, which both reads bump independently).
+	// The fence holds the stored body with the server-managed memd: front
+	// matter stripped (fencedIndex drops the single trailing newline that
+	// closes the fence), so an untruncated index renders byte-for-byte
+	// identical to preloadBody of the stored page.
 	stored := readMemory(t, s, conn, dirID)
-	got := normalizeStats(fencedIndex(t, section))
-	want := normalizeStats(strings.TrimRight(stored, "\n"))
+	got := fencedIndex(t, section)
+	want := strings.TrimRight(string(preloadBody([]byte(stored))), "\n")
 	if got != want {
-		t.Fatalf("fenced index not byte-identical (modulo stats):\n got=%q\nwant=%q", got, want)
+		t.Fatalf("fenced index not byte-identical to stripped body:\n got=%q\nwant=%q", got, want)
+	}
+	if strings.Contains(got, "access_count") {
+		t.Fatalf("managed memd: front matter leaked into the preload:\n%s", got)
 	}
 }
 
@@ -185,10 +177,10 @@ func TestActiveMemoryTruncatesByBytesOnLineBoundary(t *testing.T) {
 	if len(kept) > memoryIndexPreloadMaxBytes {
 		t.Fatalf("kept %d bytes, want <= %d", len(kept), memoryIndexPreloadMaxBytes)
 	}
-	// Line-boundary cut: the kept body is a prefix of the stored body (modulo the
-	// volatile access_count both reads bump).
-	stored := normalizeStats(readMemory(t, s, conn, dirID))
-	if !strings.HasPrefix(stored, normalizeStats(kept)) {
+	// Line-boundary cut: the kept body is a prefix of the stored body once the
+	// managed front matter (which the preload strips) is removed.
+	stored := string(preloadBody([]byte(readMemory(t, s, conn, dirID))))
+	if !strings.HasPrefix(stored, kept) {
 		t.Fatalf("kept body is not a prefix of the stored body — content was altered")
 	}
 	// Each full kept long line must survive intact (no mid-line split).
