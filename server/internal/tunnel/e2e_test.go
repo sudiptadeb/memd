@@ -28,6 +28,18 @@ import (
 const (
 	testViewHost = "term.test"
 	testUserID   = "user-1"
+
+	// testMemdCSP stands in for memd's global CSP (no 'unsafe-inline' — it
+	// would break termulaa's UI if it reached proxied responses).
+	testMemdCSP = "default-src 'self'; script-src 'self' 'unsafe-eval'"
+
+	// testTermulaaCSP is the terminal's own policy as termulaa sends it on
+	// HTML pages; the proxy must deliver it untouched.
+	testTermulaaCSP = "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'"
+
+	// testUserHeader lets a request impersonate a different logged-in memd
+	// user in the rig's auth stub.
+	testUserHeader = "X-Test-User"
 )
 
 type rig struct {
@@ -38,7 +50,10 @@ type rig struct {
 	authed  atomic.Bool
 }
 
-func newRig(t *testing.T) *rig {
+// newRig assembles the tunnel handler exactly as serve.go does: the viewer
+// split sits OUTSIDE the security-header middleware, which stamps memd's CSP
+// on everything that flows through the normal mux.
+func newRig(t *testing.T, viewHost string) *rig {
 	t.Helper()
 	r := &rig{t: t, key: TokenKey("e2e-secret", "")}
 	r.authed.Store(true)
@@ -46,17 +61,25 @@ func newRig(t *testing.T) *rig {
 		if !r.authed.Load() {
 			return User{}, false
 		}
+		if uid := req.Header.Get(testUserHeader); uid != "" {
+			return User{ID: uid, Name: "someone-else"}, true
+		}
 		return User{ID: testUserID, Name: "alice"}, true
 	}
-	r.handler = New(r.key, testViewHost, auth)
+	r.handler = New(r.key, viewHost, auth)
 	mux := http.NewServeMux()
 	r.handler.Mount(mux)
 	// Stand-in for memd's existing routes: they must stay reachable on the
-	// main host and must NOT be reachable on the view host.
+	// main host and must NOT be reachable through the viewer surface.
 	mux.HandleFunc("/api/tabs", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("memd-own-api"))
 	})
-	r.server = httptest.NewServer(r.handler.SplitByHost(mux))
+	withHeaders := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Security-Policy", testMemdCSP)
+		w.Header().Set("X-Frame-Options", "DENY")
+		mux.ServeHTTP(w, req)
+	})
+	r.server = httptest.NewServer(r.handler.SplitViewer(withHeaders))
 	t.Cleanup(r.server.Close)
 	return r
 }
@@ -151,10 +174,20 @@ func startBackend(t *testing.T) *backend {
 		}
 	}
 	mux.HandleFunc("/hello", guard(func(w http.ResponseWriter, r *http.Request) {
+		// termulaa sends its own CSP on HTML pages; the proxy must deliver
+		// it to the viewer untouched.
+		w.Header().Set("Content-Security-Policy", testTermulaaCSP)
 		_, _ = fmt.Fprintf(w, "hello from termulaa via %s", r.Host)
 	}))
 	mux.HandleFunc("/api/tabs", guard(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("termulaa-tabs"))
+	}))
+	mux.HandleFunc("/echo-req", guard(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"path":    r.URL.Path,
+			"prefix":  r.Header.Get("X-Forwarded-Prefix"),
+			"cookies": len(r.Cookies()),
+		})
 	}))
 	mux.HandleFunc("/ws/echo", guard(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
@@ -273,7 +306,7 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 // --- the tests -----------------------------------------------------------
 
 func TestEndToEnd(t *testing.T) {
-	r := newRig(t)
+	r := newRig(t, testViewHost)
 	b := startBackend(t)
 	token := r.mintToken()
 	a := startAgent(t, r, token, b.addr, b.port, 3)
@@ -309,6 +342,9 @@ func TestEndToEnd(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("proxied GET status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Values("Content-Security-Policy"); len(got) != 1 || got[0] != testTermulaaCSP {
+		t.Errorf("proxied CSP = %q, want only termulaa's own", got)
 	}
 	if got := body(t, resp); got != "hello from termulaa via localhost:"+b.port {
 		t.Errorf("proxied GET body = %q", got)
@@ -388,7 +424,7 @@ func TestEndToEnd(t *testing.T) {
 }
 
 func TestRoutingSeam(t *testing.T) {
-	r := newRig(t)
+	r := newRig(t, testViewHost)
 	mainHost := r.server.Listener.Addr().String()
 
 	// Main host: /rc/tunnel is the tunnel handler (401 without a token), not
@@ -435,7 +471,7 @@ func TestRoutingSeam(t *testing.T) {
 }
 
 func TestTunnelHandshakeAuth(t *testing.T) {
-	r := newRig(t)
+	r := newRig(t, testViewHost)
 	wsBase := "ws" + strings.TrimPrefix(r.server.URL, "http")
 
 	cases := []struct {
@@ -466,7 +502,7 @@ func TestTunnelHandshakeAuth(t *testing.T) {
 }
 
 func TestMintAPI(t *testing.T) {
-	r := newRig(t)
+	r := newRig(t, testViewHost)
 	mainHost := r.server.Listener.Addr().String()
 
 	mint := func(bodyJSON string) *http.Response {
@@ -532,7 +568,7 @@ func TestMintAPI(t *testing.T) {
 }
 
 func TestManagementPage(t *testing.T) {
-	r := newRig(t)
+	r := newRig(t, testViewHost)
 	mainHost := r.server.Listener.Addr().String()
 
 	resp := r.request(mainHost, "/rc", nil)
@@ -564,4 +600,243 @@ func TestManagementPage(t *testing.T) {
 		t.Errorf("unauthenticated agents api = %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// --- path mode -----------------------------------------------------------
+
+// TestEndToEndPathMode drives the same-host viewer: the terminal lives under
+// /rc/t/<agentID>/ on memd's own host, the viewer's credential is memd's
+// login session, and only the agent's owner gets through.
+func TestEndToEndPathMode(t *testing.T) {
+	r := newRig(t, "")
+	b := startBackend(t)
+	token := r.mintToken()
+	startAgent(t, r, token, b.addr, b.port, 2)
+
+	mainHost := r.server.Listener.Addr().String()
+	id := string(TokenAgentID(token))
+	base := viewerPathPrefix + id
+
+	// Missing trailing slash: canonical redirect so the page's <base>
+	// resolves correctly.
+	resp := r.request(mainHost, base, nil)
+	if resp.StatusCode != http.StatusMovedPermanently || resp.Header.Get("Location") != base+"/" {
+		t.Errorf("no-slash redirect = %d %q, want 301 to %s/", resp.StatusCode, resp.Header.Get("Location"), base)
+	}
+	resp.Body.Close()
+
+	// Proxied HTTP: stripped path, loopback Host, and termulaa's own CSP —
+	// not memd's, which would break the terminal UI.
+	resp = r.request(mainHost, base+"/hello", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("proxied GET status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Values("Content-Security-Policy"); len(got) != 1 || got[0] != testTermulaaCSP {
+		t.Errorf("proxied CSP = %q, want only termulaa's own", got)
+	}
+	if got := body(t, resp); got != "hello from termulaa via localhost:"+b.port {
+		t.Errorf("proxied GET body = %q", got)
+	}
+
+	// The backend sees the STRIPPED path, the X-Forwarded-Prefix for that
+	// agent, and none of memd's cookies — the login session must never reach
+	// the agent's machine. The hostile same-name Origin is rewritten to
+	// loopback by the Director (asserted inside the backend's guard).
+	resp = r.request(mainHost, base+"/echo-req", func(req *http.Request) {
+		req.AddCookie(&http.Cookie{Name: "memd_session", Value: "secret-login"})
+		req.Header.Set("Origin", "http://"+mainHost)
+		req.Header.Set("X-Forwarded-Prefix", "/attacker/injected")
+	})
+	var echo struct {
+		Path    string `json:"path"`
+		Prefix  string `json:"prefix"`
+		Cookies int    `json:"cookies"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&echo); err != nil {
+		t.Fatalf("echo-req decode: %v", err)
+	}
+	resp.Body.Close()
+	if echo.Path != "/echo-req" {
+		t.Errorf("backend path = %q, want the prefix stripped", echo.Path)
+	}
+	if echo.Prefix != base {
+		t.Errorf("backend X-Forwarded-Prefix = %q, want %q", echo.Prefix, base)
+	}
+	if echo.Cookies != 0 {
+		t.Errorf("backend saw %d cookies, want 0 (memd session must not leak)", echo.Cookies)
+	}
+
+	// WebSocket upgrade through the path proxy, with the browser's real
+	// same-origin Origin header.
+	dialer := websocket.Dialer{NetDial: func(network, addr string) (net.Conn, error) {
+		return net.Dial("tcp", r.server.Listener.Addr().String())
+	}}
+	header := http.Header{"Origin": {"http://" + mainHost}}
+	ws, resp2, err := dialer.Dial("ws://"+mainHost+base+"/ws/echo", header)
+	if err != nil {
+		t.Fatalf("viewer websocket dial: %v (resp=%v)", err, resp2)
+	}
+	if err := ws.WriteMessage(websocket.TextMessage, []byte("ping over path tunnel")); err != nil {
+		t.Fatalf("ws write: %v", err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("ws read: %v", err)
+	}
+	if string(msg) != "ping over path tunnel" {
+		t.Errorf("echo = %q", msg)
+	}
+	ws.Close()
+
+	// Cross-origin browser requests must never reach the shell: termulaa's
+	// own Origin check is neutralized by the loopback rewrite, so memd
+	// enforces same-origin before proxying.
+	resp = r.request(mainHost, base+"/hello", func(req *http.Request) {
+		req.Header.Set("Origin", "https://evil.example")
+	})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-origin GET = %d, want 403", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// A different logged-in user does not reach this agent — and cannot even
+	// confirm it exists.
+	resp = r.request(mainHost, base+"/hello", func(req *http.Request) {
+		req.Header.Set(testUserHeader, "user-2")
+	})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("other user's GET = %d, want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// No memd login, no terminal.
+	r.authed.Store(false)
+	resp = r.request(mainHost, base+"/hello", nil)
+	got := body(t, resp)
+	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(got, "Sign in") {
+		t.Errorf("unauthenticated GET = %d %q, want the 401 sign-in page", resp.StatusCode, got)
+	}
+	r.authed.Store(true)
+
+	// Malformed agent ids never reach the proxy.
+	for _, p := range []string{"/rc/t/zzzz/", "/rc/t/" + strings.ToUpper(id) + "/", "/rc/t//hello"} {
+		resp = r.request(mainHost, p, nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", p, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	// A valid id whose agent never connected: honest offline page.
+	otherID := string(TokenAgentID(r.mintToken()))
+	resp = r.request(mainHost, viewerPathPrefix+otherID+"/", nil)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("offline agent = %d, want 503", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// memd's own routes are untouched and still carry memd's headers.
+	resp = r.request(mainHost, "/api/tabs", nil)
+	if got := resp.Header.Get("Content-Security-Policy"); got != testMemdCSP {
+		t.Errorf("memd route CSP = %q, want memd's own", got)
+	}
+	if got := body(t, resp); got != "memd-own-api" {
+		t.Errorf("main-host /api/tabs = %q, want memd's own handler", got)
+	}
+
+	// The agents API links each agent straight to its terminal.
+	resp = r.request(mainHost, "/rc/api/agents", nil)
+	var status struct {
+		Agents []struct {
+			URL string `json:"url"`
+		} `json:"agents"`
+		ViewHost string `json:"view_host"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatalf("agents api decode: %v", err)
+	}
+	resp.Body.Close()
+	if len(status.Agents) != 1 || status.Agents[0].URL != base+"/" {
+		t.Errorf("agents api = %+v, want url %s/", status, base)
+	}
+	if status.ViewHost != "" {
+		t.Errorf("view_host = %q, want empty in path mode", status.ViewHost)
+	}
+}
+
+// TestMintOpenURLPathMode: in path mode the mint response carries the
+// terminal's future URL, derived from the token.
+func TestMintOpenURLPathMode(t *testing.T) {
+	r := newRig(t, "")
+	req, err := http.NewRequest(http.MethodPost, r.server.URL+"/rc/api/tokens",
+		strings.NewReader(`{"label":"x","ttl":1}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("mint request: %v", err)
+	}
+	var minted struct {
+		Token   string `json:"token"`
+		OpenURL string `json:"open_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&minted); err != nil {
+		t.Fatalf("mint decode: %v", err)
+	}
+	resp.Body.Close()
+	if want := viewerPathPrefix + string(TokenAgentID(minted.Token)) + "/"; minted.OpenURL != want {
+		t.Errorf("open_url = %q, want %q", minted.OpenURL, want)
+	}
+}
+
+// TestPathViewerDisabledInHostMode: with a view host configured, /rc/t/ paths
+// on the main host fall through to memd's normal stack — the same-origin
+// viewer must not undermine host mode's origin isolation.
+func TestPathViewerDisabledInHostMode(t *testing.T) {
+	r := newRig(t, testViewHost)
+	mainHost := r.server.Listener.Addr().String()
+	resp := r.request(mainHost, viewerPathPrefix+strings.Repeat("ab", 32)+"/", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("host-mode /rc/t/ = %d, want memd's 404", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != testMemdCSP {
+		t.Errorf("host-mode /rc/t/ CSP = %q, want memd's — proof it went through the normal stack", got)
+	}
+	resp.Body.Close()
+}
+
+// TestFromEnv: the feature stays fully inert unless explicitly enabled, and
+// the view host selects host mode.
+func TestFromEnv(t *testing.T) {
+	auth := func(http.ResponseWriter, *http.Request) (User, bool) { return User{}, false }
+	setenv := func(t *testing.T, rc, viewHost, secret string) {
+		t.Setenv("MEMD_RC", rc)
+		t.Setenv("MEMD_RC_VIEW_HOST", viewHost)
+		t.Setenv("MEMD_RC_TOKEN_SECRET", "")
+		t.Setenv("MEMD_SESSION_SECRET", secret)
+	}
+
+	setenv(t, "", "", "s3cret")
+	if FromEnv(auth) != nil {
+		t.Error("unconfigured: want nil (feature inert)")
+	}
+	setenv(t, "0", "", "s3cret")
+	if FromEnv(auth) != nil {
+		t.Error("MEMD_RC=0: want nil")
+	}
+	setenv(t, "1", "", "s3cret")
+	if h := FromEnv(auth); h == nil || h.ViewHost() != "" {
+		t.Errorf("MEMD_RC=1: want path-mode handler, got %v", h)
+	}
+	setenv(t, "", "term.example", "s3cret")
+	if h := FromEnv(auth); h == nil || h.ViewHost() != "term.example" {
+		t.Errorf("view host set: want host-mode handler, got %v", h)
+	}
+	setenv(t, "1", "", "")
+	if FromEnv(auth) != nil {
+		t.Error("enabled without any token secret: want nil")
+	}
 }

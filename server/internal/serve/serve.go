@@ -95,19 +95,24 @@ func RunOptions(opts Options) error {
 	uiHandler.Mount(mux)
 
 	// The reverse-tunnel rendezvous (termulaa rc) is strictly opt-in: FromEnv
-	// returns nil unless MEMD_RC_VIEW_HOST and a token secret are configured,
-	// and with it disabled every request flows exactly as before. When enabled,
-	// its management endpoints join the normal mux, while requests addressed to
-	// the dedicated view host are split off to the tunnel proxy BEFORE memd's
-	// security headers — the proxied terminal ships its own — and before the
-	// body cap, which would sever long-lived streams.
+	// returns nil unless MEMD_RC or MEMD_RC_VIEW_HOST plus a token secret are
+	// configured, and with it disabled every request flows exactly as before.
+	// When enabled, its management endpoints join the normal mux, while viewer
+	// traffic — the dedicated view host, or /rc/t/<agent>/ paths in path mode
+	// — is split off to the tunnel proxy BEFORE memd's security headers (the
+	// proxied terminal ships its own; memd's CSP would break its UI) and
+	// before the body cap, which would sever long-lived streams.
 	rc := tunnel.FromEnv(func(w http.ResponseWriter, r *http.Request) (tunnel.User, bool) {
 		id, username, ok := uiHandler.SessionUser(w, r)
 		return tunnel.User{ID: id, Name: username}, ok
 	})
 	if rc != nil {
 		rc.Mount(mux)
-		logs.Info("reverse tunnel enabled (view host %s)", rc.ViewHost())
+		if vh := rc.ViewHost(); vh != "" {
+			logs.Info("reverse tunnel enabled (host mode, view host %s)", vh)
+		} else {
+			logs.Info("reverse tunnel enabled (path mode, /rc/t/)")
+		}
 	}
 
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
@@ -122,7 +127,7 @@ func RunOptions(opts Options) error {
 
 	var handler http.Handler = withSecurityHeaders(withMaxBody(mux, maxRequestBody))
 	if rc != nil {
-		handler = rc.SplitByHost(handler)
+		handler = rc.SplitViewer(handler)
 	}
 	srv := &http.Server{
 		Handler:           handler,

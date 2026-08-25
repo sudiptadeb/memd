@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,16 @@ type UserAuth func(w http.ResponseWriter, r *http.Request) (User, bool)
 
 // Handler is the HTTP surface of the reverse tunnel: the /rc management page
 // and its small API, the agent's /rc/tunnel WebSocket endpoint, and the
-// viewer proxy served on the dedicated view host.
+// viewer proxy. The viewer runs in exactly one of two modes:
+//
+//   - path mode (viewHost == ""): the terminal is served on memd's own host
+//     under /rc/t/<agentID>/, gated by memd's login session plus agent
+//     ownership. No extra DNS or TLS, but the terminal shares memd's browser
+//     origin.
+//   - host mode (viewHost != ""): the terminal is served on a dedicated
+//     hostname, gated by the token pairing cookie. Browser-origin isolation
+//     between memd and the remote shell, at the cost of a DNS record and a
+//     certificate.
 type Handler struct {
 	hub      *Hub
 	key      []byte
@@ -42,9 +52,9 @@ type Handler struct {
 	upgrader websocket.Upgrader
 }
 
-// New builds a tunnel handler. key signs tokens, viewHost is the dedicated
-// hostname the terminal is served on, and auth gates the management surface
-// behind memd's login.
+// New builds a tunnel handler. key signs tokens, viewHost selects host mode
+// when non-empty (path mode otherwise), and auth resolves memd's login
+// session for the management surface and the path-mode viewer.
 func New(key []byte, viewHost string, auth UserAuth) *Handler {
 	hub := NewHub()
 	return &Handler{
@@ -65,26 +75,37 @@ func New(key []byte, viewHost string, auth UserAuth) *Handler {
 
 // FromEnv builds the handler from the environment, or returns nil when the
 // feature is not (fully) configured. The rc feature is strictly opt-in:
-// MEMD_RC_VIEW_HOST enables it, and a token key must be available — from
+// MEMD_RC=1 enables it in path mode, MEMD_RC_VIEW_HOST enables host mode
+// (and implies enabled), and either way a token key must be available — from
 // MEMD_RC_TOKEN_SECRET or derived from MEMD_SESSION_SECRET.
 func FromEnv(auth UserAuth) *Handler {
 	viewHost := strings.TrimSpace(os.Getenv("MEMD_RC_VIEW_HOST"))
 	rcSecret := os.Getenv("MEMD_RC_TOKEN_SECRET")
 	key := TokenKey(rcSecret, os.Getenv("MEMD_SESSION_SECRET"))
-	if viewHost == "" {
+	if viewHost == "" && !envEnabled(os.Getenv("MEMD_RC")) {
 		if strings.TrimSpace(rcSecret) != "" {
-			logs.Warn("rc: MEMD_RC_TOKEN_SECRET is set but MEMD_RC_VIEW_HOST is not; reverse tunnel disabled")
+			logs.Warn("rc: MEMD_RC_TOKEN_SECRET is set but neither MEMD_RC nor MEMD_RC_VIEW_HOST is; reverse tunnel disabled")
 		}
 		return nil
 	}
 	if key == nil {
-		logs.Warn("rc: MEMD_RC_VIEW_HOST is set but no token secret is available (set MEMD_RC_TOKEN_SECRET or MEMD_SESSION_SECRET); reverse tunnel disabled")
+		logs.Warn("rc: reverse tunnel requested but no token secret is available (set MEMD_RC_TOKEN_SECRET or MEMD_SESSION_SECRET); reverse tunnel disabled")
 		return nil
 	}
 	return New(key, viewHost, auth)
 }
 
-// ViewHost is the configured dedicated view hostname.
+// envEnabled reads a boolean-ish env value; anything non-empty counts as
+// enabled except an explicit off.
+func envEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "off", "no":
+		return false
+	}
+	return true
+}
+
+// ViewHost is the dedicated view hostname; empty in path mode.
 func (h *Handler) ViewHost() string { return h.viewHost }
 
 // Mount registers the management and agent endpoints on memd's main mux
@@ -97,13 +118,26 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/rc/tunnel", h.serveTunnel)
 }
 
-// SplitByHost routes by Host header: requests addressed to the view host go
-// to the viewer proxy; everything else falls through to next (memd's normal
-// stack) completely unchanged.
-func (h *Handler) SplitByHost(next http.Handler) http.Handler {
+// viewerPathPrefix is where path mode serves proxied terminals:
+// /rc/t/<agentID>/... on memd's own host.
+const viewerPathPrefix = "/rc/t/"
+
+// SplitViewer routes viewer traffic off memd's normal stack — host mode by
+// Host header, path mode by the /rc/t/ path prefix. It sits OUTSIDE memd's
+// security-header middleware and body cap on purpose: the proxied terminal
+// carries termulaa's own security headers (its UI needs a CSP memd's global
+// one forbids), and memd's headers must not be weakened anywhere else.
+// Everything that is not viewer traffic falls through to next completely
+// unchanged.
+func (h *Handler) SplitViewer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if hostMatches(r.Host, h.viewHost) {
-			h.serveViewer(w, r)
+		if h.viewHost != "" {
+			if hostMatches(r.Host, h.viewHost) {
+				h.serveViewer(w, r)
+				return
+			}
+		} else if strings.HasPrefix(r.URL.Path, viewerPathPrefix) {
+			h.servePathViewer(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -252,7 +286,73 @@ func (h *Handler) serveViewer(w http.ResponseWriter, r *http.Request) {
 		serveAgentOffline(w)
 		return
 	}
-	h.proxy.ServeHTTP(w, r.WithContext(withAgentID(r.Context(), id)))
+	h.proxy.ServeHTTP(w, r.WithContext(withViewer(r.Context(), id, "")))
+}
+
+// --- Viewer (path mode, memd's own host) --------------------------------
+
+var agentIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// servePathViewer serves /rc/t/<agentID>/... — the terminal under a path on
+// memd's own host. The viewer's credential is memd's login session; the
+// request is proxied only when the logged-in user owns the agent (the tunnel
+// token's user id, recorded at agent registration). The /rc/t/<agentID>
+// prefix is stripped before proxying and handed to termulaa as
+// X-Forwarded-Prefix so its pages render under that base path.
+func (h *Handler) servePathViewer(w http.ResponseWriter, r *http.Request) {
+	idStr, sub, hasSlash := strings.Cut(strings.TrimPrefix(r.URL.Path, viewerPathPrefix), "/")
+	if !agentIDPattern.MatchString(idStr) {
+		http.NotFound(w, r)
+		return
+	}
+	if !hasSlash {
+		// Canonical form carries the trailing slash so the page's <base>
+		// resolves relative URLs under the prefix.
+		u := *r.URL
+		u.Path += "/"
+		http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+		return
+	}
+	user, ok := h.auth(w, r)
+	if !ok {
+		serveSignInPage(w)
+		return
+	}
+	// The terminal shares memd's origin, so termulaa's own Origin allowlist is
+	// neutralized by the loopback rewrite below. Enforce same-origin here:
+	// a browser request from any other origin must not reach the shell.
+	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
+	id := AgentID(idStr)
+	info, connected := h.hub.Lookup(id)
+	if connected && info.UserID != user.ID {
+		// Not this user's agent. 404, not 403 — do not confirm existence.
+		http.NotFound(w, r)
+		return
+	}
+	if !connected {
+		serveAgentOffline(w)
+		return
+	}
+	prefix := viewerPathPrefix + idStr
+	r2 := r.Clone(withViewer(r.Context(), id, prefix))
+	r2.URL.Path = "/" + sub
+	if r2.URL.RawPath != "" {
+		r2.URL.RawPath = strings.TrimPrefix(r2.URL.RawPath, prefix)
+	}
+	h.proxy.ServeHTTP(w, r2)
+}
+
+// sameOrigin reports whether a browser-sent Origin header names this
+// deployment's own origin, mirroring isHTTPS's view of the scheme.
+func sameOrigin(origin string, r *http.Request) bool {
+	scheme := "http"
+	if isHTTPS(r) {
+		scheme = "https"
+	}
+	return strings.EqualFold(origin, scheme+"://"+r.Host)
 }
 
 // isHTTPS mirrors memd's session-cookie logic: direct TLS, or the
@@ -316,10 +416,16 @@ func (h *Handler) mintAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	logs.InfoUser(user.ID, "rc: minted tunnel token for agent %s (%q, expires %s)",
 		shortID(TokenAgentID(token)), label, expires.UTC().Format(time.RFC3339))
-	writeJSON(w, http.StatusOK, map[string]string{
+	resp := map[string]string{
 		"token":      token,
 		"expires_at": expires.UTC().Format(time.RFC3339),
-	})
+	}
+	if h.viewHost == "" {
+		// Path mode: the terminal's URL is knowable at mint time — the agent
+		// id is derived from the token.
+		resp["open_url"] = viewerPathPrefix + string(TokenAgentID(token)) + "/"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // agentsAPI lists the user's currently connected agents. Counts are live pool
@@ -341,17 +447,22 @@ func (h *Handler) agentsAPI(w http.ResponseWriter, r *http.Request) {
 		Port        int    `json:"port"`
 		Tunnels     int    `json:"tunnels"`
 		ConnectedAt string `json:"connected_at"`
+		URL         string `json:"url,omitempty"` // path-mode terminal link
 	}
 	statuses := h.hub.AgentsForUser(user.ID)
 	views := make([]agentView, 0, len(statuses))
 	for _, s := range statuses {
-		views = append(views, agentView{
+		v := agentView{
 			ID:          shortID(s.ID),
 			Label:       s.Info.Label,
 			Port:        s.Info.Port,
 			Tunnels:     s.Tunnels,
 			ConnectedAt: s.ConnectedAt.UTC().Format(time.RFC3339),
-		})
+		}
+		if h.viewHost == "" {
+			v.URL = viewerPathPrefix + string(s.ID) + "/"
+		}
+		views = append(views, v)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{

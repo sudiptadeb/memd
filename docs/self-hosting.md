@@ -360,30 +360,93 @@ HTTPS -> 200 OK from memd
 
 Optional. memd can act as the rendezvous for termulaa's reverse tunnel: a
 `termulaa -rc` agent on a user's machine dials out to memd, and browsers reach
-that terminal through a dedicated **view host** served by the same memd
-process. memd is a reference implementation of the termulaa rc protocol — the
-wire details live in the termulaa repository under `docs/rc-protocol.md`; this
-section covers only memd's operational side.
+that terminal through memd. memd is a reference implementation of the termulaa
+rc protocol — the wire details live in the termulaa repository under
+`docs/rc-protocol.md`; this section covers only memd's operational side.
 
-Two hostnames are involved, and they must not be conflated:
+The proxied terminal can be served in one of two modes:
 
-| Host | Placeholder | Serves |
-|------|-------------|--------|
-| the rendezvous host | `<domain>` (memd's existing hostname) | `/rc` pairing page, `POST /rc/api/tokens`, and the agent's `GET /rc/tunnel` WebSocket — alongside all of memd's normal routes |
-| the view host | `<view-domain>`, e.g. `term.memd.example.com` | every path is proxied to the tunneled terminal (termulaa's UI uses absolute root paths like `/api/...` and `/ws/...`, so it needs a whole hostname) |
+| Mode | Where the terminal lives | Viewer auth | Extra DNS/TLS |
+|------|--------------------------|-------------|---------------|
+| **path mode** (default) | `https://<domain>/rc/t/<agent>/` on memd's existing host | memd's own login session + agent ownership | none |
+| **host mode** (optional hardening) | a dedicated view host, e.g. `term.<domain>` | one-time `/?t=<token>` pairing link → `HttpOnly` cookie | a DNS record and a certificate |
 
-Enable the feature by adding to `<app-root>/runtime/env`:
+With neither `MEMD_RC` nor `MEMD_RC_VIEW_HOST` set the feature is fully inert.
+
+**The security tradeoff, plainly.** Path mode puts a remote shell and the memd
+web app on the SAME browser origin, which removes the isolation the browser
+would otherwise enforce between them: an XSS bug in either one can drive the
+other — read the terminal, inject keystrokes, or call memd's APIs as the
+logged-in user. Host mode gives the terminal its own origin and restores that
+boundary. Path mode is the pragmatic default because it needs no DNS or TLS
+work; choose host mode when worst-case containment matters more than setup
+effort.
+
+### Path mode (default)
+
+Enable by adding to `<app-root>/runtime/env`:
 
 ```bash
-MEMD_RC_VIEW_HOST=<view-domain>
+MEMD_RC=1
 # Optional: a dedicated token-signing key. When unset, one is derived from
 # MEMD_SESSION_SECRET. Setting it lets you rotate tunnel tokens independently.
 # MEMD_RC_TOKEN_SECRET=<random-secret>
 ```
 
-With `MEMD_RC_VIEW_HOST` unset the feature is fully inert.
+No new DNS record, no new certificate, no new vhost. The only nginx work is on
+the **existing** memd vhost: terminal traffic (and the agent's `/rc/tunnel`
+connection) is WebSockets, so the main vhost's `location /` needs the upgrade
+headers if it does not already have them:
 
-### DNS and TLS for the view host
+```nginx
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+```
+
+(Harmless for normal requests with nginx ≥ 1.3 — `$http_upgrade` is empty
+then.) Keep terminal output unbuffered and idle terminals alive, as in the
+main vhost template: `proxy_buffering off;` and generous
+`proxy_read_timeout`/`proxy_send_timeout` (3600s). smux keepalives flow every
+10 seconds, so the timeout is never approached.
+
+Everything is then on the main host, behind memd's normal login:
+
+- `https://<domain>/rc` — mint tokens, see connected agents, and open each
+  agent's terminal via its `/rc/t/<agent>/` link.
+- `https://<domain>/rc/t/<agent>/` — the terminal itself. The viewer must be
+  logged in to memd **and** be the user the agent's tunnel token was minted
+  for; anyone else gets a 404. There is no separate pairing step and no
+  viewer cookie — the memd session is the credential. Browser requests from
+  any other origin are refused before they reach the tunnel.
+
+Internally memd strips the `/rc/t/<agent>` prefix before proxying and hands it
+to termulaa as `X-Forwarded-Prefix`; termulaa renders its pages against that
+base path (path mode needs a base-path-aware termulaa build; older builds
+require host mode). The proxied responses carry termulaa's own
+security headers, not memd's — memd's global CSP does not apply to the viewer
+surface (and is unchanged everywhere else).
+
+### Host mode (optional origin isolation)
+
+Set a dedicated view host instead (this selects host mode; `MEMD_RC` is not
+needed):
+
+```bash
+MEMD_RC_VIEW_HOST=<view-domain>
+# MEMD_RC_TOKEN_SECRET=<random-secret>   # same optional knob as above
+```
+
+In host mode the path viewer is disabled — the terminal is reachable only on
+the view host, which is the point of the mode. Two hostnames are then
+involved:
+
+| Host | Placeholder | Serves |
+|------|-------------|--------|
+| the rendezvous host | `<domain>` (memd's existing hostname) | `/rc` pairing page, `POST /rc/api/tokens`, and the agent's `GET /rc/tunnel` WebSocket — alongside all of memd's normal routes |
+| the view host | `<view-domain>`, e.g. `term.memd.example.com` | every path is proxied to the tunneled terminal |
+
+#### DNS and TLS for the view host
 
 The view host needs its own DNS A/CNAME record pointing at the same server —
 subdomains do not exist until you create them.
@@ -413,7 +476,7 @@ will need its own certificate as above, while `term.example.com` may already
 be covered if you hold a `*.example.com` wildcard. Either name works — the
 view host is fully configurable.
 
-### Nginx vhost for the view host
+#### Nginx vhost for the view host
 
 Create `<app-root>/nginx/<view-domain>.conf`, proxying to the **same** memd
 port. Terminal traffic is WebSockets, so the upgrade headers and long
@@ -451,26 +514,26 @@ server {
 compares the incoming `Host` against `MEMD_RC_VIEW_HOST`. Enable the site and
 reload as with the main vhost.
 
-The agent's WebSocket (`/rc/tunnel`) arrives on the MAIN host. If your main
-vhost follows the template above it already lacks upgrade headers — add the
-same two `Upgrade`/`Connection` lines to it (they are harmless for normal
-requests with nginx ≥ 1.3, since `$http_upgrade` is empty then), or add a
-dedicated `location /rc/tunnel` block with them. The long read timeout the
-template already sets keeps the agent's tunnels alive; smux keepalives flow
-every 10 seconds, so a 3600s timeout is never approached.
+The agent's WebSocket (`/rc/tunnel`) arrives on the MAIN host, which needs the
+same `Upgrade`/`Connection` lines as in path mode.
 
 ### Operating notes
 
 - Users mint tunnel tokens at `https://<domain>/rc` (behind the normal memd
-  login) and pair a browser via the one-time `/?t=<token>` link, which moves
-  the token into an `HttpOnly` cookie.
+  login). In path mode the terminal link is shown right there; in host mode a
+  browser is paired via the one-time `/?t=<token>` link, which moves the
+  token into an `HttpOnly` cookie.
 - Tokens are stateless and HMAC-signed; there is no server-side token store.
   Expiry (default 30 days, max 90) is the retirement mechanism. Rotating
   `MEMD_RC_TOKEN_SECRET` (or `MEMD_SESSION_SECRET` when no dedicated secret is
   set) invalidates every outstanding tunnel token at once.
+- In both modes the tunnel token is the **agent's** credential. In path mode
+  it additionally decides which memd user owns the agent — only that user's
+  login session can open the terminal.
 - The `/rc` page shows each connected agent with its live tunnel count,
   straight from the in-process pool — an agent with no live tunnel shows as
   absent, so what you see is what is actually connected.
+
 
 ## Future Deploys
 

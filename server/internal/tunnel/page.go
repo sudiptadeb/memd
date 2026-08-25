@@ -76,9 +76,9 @@ const rcPageHTML = `<!doctype html>
 <main>
   <h1>Remote terminal</h1>
   <p class="sub">Reach a <code>termulaa</code> terminal running on your own machine
-  from anywhere. Mint a token, run the agent, then open the terminal on the view
-  host. One <em>tunnel</em> is one live pooled connection from the agent; your
-  browser traffic is multiplexed across them.</p>
+  from anywhere. Mint a token, run the agent, then open the terminal from the
+  agent list. One <em>tunnel</em> is one live pooled connection from the agent;
+  your browser traffic is multiplexed across them.</p>
 
   <section class="card">
     <h2>Connected agents</h2>
@@ -142,6 +142,12 @@ const rcPageJS = `"use strict";
       meta.textContent = "local port " + a.port + " · since " +
         new Date(a.connected_at).toLocaleString();
       li.appendChild(label); li.appendChild(id); li.appendChild(tunnels); li.appendChild(meta);
+      if (a.url) {
+        var open = document.createElement("a");
+        open.href = a.url;
+        open.textContent = "open terminal";
+        li.appendChild(open);
+      }
       list.appendChild(li);
     });
   }
@@ -178,10 +184,17 @@ const rcPageJS = `"use strict";
           " -rc-token '" + data.token + "'";
         if (label) { cmd += " -rc-label '" + label.replace(/'/g, "'\\''") + "'"; }
         el("command").textContent = cmd;
-        var open = "https://" + viewHost + "/?t=" + encodeURIComponent(data.token);
-        el("open-wrap").style.display = viewHost ? "" : "none";
-        el("open-link").href = open;
-        el("open-link").textContent = "https://" + viewHost + "/";
+        var open = "", text = "";
+        if (data.open_url) {
+          open = new URL(data.open_url, window.location.href).toString();
+          text = open;
+        } else if (viewHost) {
+          open = "https://" + viewHost + "/?t=" + encodeURIComponent(data.token);
+          text = "https://" + viewHost + "/";
+        }
+        el("open-wrap").style.display = open ? "" : "none";
+        el("open-link").href = open || "#";
+        el("open-link").textContent = text;
         el("open-link").dataset.url = open;
         el("result").classList.add("show");
       })
@@ -238,8 +251,9 @@ func serveSignInPage(w http.ResponseWriter) {
 `))
 }
 
-// The pages below are served on the VIEW host, outside memd's global security
-// headers, so they carry their own restrictive per-response policy.
+// The pages below are served on the viewer surface (view host or /rc/t/ path
+// mode), which SplitViewer routes outside memd's global security headers, so
+// they carry their own restrictive per-response policy.
 
 func viewerPageHeaders(w http.ResponseWriter) {
 	h := w.Header()
