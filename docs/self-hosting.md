@@ -356,6 +356,122 @@ HTTP -> 301 redirect to HTTPS
 HTTPS -> 200 OK from memd
 ```
 
+## Remote Terminal Rendezvous (termulaa rc)
+
+Optional. memd can act as the rendezvous for termulaa's reverse tunnel: a
+`termulaa -rc` agent on a user's machine dials out to memd, and browsers reach
+that terminal through a dedicated **view host** served by the same memd
+process. memd is a reference implementation of the termulaa rc protocol — the
+wire details live in the termulaa repository under `docs/rc-protocol.md`; this
+section covers only memd's operational side.
+
+Two hostnames are involved, and they must not be conflated:
+
+| Host | Placeholder | Serves |
+|------|-------------|--------|
+| the rendezvous host | `<domain>` (memd's existing hostname) | `/rc` pairing page, `POST /rc/api/tokens`, and the agent's `GET /rc/tunnel` WebSocket — alongside all of memd's normal routes |
+| the view host | `<view-domain>`, e.g. `term.memd.example.com` | every path is proxied to the tunneled terminal (termulaa's UI uses absolute root paths like `/api/...` and `/ws/...`, so it needs a whole hostname) |
+
+Enable the feature by adding to `<app-root>/runtime/env`:
+
+```bash
+MEMD_RC_VIEW_HOST=<view-domain>
+# Optional: a dedicated token-signing key. When unset, one is derived from
+# MEMD_SESSION_SECRET. Setting it lets you rotate tunnel tokens independently.
+# MEMD_RC_TOKEN_SECRET=<random-secret>
+```
+
+With `MEMD_RC_VIEW_HOST` unset the feature is fully inert.
+
+### DNS and TLS for the view host
+
+The view host needs its own DNS A/CNAME record pointing at the same server —
+subdomains do not exist until you create them.
+
+Check certificate coverage before assuming anything. A wildcard matches
+exactly **one** label: `*.example.com` covers `term.example.com` but NOT
+`term.memd.example.com`; a certificate for `memd.example.com` covers neither.
+Inspect what your existing certificate actually contains:
+
+```bash
+openssl s_client -connect <domain>:443 -servername <domain> </dev/null 2>/dev/null \
+  | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"
+```
+
+(Do this from a network path without a TLS-intercepting proxy, or you will be
+reading the interceptor's certificate, not your origin's.)
+
+If the view host is not covered, issue a certificate for it:
+
+```bash
+sudo certbot --nginx -d <view-domain>
+```
+
+Practical upshot for a deployment at `memd.example.com`: a view host of
+`term.memd.example.com` (the documented default shape) is two labels deep and
+will need its own certificate as above, while `term.example.com` may already
+be covered if you hold a `*.example.com` wildcard. Either name works — the
+view host is fully configurable.
+
+### Nginx vhost for the view host
+
+Create `<app-root>/nginx/<view-domain>.conf`, proxying to the **same** memd
+port. Terminal traffic is WebSockets, so the upgrade headers and long
+timeouts matter:
+
+```nginx
+server {
+    listen 80;
+    server_name <view-domain>;
+
+    location / {
+        proxy_pass http://127.0.0.1:<port>;
+        proxy_http_version 1.1;
+
+        # WebSocket upgrade for the terminal itself.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Terminal output must not be buffered, and idle terminals must not
+        # be cut off.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+    }
+}
+```
+
+`proxy_set_header Host $host` is what routes these requests inside memd: it
+compares the incoming `Host` against `MEMD_RC_VIEW_HOST`. Enable the site and
+reload as with the main vhost.
+
+The agent's WebSocket (`/rc/tunnel`) arrives on the MAIN host. If your main
+vhost follows the template above it already lacks upgrade headers — add the
+same two `Upgrade`/`Connection` lines to it (they are harmless for normal
+requests with nginx ≥ 1.3, since `$http_upgrade` is empty then), or add a
+dedicated `location /rc/tunnel` block with them. The long read timeout the
+template already sets keeps the agent's tunnels alive; smux keepalives flow
+every 10 seconds, so a 3600s timeout is never approached.
+
+### Operating notes
+
+- Users mint tunnel tokens at `https://<domain>/rc` (behind the normal memd
+  login) and pair a browser via the one-time `/?t=<token>` link, which moves
+  the token into an `HttpOnly` cookie.
+- Tokens are stateless and HMAC-signed; there is no server-side token store.
+  Expiry (default 30 days, max 90) is the retirement mechanism. Rotating
+  `MEMD_RC_TOKEN_SECRET` (or `MEMD_SESSION_SECRET` when no dedicated secret is
+  set) invalidates every outstanding tunnel token at once.
+- The `/rc` page shows each connected agent with its live tunnel count,
+  straight from the in-process pool — an agent with no live tunnel shows as
+  absent, so what you see is what is actually connected.
+
 ## Future Deploys
 
 Run the source update and deploy as the service user:

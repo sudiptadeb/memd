@@ -474,6 +474,42 @@ memd data export-legacy-config --out current-legacy-user-data.json
 `MEMD_DATABASE_URL` can override the metadata database location. SQLite is the
 only linked driver today; other SQL URLs are parsed for the future adapter layer.
 
+## Remote Terminal Rendezvous (termulaa rc)
+
+memd can act as the rendezvous server for [termulaa](https://github.com/sudiptadeb/termulaa)'s
+reverse tunnel, so a terminal running loopback-only on your own machine is
+reachable from anywhere — behind memd's existing login. memd is a reference
+implementation of the termulaa rc protocol; the normative wire spec lives in
+the termulaa repository (`docs/rc-protocol.md`).
+
+How it works: a logged-in user mints a signed token at `/rc`. On the target
+machine, `termulaa -rc` dials **out** to memd over WebSocket and keeps a small
+pool of tunnels open, each carrying an smux session. When a browser hits the
+dedicated view host (`MEMD_RC_VIEW_HOST`), memd opens a stream inside a
+tunnel, rewrites `Host`/`Origin` to the loopback address, and proxies the
+request — HTTP and terminal WebSockets alike — down to the unmodified
+termulaa.
+
+Security posture:
+
+- **Strictly opt-in.** Without `MEMD_RC_VIEW_HOST` (plus a token secret) the
+  feature is fully inert and memd behaves exactly as before.
+- **No inbound ports on the user's machine.** The agent only dials out;
+  termulaa itself stays bound to `127.0.0.1`.
+- **Tokens are minted behind memd's login**, HMAC-signed and stateless, expire
+  by default after 30 days (90 max), and are never logged (only a hash prefix
+  is). The key comes from `MEMD_RC_TOKEN_SECRET`, or is derived from
+  `MEMD_SESSION_SECRET`.
+- **Viewer pairing** moves the token from the URL into an `HttpOnly` cookie
+  via a one-time `/?t=<token>` redirect, and every request on the view host is
+  re-validated.
+- **Honest liveness.** The `/rc` page shows the live tunnel count per agent
+  straight from the in-process pool; a disconnected agent shows as offline
+  immediately, never as stale last-known-good state.
+
+See [docs/self-hosting.md](docs/self-hosting.md) for the nginx vhost, DNS, and
+TLS-certificate notes for the view host.
+
 ## Read More
 
 - [docs/doctrine.md](docs/doctrine.md) — the MCP `instructions` payload sent to every connecting agent: authority, read/write rules, file structure, drastic-action policy.
