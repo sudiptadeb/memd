@@ -58,8 +58,9 @@
       <div class="titles">
         <h2>Set up a machine</h2>
         <span class="desc">
-          termulaa runs on macOS and Linux (its PTY layer is POSIX-only — there is no Windows
-          build). Install it, then pair it with a token minted here.
+          termulaa runs on macOS and Linux. Its PTY layer is POSIX-only, so there is no
+          native Windows build — on Windows, install it inside WSL2. Install it, then pair
+          it with a token minted here.
         </span>
       </div>
     </div>
@@ -261,7 +262,9 @@ function toggleSetup(): void {
 
 // --- Install tabs -----------------------------------------------------------
 
-// No Windows tab on purpose: termulaa's PTY layer is POSIX-only.
+// termulaa's PTY layer is POSIX-only, so there is no native Windows build.
+// WSL2 is a real Linux kernel, so the Linux binary runs there unchanged — the
+// terminal you get is a WSL shell, which is normally what is wanted anyway.
 const installScript =
   "curl -fsSL https://raw.githubusercontent.com/sudiptadeb/termulaa/main/install.sh | bash -s -- --service";
 
@@ -284,6 +287,15 @@ const installTabs: InstallTab[] = [
     label: "Linux",
     command: installScript,
     hint: "Installs the latest release and registers it as a per-user service, so the agent survives reboots.",
+  },
+  {
+    id: "wsl",
+    label: "Windows (WSL2)",
+    command: installScript,
+    hint:
+      "Run this inside your WSL2 distribution — the terminal you get is a WSL shell, not PowerShell. " +
+      "The agent only runs while WSL is running, and --service needs systemd enabled " +
+      "([boot] systemd=true in /etc/wsl.conf).",
   },
   {
     id: "go",
