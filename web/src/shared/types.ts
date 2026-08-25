@@ -46,11 +46,13 @@ export interface AuthConfig {
   oidc_enabled: boolean;
 }
 
-// ui.uiFeatures — which optional server features are mounted. The front-end
-// must not probe an optional route instead: unmounted paths fall through to
-// the SPA catch-all and answer 200 with index.html.
+// ui.uiFeatures — which optional server features are live. The front-end must
+// not probe an optional route instead: disabled paths answer 404 or fall
+// through to the SPA catch-all and answer 200 with index.html.
 export interface UiFeatures {
-  // The termulaa reverse-tunnel rendezvous (/rc/api/*) is mounted.
+  // The termulaa reverse-tunnel rendezvous (/rc/api/*), in its EFFECTIVE
+  // state: on by default, toggled at runtime from the admin console, and
+  // forced off by the MEMD_RC=0 kill switch.
   rc: boolean;
 }
 
@@ -574,6 +576,32 @@ export interface SaveOIDCRequest {
   post_logout_redirect_uri: string;
   // Mints a new provider id; existing SSO users stop matching.
   replace_provider?: boolean;
+}
+
+// ui.rcConfigView — the admin-facing state of the reverse-tunnel rendezvous
+// (termulaa rc). `enabled` is the persisted super-admin setting (defaults to
+// on when nothing has been stored); `active` is the effective state right now.
+export interface RCConfig {
+  enabled: boolean;
+  active: boolean;
+  // MEMD_RC is explicitly set to an off value in the server's environment,
+  // forcing the feature off regardless of `enabled`.
+  kill_switch: boolean;
+  // A token-signing key exists (MEMD_RC_TOKEN_SECRET or MEMD_SESSION_SECRET).
+  // Without one the feature cannot run at all.
+  available: boolean;
+  // Dedicated viewer hostname in host mode, "" in path mode.
+  view_host: string;
+}
+
+// Response of GET / PUT /api/admin/rc (ui.adminRCAPI).
+export interface RCConfigResponse {
+  rc: RCConfig;
+}
+
+// Body of PUT /api/admin/rc (ui.adminRCAPI).
+export interface SaveRCRequest {
+  enabled: boolean;
 }
 
 // Body of POST /api/admin/oidc/relink (ui.adminOIDCRelinkAPI).

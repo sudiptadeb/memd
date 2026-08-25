@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const settingKeyOIDC = "oidc"
+const (
+	settingKeyOIDC = "oidc"
+	settingKeyRC   = "rc"
+)
 
 // OIDCSettings is the persisted, super-admin-editable OIDC configuration. It is
 // stored as a JSON blob in app_settings and is the source of truth for the
@@ -63,5 +66,45 @@ func (s *Store) SaveOIDCSettings(ctx context.Context, cfg OIDCSettings) error {
 		VALUES (?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 		settingKeyOIDC, string(data), nowString())
+	return err
+}
+
+// RCSettings is the persisted, super-admin-editable state of the reverse-tunnel
+// rendezvous (termulaa rc). It is stored as a JSON blob in app_settings, like
+// the OIDC settings. When no value has been stored yet the feature defaults to
+// enabled; the MEMD_RC=0 environment kill switch overrides either way.
+type RCSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
+// GetRCSettings returns the stored rc settings. The bool is false when no
+// value has been saved yet (callers then apply the enabled-by-default policy).
+func (s *Store) GetRCSettings(ctx context.Context) (RCSettings, bool, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key = ?`, settingKeyRC).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RCSettings{}, false, nil
+	}
+	if err != nil {
+		return RCSettings{}, false, err
+	}
+	var cfg RCSettings
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return RCSettings{}, false, err
+	}
+	return cfg, true, nil
+}
+
+// SaveRCSettings persists the rc settings.
+func (s *Store) SaveRCSettings(ctx context.Context, cfg RCSettings) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO app_settings(key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		settingKeyRC, string(data), nowString())
 	return err
 }

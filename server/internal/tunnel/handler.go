@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -50,14 +51,20 @@ type Handler struct {
 	auth     UserAuth
 	proxy    *httputil.ReverseProxy
 	upgrader websocket.Upgrader
+	// enabled is the runtime switch a super admin flips from the admin
+	// console. While off, every mounted /rc* route answers 404, the viewer
+	// split passes all traffic through untouched, and the hub holds no
+	// tunnels — turning the feature off is indistinguishable from it never
+	// having been mounted, minus the 404-vs-SPA-fallthrough detail on /rc*.
+	enabled atomic.Bool
 }
 
-// New builds a tunnel handler. key signs tokens, viewHost selects host mode
-// when non-empty (path mode otherwise), and auth resolves memd's login
-// session for the management surface and the path-mode viewer.
+// New builds a tunnel handler, enabled. key signs tokens, viewHost selects
+// host mode when non-empty (path mode otherwise), and auth resolves memd's
+// login session for the management surface and the path-mode viewer.
 func New(key []byte, viewHost string, auth UserAuth) *Handler {
 	hub := NewHub()
-	return &Handler{
+	h := &Handler{
 		hub:      hub,
 		key:      key,
 		viewHost: viewHost,
@@ -71,39 +78,64 @@ func New(key []byte, viewHost string, auth UserAuth) *Handler {
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
 	}
+	h.enabled.Store(true)
+	return h
 }
 
-// FromEnv builds the handler from the environment, or returns nil when the
-// feature is not (fully) configured. The rc feature is strictly opt-in:
-// MEMD_RC=1 enables it in path mode, MEMD_RC_VIEW_HOST enables host mode
-// (and implies enabled), and either way a token key must be available — from
-// MEMD_RC_TOKEN_SECRET or derived from MEMD_SESSION_SECRET.
+// FromEnv builds the handler from the environment. The rc feature is on by
+// default: the handler is returned (enabled; the caller may apply a persisted
+// super-admin setting via SetEnabled) whenever a token key is available — from
+// MEMD_RC_TOKEN_SECRET, or derived from MEMD_SESSION_SECRET. It returns nil
+// in exactly two cases: the MEMD_RC=0 kill switch is set (an emergency
+// escape hatch that forces the feature off regardless of the stored setting),
+// or no token key can be derived, in which case the feature reports itself
+// unavailable rather than pretending to work.
 func FromEnv(auth UserAuth) *Handler {
-	viewHost := strings.TrimSpace(os.Getenv("MEMD_RC_VIEW_HOST"))
-	rcSecret := os.Getenv("MEMD_RC_TOKEN_SECRET")
-	key := TokenKey(rcSecret, os.Getenv("MEMD_SESSION_SECRET"))
-	if viewHost == "" && !envEnabled(os.Getenv("MEMD_RC")) {
-		if strings.TrimSpace(rcSecret) != "" {
-			logs.Warn("rc: MEMD_RC_TOKEN_SECRET is set but neither MEMD_RC nor MEMD_RC_VIEW_HOST is; reverse tunnel disabled")
-		}
+	if KillSwitchActive() {
+		logs.Info("rc: MEMD_RC kill switch is set; reverse tunnel forced off")
 		return nil
 	}
+	viewHost := strings.TrimSpace(os.Getenv("MEMD_RC_VIEW_HOST"))
+	key := TokenKey(os.Getenv("MEMD_RC_TOKEN_SECRET"), os.Getenv("MEMD_SESSION_SECRET"))
 	if key == nil {
-		logs.Warn("rc: reverse tunnel requested but no token secret is available (set MEMD_RC_TOKEN_SECRET or MEMD_SESSION_SECRET); reverse tunnel disabled")
+		logs.Warn("rc: no token secret is available (set MEMD_RC_TOKEN_SECRET or MEMD_SESSION_SECRET); reverse tunnel unavailable")
 		return nil
 	}
 	return New(key, viewHost, auth)
 }
 
-// envEnabled reads a boolean-ish env value; anything non-empty counts as
-// enabled except an explicit off.
-func envEnabled(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "0", "false", "off", "no":
-		return false
+// KillSwitchActive reports whether MEMD_RC is explicitly set to an off value
+// (0/false/off/no). This is the emergency kill switch: it forces the rc
+// feature off no matter what the persisted super-admin setting says. Unset —
+// the normal state — means the feature follows that setting (default on).
+func KillSwitchActive() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MEMD_RC"))) {
+	case "0", "false", "off", "no":
+		return true
 	}
-	return true
+	return false
 }
+
+// KeyAvailable reports whether a token-signing key can be derived from the
+// environment (see TokenKey). Without one the rc feature cannot run at all.
+func KeyAvailable() bool {
+	return TokenKey(os.Getenv("MEMD_RC_TOKEN_SECRET"), os.Getenv("MEMD_SESSION_SECRET")) != nil
+}
+
+// SetEnabled flips the runtime switch. Disabling takes effect immediately:
+// every tunnel registered in the hub is closed (agents keep retrying with
+// backoff and are refused at the HTTP layer), and the /rc* routes and viewer
+// surface stop serving. Re-enabling requires no restart either — retrying
+// agents are accepted again on their next attempt.
+func (h *Handler) SetEnabled(on bool) {
+	was := h.enabled.Swap(on)
+	if was && !on {
+		h.hub.CloseAll()
+	}
+}
+
+// Enabled reports the current runtime state.
+func (h *Handler) Enabled() bool { return h.enabled.Load() }
 
 // ViewHost is the dedicated view hostname; empty in path mode.
 func (h *Handler) ViewHost() string { return h.viewHost }
@@ -111,10 +143,24 @@ func (h *Handler) ViewHost() string { return h.viewHost }
 // Mount registers the management and agent endpoints on memd's main mux
 // (i.e. on the normal memd host, not the view host).
 func (h *Handler) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("/rc", servePageRedirect)
-	mux.HandleFunc("/rc/api/tokens", h.mintAPI)
-	mux.HandleFunc("/rc/api/agents", h.agentsAPI)
-	mux.HandleFunc("/rc/tunnel", h.serveTunnel)
+	mux.HandleFunc("/rc", h.ifEnabled(servePageRedirect))
+	mux.HandleFunc("/rc/api/tokens", h.ifEnabled(h.mintAPI))
+	mux.HandleFunc("/rc/api/agents", h.ifEnabled(h.agentsAPI))
+	mux.HandleFunc("/rc/tunnel", h.ifEnabled(h.serveTunnel))
+}
+
+// ifEnabled gates a mounted route on the runtime switch: while the feature is
+// disabled every /rc* route answers 404, exactly as if it were never mounted.
+// An agent whose tunnel dial hits this 404 simply stays in its retry loop and
+// reconnects on its own once the feature is re-enabled.
+func (h *Handler) ifEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.enabled.Load() {
+			http.NotFound(w, r)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // viewerPathPrefix is where path mode serves proxied terminals:
@@ -130,6 +176,13 @@ const viewerPathPrefix = "/rc/t/"
 // unchanged.
 func (h *Handler) SplitViewer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !h.enabled.Load() {
+			// Feature disabled at runtime: no viewer surface exists. All
+			// traffic — view-host and /rc/t/ alike — flows through memd's
+			// normal stack, as it would with the feature never mounted.
+			next.ServeHTTP(w, r)
+			return
+		}
 		if h.viewHost != "" {
 			if hostMatches(r.Host, h.viewHost) {
 				h.serveViewer(w, r)
@@ -212,6 +265,12 @@ func (h *Handler) serveTunnel(w http.ResponseWriter, r *http.Request) {
 	release := h.hub.Register(id, sessionIdx, AgentInfo{UserID: claims.UserID, Label: label, Port: port}, sess)
 	logs.InfoUser(claims.UserID, "rc: agent %s (%q) tunnel %d connected (%d tunnels up)",
 		shortID(id), label, sessionIdx, h.hub.Tunnels(id))
+	// Close the window between ifEnabled's check and Register: if the feature
+	// was disabled in that gap (SetEnabled's CloseAll may have run before this
+	// registration landed), drop the tunnel now so nothing outlives a disable.
+	if !h.enabled.Load() {
+		_ = sess.Close()
+	}
 
 	// A tunnel does not outlive its token: close it at expiry so the agent's
 	// reconnect hits the handshake check and is refused (rc protocol §8 —

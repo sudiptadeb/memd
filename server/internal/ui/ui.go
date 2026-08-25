@@ -40,9 +40,23 @@ type Handler struct {
 	live     *doctrine.Live // live-editable doctrines (super-admin only)
 	features *feature.Registry
 	baseURL  string
-	// rcEnabled records whether the termulaa reverse-tunnel rendezvous
-	// (internal/tunnel) is mounted, so /api/session can advertise it.
-	rcEnabled bool
+	// rc is the runtime control of the termulaa reverse-tunnel rendezvous
+	// (internal/tunnel); nil when the feature cannot run at all (kill switch
+	// or no token key). rcKillSwitch/rcKeyAvailable record why, for the
+	// admin console's status display.
+	rc             RCController
+	rcKillSwitch   bool
+	rcKeyAvailable bool
+}
+
+// RCController is the runtime handle on the reverse-tunnel rendezvous: the
+// admin console reads and flips its live state through this. Implemented by
+// *tunnel.Handler; an interface here keeps the ui package free of a tunnel
+// dependency.
+type RCController interface {
+	Enabled() bool
+	SetEnabled(bool)
+	ViewHost() string
 }
 
 // New builds the web UI handler. sessions carries the cookie-sealing key, oidc
@@ -66,11 +80,22 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 	}
 }
 
-// SetRCEnabled records whether the termulaa reverse-tunnel rendezvous is
-// mounted. The SPA cannot probe /rc/api/* for availability — with the feature
-// off those paths fall through to the SPA catch-all and answer 200 with
-// index.html — so /api/session carries an explicit capability flag instead.
-func (h *Handler) SetRCEnabled(on bool) { h.rcEnabled = on }
+// SetRC wires the reverse-tunnel rendezvous into the UI. ctl is nil when the
+// feature cannot run (kill switch engaged, or no token key); killSwitch and
+// keyAvailable record which, for the admin console. The SPA cannot probe
+// /rc/api/* for availability — with the feature off those paths answer 404 or
+// fall through to the SPA catch-all — so /api/session carries an explicit
+// capability flag computed from the live state instead (see rcActive).
+func (h *Handler) SetRC(ctl RCController, killSwitch, keyAvailable bool) {
+	h.rc = ctl
+	h.rcKillSwitch = killSwitch
+	h.rcKeyAvailable = keyAvailable
+}
+
+// rcActive is the EFFECTIVE rc state: the feature can run and its runtime
+// switch is on. This is what /api/session advertises, so the dashboard's
+// termulaa section follows the super-admin toggle live.
+func (h *Handler) rcActive() bool { return h.rc != nil && h.rc.Enabled() }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	// Each app is self-contained under dist/<app>: the dashboard is served at the
@@ -95,6 +120,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
 	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))
 	mux.HandleFunc("/api/admin/oidc/relink", h.requireSuperAdmin(h.adminOIDCRelinkAPI))
+	mux.HandleFunc("/api/admin/rc", h.requireSuperAdmin(h.adminRCAPI))
 	mux.HandleFunc("/api/admin/doctrines", h.requireSuperAdmin(h.adminDoctrinesAPI))
 	mux.HandleFunc("/api/admin/doctrines/", h.requireSuperAdmin(h.adminDoctrineAPI))
 	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))

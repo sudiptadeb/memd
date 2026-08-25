@@ -94,10 +94,14 @@ func RunOptions(opts Options) error {
 	uiHandler := ui.New(reg, accountStore, baseURL, sessions, oidcMgr, live)
 	uiHandler.Mount(mux)
 
-	// The reverse-tunnel rendezvous (termulaa rc) is strictly opt-in: FromEnv
-	// returns nil unless MEMD_RC or MEMD_RC_VIEW_HOST plus a token secret are
-	// configured, and with it disabled every request flows exactly as before.
-	// When enabled, its management endpoints join the normal mux, while viewer
+	// The reverse-tunnel rendezvous (termulaa rc) is on by default and toggled
+	// at runtime by a super admin (the setting persists in app_settings, so it
+	// survives deploys with no server access needed). Effective-state
+	// precedence: the MEMD_RC=0 environment kill switch always wins (FromEnv
+	// returns nil, as it also does when no token key can be derived — the
+	// feature then reports itself unavailable), then the stored super-admin
+	// setting, then the default of ON when nothing has been stored yet. When
+	// running, its management endpoints join the normal mux, while viewer
 	// traffic — the dedicated view host, or /rc/t/<agent>/ paths in path mode
 	// — is split off to the tunnel proxy BEFORE memd's security headers (the
 	// proxied terminal ships its own; memd's CSP would break its UI) and
@@ -106,18 +110,30 @@ func RunOptions(opts Options) error {
 		id, username, ok := uiHandler.SessionUser(w, r)
 		return tunnel.User{ID: id, Name: username}, ok
 	})
-	// Advertise the rc capability on /api/session so the SPA knows to show its
-	// termulaa section — with the feature off, /rc/api/* would fall through to
-	// the SPA catch-all (200 + index.html), so the front-end cannot probe.
-	uiHandler.SetRCEnabled(rc != nil)
 	if rc != nil {
+		if stored, ok, err := accountStore.GetRCSettings(ctx); err != nil {
+			logs.Warn("rc: read stored setting: %v (leaving reverse tunnel on)", err)
+		} else if ok && !stored.Enabled {
+			rc.SetEnabled(false)
+		}
 		rc.Mount(mux)
-		if vh := rc.ViewHost(); vh != "" {
-			logs.Info("reverse tunnel enabled (host mode, view host %s)", vh)
-		} else {
+		switch {
+		case !rc.Enabled():
+			logs.Info("reverse tunnel mounted but disabled by super-admin setting (enable it in the admin console)")
+		case rc.ViewHost() != "":
+			logs.Info("reverse tunnel enabled (host mode, view host %s)", rc.ViewHost())
+		default:
 			logs.Info("reverse tunnel enabled (path mode, /rc/t/)")
 		}
 	}
+	// Hand the UI the runtime control (nil when the feature cannot run) plus
+	// the reasons, for the admin console and the /api/session capability flag
+	// the dashboard's termulaa section keys off.
+	var rcCtl ui.RCController
+	if rc != nil {
+		rcCtl = rc
+	}
+	uiHandler.SetRC(rcCtl, tunnel.KillSwitchActive(), tunnel.KeyAvailable())
 
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
 	fmt.Fprintln(opts.Stdout, "Press Ctrl-C to stop.")

@@ -358,11 +358,32 @@ HTTPS -> 200 OK from memd
 
 ## Remote Terminal Rendezvous (termulaa rc)
 
-Optional. memd can act as the rendezvous for termulaa's reverse tunnel: a
-`termulaa -rc` agent on a user's machine dials out to memd, and browsers reach
-that terminal through memd. memd is a reference implementation of the termulaa
-rc protocol — the wire details live in the termulaa repository under
-`docs/rc-protocol.md`; this section covers only memd's operational side.
+memd can act as the rendezvous for termulaa's reverse tunnel: a `termulaa -rc`
+agent on a user's machine dials out to memd, and browsers reach that terminal
+through memd. memd is a reference implementation of the termulaa rc protocol —
+the wire details live in the termulaa repository under `docs/rc-protocol.md`;
+this section covers only memd's operational side.
+
+**The feature is on by default** and needs no environment variable: a fresh
+deploy serves it out of the box in path mode. It is controlled at runtime from
+the admin console (`/admin` → termulaa): a super admin can switch it off (or
+back on) there, the choice is stored in the database — so it survives deploys
+and restarts and needs no SSH — and it takes effect immediately. Disabling
+closes every connected tunnel and stops serving the `/rc*` routes and the
+terminal pages; re-enabling requires nothing further, since agents retry with
+backoff and reconnect on their own.
+
+**Know what "on" means before leaving it on:** any signed-in memd user can
+mint a tunnel token and expose a terminal running on their own machine through
+this server. If your deployment's users should not have that capability, turn
+the feature off in the admin console.
+
+**Emergency kill switch:** setting `MEMD_RC=0` (or `false`/`off`/`no`) in the
+environment forces the feature off regardless of the admin-console setting.
+This is an escape hatch for incident response, not the normal control — leave
+it unset otherwise. The feature also disables itself, with a log warning, when
+no token-signing key is available (no `MEMD_RC_TOKEN_SECRET` and no
+`MEMD_SESSION_SECRET`).
 
 The proxied terminal can be served in one of two modes:
 
@@ -370,8 +391,6 @@ The proxied terminal can be served in one of two modes:
 |------|--------------------------|-------------|---------------|
 | **path mode** (default) | `https://<domain>/rc/t/<agent>/` on memd's existing host | memd's own login session + agent ownership | none |
 | **host mode** (optional hardening) | a dedicated view host, e.g. `term.<domain>` | one-time `/?t=<token>` pairing link → `HttpOnly` cookie | a DNS record and a certificate |
-
-With neither `MEMD_RC` nor `MEMD_RC_VIEW_HOST` set the feature is fully inert.
 
 **The security tradeoff, plainly.** Path mode puts a remote shell and the memd
 web app on the SAME browser origin, which removes the isolation the browser
@@ -384,10 +403,10 @@ effort.
 
 ### Path mode (default)
 
-Enable by adding to `<app-root>/runtime/env`:
+Nothing to enable — path mode is what a plain deploy serves. The only optional
+knob in `<app-root>/runtime/env`:
 
 ```bash
-MEMD_RC=1
 # Optional: a dedicated token-signing key. When unset, one is derived from
 # MEMD_SESSION_SECRET. Setting it lets you rotate tunnel tokens independently.
 # MEMD_RC_TOKEN_SECRET=<random-secret>
@@ -430,8 +449,7 @@ surface (and is unchanged everywhere else).
 
 ### Host mode (optional origin isolation)
 
-Set a dedicated view host instead (this selects host mode; `MEMD_RC` is not
-needed):
+Set a dedicated view host (this selects host mode):
 
 ```bash
 MEMD_RC_VIEW_HOST=<view-domain>
@@ -520,6 +538,11 @@ same `Upgrade`/`Connection` lines as in path mode.
 
 ### Operating notes
 
+- The on/off switch lives in the admin console (`/admin` → termulaa), persists
+  in the database, and applies immediately in both directions — disabling
+  drops all live tunnels on the spot, re-enabling lets agents reconnect on
+  their own. `MEMD_RC=0` in the environment is the emergency override that
+  forces the feature off no matter what the console says.
 - Users mint tunnel tokens in the dashboard's termulaa section (behind the
   normal memd login; `https://<domain>/rc` redirects there). In path mode the terminal link is shown right there; in host mode a
   browser is paired via the one-time `/?t=<token>` link, which moves the

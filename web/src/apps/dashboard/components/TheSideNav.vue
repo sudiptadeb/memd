@@ -129,7 +129,8 @@ const items = computed<NavItem[]>(() => {
     { to: "/connectors", icon: "plug", label: "Connectors", title: "Connectors" },
     { to: "/activity", icon: "activity", label: "Activity", title: "Activity" },
   );
-  // Only when the server actually mounts the rc routes (opt-in feature).
+  // Only when the feature is effectively on: it defaults to on, but a super
+  // admin can toggle it at runtime and MEMD_RC=0 force-disables it.
   if (rcEnabled.value) {
     list.push({
       to: "/termulaa",

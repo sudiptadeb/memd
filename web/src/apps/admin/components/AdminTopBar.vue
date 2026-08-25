@@ -6,7 +6,7 @@
     </a>
     <div class="brand-sub">Super admin</div>
 
-    <!-- Section nav: the three admin surfaces, as router-links. -->
+    <!-- Section nav: the admin surfaces, as router-links. -->
     <nav class="scope-tabs admin-tabs" aria-label="Admin sections">
       <router-link class="admin-tab" active-class="on" to="/users" title="Users">
         <MIcon name="users" />
@@ -15,6 +15,10 @@
       <router-link class="admin-tab" active-class="on" to="/sso" title="Single sign-on">
         <MIcon name="plug" />
         <span>SSO</span>
+      </router-link>
+      <router-link class="admin-tab" active-class="on" to="/termulaa" title="Remote terminals">
+        <MIcon name="terminal" />
+        <span>termulaa</span>
       </router-link>
       <router-link class="admin-tab" active-class="on" to="/doctrines" title="Doctrines">
         <MIcon name="info" />
