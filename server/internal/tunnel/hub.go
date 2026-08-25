@@ -212,6 +212,26 @@ func (h *Hub) AgentsForUser(userID string) []AgentStatus {
 	return out
 }
 
+// CloseAll closes every live tunnel and empties the hub. Used when the rc
+// feature is disabled at runtime: agents are dropped immediately (their
+// serveTunnel goroutines observe the session close and release themselves) and
+// reconnect attempts are refused at the HTTP layer until re-enabled. Sessions
+// are closed outside the lock so their release callbacks can never deadlock.
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	var sessions []*smux.Session
+	for _, state := range h.agents {
+		for _, m := range state.members {
+			sessions = append(sessions, m.sess)
+		}
+	}
+	h.agents = make(map[AgentID]*agentState)
+	h.mu.Unlock()
+	for _, sess := range sessions {
+		_ = sess.Close()
+	}
+}
+
 // pruneLocked drops closed tunnels from the pool and removes the agent when
 // none remain. Callers must hold h.mu.
 func (h *Hub) pruneLocked(id AgentID, state *agentState) {

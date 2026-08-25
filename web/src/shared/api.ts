@@ -41,9 +41,11 @@ import type {
   OIDCRelinkRequest,
   OIDCRelinkResponse,
   OkResponse,
+  RCConfigResponse,
   RcAgentsResponse,
   SaveDoctrineRequest,
   SaveOIDCRequest,
+  SaveRCRequest,
   SessionResponse,
   SetTeamMemberRoleRequest,
   SetUserDisabledRequest,
@@ -606,6 +608,23 @@ export const admin = {
     relink(body: OIDCRelinkRequest): Promise<OIDCRelinkResponse> {
       return request<OIDCRelinkResponse>("/api/admin/oidc/relink", {
         method: "POST",
+        body: body as unknown as JsonBody,
+      });
+    },
+  },
+
+  // ui/admin_rc.go: adminRCAPI.
+  rc: {
+    // GET /api/admin/rc — ui.adminRCAPI. Current reverse-tunnel state.
+    get(): Promise<RCConfigResponse> {
+      return request<RCConfigResponse>("/api/admin/rc");
+    },
+
+    // PUT /api/admin/rc — ui.adminRCAPI. Persists the toggle and applies it to
+    // the running server immediately (disabling closes live tunnels).
+    save(body: SaveRCRequest): Promise<RCConfigResponse> {
+      return request<RCConfigResponse>("/api/admin/rc", {
+        method: "PUT",
         body: body as unknown as JsonBody,
       });
     },

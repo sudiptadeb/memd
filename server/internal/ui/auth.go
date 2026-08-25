@@ -33,11 +33,13 @@ type authConfig struct {
 	OIDCEnabled bool `json:"oidc_enabled"`
 }
 
-// uiFeatures tells the front-end which optional server features are mounted,
-// so it can hide their sections entirely. Probing an optional route is not an
-// option: unmounted paths fall through to the SPA catch-all and answer 200.
+// uiFeatures tells the front-end which optional server features are live, so
+// it can hide their sections entirely. Probing an optional route is not an
+// option: disabled paths answer 404 or fall through to the SPA catch-all.
 type uiFeatures struct {
-	// The termulaa reverse-tunnel rendezvous (/rc/api/*). See Handler.SetRCEnabled.
+	// The termulaa reverse-tunnel rendezvous (/rc/api/*), in its EFFECTIVE
+	// state: available, not kill-switched, and switched on by the super
+	// admin's runtime toggle. See Handler.SetRC / Handler.rcActive.
 	RC bool `json:"rc"`
 }
 
@@ -48,7 +50,7 @@ func (h *Handler) sessionAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"auth":     authConfig{OIDCEnabled: h.oidcEnabled()},
-		"features": uiFeatures{RC: h.rcEnabled},
+		"features": uiFeatures{RC: h.rcActive()},
 	}
 	if user, ok := h.currentUser(w, r); ok {
 		resp["user"] = sessionUserFromAccount(user)

@@ -806,8 +806,10 @@ func TestPathViewerDisabledInHostMode(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestFromEnv: the feature stays fully inert unless explicitly enabled, and
-// the view host selects host mode.
+// TestFromEnv: the feature is on by default with zero configuration (a token
+// key is derivable from MEMD_SESSION_SECRET), MEMD_RC=0 is an emergency kill
+// switch that forces it off, and without any token secret the feature is
+// honestly unavailable. The view host selects host mode.
 func TestFromEnv(t *testing.T) {
 	auth := func(http.ResponseWriter, *http.Request) (User, bool) { return User{}, false }
 	setenv := func(t *testing.T, rc, viewHost, secret string) {
@@ -818,13 +820,27 @@ func TestFromEnv(t *testing.T) {
 	}
 
 	setenv(t, "", "", "s3cret")
-	if FromEnv(auth) != nil {
-		t.Error("unconfigured: want nil (feature inert)")
+	if h := FromEnv(auth); h == nil || h.ViewHost() != "" || !h.Enabled() {
+		t.Errorf("zero config: want enabled path-mode handler (default on), got %v", h)
 	}
-	setenv(t, "0", "", "s3cret")
-	if FromEnv(auth) != nil {
-		t.Error("MEMD_RC=0: want nil")
+	if KillSwitchActive() {
+		t.Error("MEMD_RC unset: kill switch must be inactive")
 	}
+	for _, off := range []string{"0", "false", "off", "no", " OFF "} {
+		setenv(t, off, "", "s3cret")
+		if FromEnv(auth) != nil {
+			t.Errorf("MEMD_RC=%q: want nil (kill switch)", off)
+		}
+		if !KillSwitchActive() {
+			t.Errorf("MEMD_RC=%q: want KillSwitchActive", off)
+		}
+	}
+	// The kill switch wins over everything, host mode included.
+	setenv(t, "0", "term.example", "s3cret")
+	if FromEnv(auth) != nil {
+		t.Error("kill switch + view host: want nil (kill switch wins)")
+	}
+	// Legacy MEMD_RC=1 is harmless: the feature is on either way.
 	setenv(t, "1", "", "s3cret")
 	if h := FromEnv(auth); h == nil || h.ViewHost() != "" {
 		t.Errorf("MEMD_RC=1: want path-mode handler, got %v", h)
@@ -833,8 +849,121 @@ func TestFromEnv(t *testing.T) {
 	if h := FromEnv(auth); h == nil || h.ViewHost() != "term.example" {
 		t.Errorf("view host set: want host-mode handler, got %v", h)
 	}
-	setenv(t, "1", "", "")
+	setenv(t, "", "", "")
 	if FromEnv(auth) != nil {
-		t.Error("enabled without any token secret: want nil")
+		t.Error("no token secret at all: want nil (feature unavailable)")
 	}
+	if KeyAvailable() {
+		t.Error("no secrets: KeyAvailable must be false")
+	}
+	t.Setenv("MEMD_RC_TOKEN_SECRET", "dedicated")
+	if h := FromEnv(auth); h == nil {
+		t.Error("dedicated token secret without session secret: want handler")
+	}
+	if !KeyAvailable() {
+		t.Error("dedicated token secret: KeyAvailable must be true")
+	}
+}
+
+// TestRuntimeDisablePathMode: flipping the super-admin toggle off must take
+// effect immediately — live tunnels are closed, /rc* stops serving, and the
+// viewer path falls through to memd's normal stack — and flipping it back on
+// serves again with no restart: a retrying agent simply reconnects.
+func TestRuntimeDisablePathMode(t *testing.T) {
+	r := newRig(t, "")
+	b := startBackend(t)
+	token := r.mintToken()
+	startAgent(t, r, token, b.addr, b.port, 2)
+
+	mainHost := r.server.Listener.Addr().String()
+	id := TokenAgentID(token)
+	base := viewerPathPrefix + string(id)
+
+	// Sanity: live before the flip.
+	resp := r.request(mainHost, base+"/hello", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pre-disable proxied GET = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	r.handler.SetEnabled(false)
+
+	// The registered tunnels are dropped from the hub at once (CloseAll), and
+	// the agent-side goroutines observe the close and release themselves.
+	waitFor(t, func() bool { return r.handler.hub.Tunnels(id) == 0 }, "tunnels closed on disable")
+
+	// The viewer path no longer proxies: it falls through to memd's normal
+	// stack — proven by memd's CSP on the 404 — never to the shell.
+	resp = r.request(mainHost, base+"/hello", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("disabled viewer GET = %d, want 404", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != testMemdCSP {
+		t.Errorf("disabled viewer CSP = %q, want memd's (normal stack)", got)
+	}
+	resp.Body.Close()
+
+	// The management surface and pairing entry point stop serving too.
+	for _, path := range []string{"/rc", "/rc/api/agents"} {
+		resp = r.request(mainHost, path, nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("disabled GET %s = %d, want 404", path, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+	resp = r.request(mainHost, "/rc/api/tokens", func(req *http.Request) { req.Method = http.MethodPost })
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("disabled POST /rc/api/tokens = %d, want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// A reconnecting agent is refused at the handshake.
+	wsBase := "ws" + strings.TrimPrefix(r.server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer " + token}}
+	if _, dialResp, err := websocket.DefaultDialer.Dial(wsBase+"/rc/tunnel?session=0&port="+b.port, header); err == nil {
+		t.Error("disabled agent dial succeeded, want refusal")
+	} else if dialResp == nil || dialResp.StatusCode != http.StatusNotFound {
+		t.Errorf("disabled agent dial resp = %v, want 404", dialResp)
+	}
+
+	// Re-enable: no restart needed in either direction. The agent's retry
+	// loop reconnects (modeled by a fresh startAgent) and the viewer serves.
+	r.handler.SetEnabled(true)
+	startAgent(t, r, token, b.addr, b.port, 1)
+	resp = r.request(mainHost, base+"/hello", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("re-enabled proxied GET = %d, want 200", resp.StatusCode)
+	}
+	if got := body(t, resp); got != "hello from termulaa via localhost:"+b.port {
+		t.Errorf("re-enabled proxied body = %q", got)
+	}
+}
+
+// TestRuntimeDisableHostMode: with the runtime switch off, view-host traffic
+// is not intercepted — it flows through memd's normal stack like any other
+// host — so the viewer surface is gone, not merely erroring.
+func TestRuntimeDisableHostMode(t *testing.T) {
+	r := newRig(t, testViewHost)
+	resp := r.request(testViewHost, "/", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("enabled unpaired view host = %d, want 401 pair page", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	r.handler.SetEnabled(false)
+	resp = r.request(testViewHost, "/", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("disabled view host = %d, want memd's 404", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != testMemdCSP {
+		t.Errorf("disabled view host CSP = %q, want memd's (normal stack)", got)
+	}
+	resp.Body.Close()
+
+	r.handler.SetEnabled(true)
+	resp = r.request(testViewHost, "/", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("re-enabled unpaired view host = %d, want 401 pair page", resp.StatusCode)
+	}
+	resp.Body.Close()
 }

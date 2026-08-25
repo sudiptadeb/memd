@@ -493,8 +493,13 @@ termulaa.
 
 Security posture:
 
-- **Strictly opt-in.** Without `MEMD_RC_VIEW_HOST` (plus a token secret) the
-  feature is fully inert and memd behaves exactly as before.
+- **Super-admin controlled.** The feature is on by default and toggled at
+  runtime from the admin console (the setting persists in the database, so a
+  plain deploy needs no server access). Disabling takes effect immediately —
+  live tunnels are dropped and the `/rc*` surface stops serving. `MEMD_RC=0`
+  in the environment is an emergency kill switch that forces it off, and
+  without any token secret (`MEMD_RC_TOKEN_SECRET` or `MEMD_SESSION_SECRET`)
+  the feature reports itself unavailable.
 - **No inbound ports on the user's machine.** The agent only dials out;
   termulaa itself stays bound to `127.0.0.1`.
 - **Tokens are minted behind memd's login**, HMAC-signed and stateless, expire
