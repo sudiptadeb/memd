@@ -493,7 +493,7 @@ func servePageRedirect(w http.ResponseWriter, r *http.Request) {
 //	{"label": "my laptop", "ttl": 30}
 //
 // ttl is in days; absent or zero selects the 30-day default, and anything
-// above 90 days is clamped.
+// above the cap (36500 days, i.e. effectively never) is clamped.
 func (h *Handler) mintAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)

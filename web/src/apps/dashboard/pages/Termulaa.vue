@@ -117,7 +117,11 @@
         </div>
         <div class="mint-field mint-ttl">
           <label class="field-label" for="rc-ttl">Valid for (days)</label>
-          <input id="rc-ttl" class="input" v-model.number="mintTTL" type="number" min="1" max="90" />
+          <input id="rc-ttl" class="input" v-model.number="mintTTL" type="number" min="1" max="36500" />
+          <span v-if="longLivedToken" class="ttl-note">
+            Long enough that expiry will not retire this token. Rotating
+            MEMD_RC_TOKEN_SECRET is then the only way to revoke it.
+          </span>
         </div>
         <button class="btn primary" type="submit" :disabled="minting">
           <MIcon :name="minting ? 'refresh-cw' : 'plus'" :class="minting ? 'spin' : ''" />
@@ -338,11 +342,14 @@ const minting = ref(false);
 const minted = ref<MintRcTokenResponse | null>(null);
 const mintedLabel = ref("");
 
+// A year is where "it expires eventually" stops being a real control.
+const longLivedToken = computed(() => Number(mintTTL.value) > 365);
+
 async function mint(): Promise<void> {
   if (minting.value) return;
   minting.value = true;
   try {
-    const ttl = Math.min(90, Math.max(1, Math.floor(mintTTL.value || 30)));
+    const ttl = Math.min(36500, Math.max(1, Math.floor(mintTTL.value || 30)));
     const res = await rcApi.mintToken({ label: mintLabel.value.trim(), ttl });
     minted.value = res;
     mintedLabel.value = mintLabel.value.trim();
@@ -513,6 +520,14 @@ a.session-card:hover .open-icon {
   flex-direction: column;
   gap: 5px;
   min-width: 160px;
+}
+
+.ttl-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--fg-3);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .mint-field.mint-ttl {

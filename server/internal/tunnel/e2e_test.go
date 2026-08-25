@@ -598,15 +598,27 @@ func TestMintAPI(t *testing.T) {
 		t.Errorf("ttl 45 days: expiry %v away", got.Round(time.Hour))
 	}
 
-	// TTL above the cap is clamped to 90 days.
-	resp = mint(`{"ttl":400}`)
+	// A pairing meant to outlive routine expiry is honoured rather than
+	// clamped back to a few months.
+	resp = mint(`{"ttl":10000}`)
+	if err := json.NewDecoder(resp.Body).Decode(&minted); err != nil {
+		t.Fatalf("long mint decode: %v", err)
+	}
+	resp.Body.Close()
+	expires, _ = time.Parse(time.RFC3339, minted.ExpiresAt)
+	if got := time.Until(expires); got < 9999*24*time.Hour {
+		t.Errorf("ttl 10000 days was clamped: expiry %v away", got.Round(time.Hour))
+	}
+
+	// Beyond the cap it is still clamped.
+	resp = mint(`{"ttl":99999}`)
 	if err := json.NewDecoder(resp.Body).Decode(&minted); err != nil {
 		t.Fatalf("clamped mint decode: %v", err)
 	}
 	resp.Body.Close()
 	expires, _ = time.Parse(time.RFC3339, minted.ExpiresAt)
-	if got := time.Until(expires); got > 91*24*time.Hour {
-		t.Errorf("ttl 400 days not clamped: expiry %v away", got.Round(time.Hour))
+	if got := time.Until(expires); got > MaxTokenTTL+24*time.Hour {
+		t.Errorf("ttl 99999 days not clamped: expiry %v away", got.Round(time.Hour))
 	}
 
 	// Unauthenticated requests are refused.
