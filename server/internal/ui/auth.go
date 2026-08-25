@@ -142,6 +142,19 @@ func (h *Handler) currentUser(w http.ResponseWriter, r *http.Request) (account.U
 	return user, true
 }
 
+// SessionUser resolves the memd login session for route surfaces mounted
+// outside this package (currently the reverse-tunnel /rc page). It reuses the
+// exact session handling of the UI's own routes — including OIDC silent
+// refresh and immediate disable/role enforcement — so no second auth system
+// exists.
+func (h *Handler) SessionUser(w http.ResponseWriter, r *http.Request) (id, username string, ok bool) {
+	user, ok := h.currentUser(w, r)
+	if !ok {
+		return "", "", false
+	}
+	return user.ID, user.Username, true
+}
+
 func userFromContext(ctx context.Context) *account.User {
 	user, ok := ctx.Value(authContextKey{}).(account.User)
 	if !ok {

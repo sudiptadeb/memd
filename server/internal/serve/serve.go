@@ -19,6 +19,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/mcp"
 	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/sudiptadeb/memd/server/internal/tunnel"
 	"github.com/sudiptadeb/memd/server/internal/ui"
 	"github.com/sudiptadeb/memd/server/internal/version"
 	"golang.org/x/term"
@@ -90,7 +91,24 @@ func RunOptions(opts Options) error {
 	mcpSrv := mcp.New(reg, live, features, "memd", version.Value)
 	mcpSrv.Mount(mux, "/mcp/")
 	mcpSrv.MountHTTP(mux, "/http/")
-	ui.New(reg, accountStore, baseURL, sessions, oidcMgr, live).Mount(mux)
+	uiHandler := ui.New(reg, accountStore, baseURL, sessions, oidcMgr, live)
+	uiHandler.Mount(mux)
+
+	// The reverse-tunnel rendezvous (termulaa rc) is strictly opt-in: FromEnv
+	// returns nil unless MEMD_RC_VIEW_HOST and a token secret are configured,
+	// and with it disabled every request flows exactly as before. When enabled,
+	// its management endpoints join the normal mux, while requests addressed to
+	// the dedicated view host are split off to the tunnel proxy BEFORE memd's
+	// security headers — the proxied terminal ships its own — and before the
+	// body cap, which would sever long-lived streams.
+	rc := tunnel.FromEnv(func(w http.ResponseWriter, r *http.Request) (tunnel.User, bool) {
+		id, username, ok := uiHandler.SessionUser(w, r)
+		return tunnel.User{ID: id, Name: username}, ok
+	})
+	if rc != nil {
+		rc.Mount(mux)
+		logs.Info("reverse tunnel enabled (view host %s)", rc.ViewHost())
+	}
 
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
 	fmt.Fprintln(opts.Stdout, "Press Ctrl-C to stop.")
@@ -102,8 +120,12 @@ func RunOptions(opts Options) error {
 		logs.Info("loaded connector %q (id=%s)", c.Name, c.ID)
 	}
 
+	var handler http.Handler = withSecurityHeaders(withMaxBody(mux, maxRequestBody))
+	if rc != nil {
+		handler = rc.SplitByHost(handler)
+	}
 	srv := &http.Server{
-		Handler:           withSecurityHeaders(withMaxBody(mux, maxRequestBody)),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
