@@ -35,10 +35,13 @@ import type {
   LogsResponse,
   LoginResponse,
   LogoutResponse,
+  MintRcTokenRequest,
+  MintRcTokenResponse,
   OIDCConfigResponse,
   OIDCRelinkRequest,
   OIDCRelinkResponse,
   OkResponse,
+  RcAgentsResponse,
   SaveDoctrineRequest,
   SaveOIDCRequest,
   SessionResponse,
@@ -511,6 +514,28 @@ export const data = {
     return request<OkResponse>(`/api/data${replace ? query({ replace: 1 }) : ""}`, {
       method: "POST",
       body: bundle as unknown as JsonBody,
+    });
+  },
+};
+
+// --- termulaa reverse tunnel (tunnel/handler.go) ------------------------------
+
+export const rc = {
+  // GET /rc/api/agents — tunnel.agentsAPI. The logged-in user's currently
+  // connected agents, from live hub state. Only call when the session
+  // advertises `features.rc`: with the feature off this path falls through to
+  // the SPA catch-all and returns index.html with a 200.
+  agents(): Promise<RcAgentsResponse> {
+    return request<RcAgentsResponse>("/rc/api/agents");
+  },
+
+  // POST /rc/api/tokens — tunnel.mintAPI. Mints one pairing token (ttl in
+  // days, capped at 90). The response token is a secret shown once — never
+  // store it.
+  mintToken(body: MintRcTokenRequest): Promise<MintRcTokenResponse> {
+    return request<MintRcTokenResponse>("/rc/api/tokens", {
+      method: "POST",
+      body: body as unknown as JsonBody,
     });
   },
 };

@@ -482,7 +482,8 @@ reachable from anywhere — behind memd's existing login. memd is a reference
 implementation of the termulaa rc protocol; the normative wire spec lives in
 the termulaa repository (`docs/rc-protocol.md`).
 
-How it works: a logged-in user mints a signed token at `/rc`. On the target
+How it works: a logged-in user mints a signed token in the dashboard's
+termulaa section (`/rc` redirects there). On the target
 machine, `termulaa -rc` dials **out** to memd over WebSocket and keeps a small
 pool of tunnels open, each carrying an smux session. When a browser hits the
 dedicated view host (`MEMD_RC_VIEW_HOST`), memd opens a stream inside a
@@ -503,7 +504,8 @@ Security posture:
 - **Viewer pairing** moves the token from the URL into an `HttpOnly` cookie
   via a one-time `/?t=<token>` redirect, and every request on the view host is
   re-validated.
-- **Honest liveness.** The `/rc` page shows the live tunnel count per agent
+- **Honest liveness.** The dashboard's termulaa section shows the live tunnel
+  count per agent
   straight from the in-process pool; a disconnected agent shows as offline
   immediately, never as stale last-known-good state.
 

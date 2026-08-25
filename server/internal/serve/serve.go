@@ -106,6 +106,10 @@ func RunOptions(opts Options) error {
 		id, username, ok := uiHandler.SessionUser(w, r)
 		return tunnel.User{ID: id, Name: username}, ok
 	})
+	// Advertise the rc capability on /api/session so the SPA knows to show its
+	// termulaa section — with the feature off, /rc/api/* would fall through to
+	// the SPA catch-all (200 + index.html), so the front-end cannot probe.
+	uiHandler.SetRCEnabled(rc != nil)
 	if rc != nil {
 		rc.Mount(mux)
 		if vh := rc.ViewHost(); vh != "" {

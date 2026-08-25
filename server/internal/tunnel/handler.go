@@ -111,8 +111,7 @@ func (h *Handler) ViewHost() string { return h.viewHost }
 // Mount registers the management and agent endpoints on memd's main mux
 // (i.e. on the normal memd host, not the view host).
 func (h *Handler) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("/rc", h.servePage)
-	mux.HandleFunc("/rc/app.js", servePageJS)
+	mux.HandleFunc("/rc", servePageRedirect)
 	mux.HandleFunc("/rc/api/tokens", h.mintAPI)
 	mux.HandleFunc("/rc/api/agents", h.agentsAPI)
 	mux.HandleFunc("/rc/tunnel", h.serveTunnel)
@@ -363,18 +362,21 @@ func isHTTPS(r *http.Request) bool {
 
 // --- Management page + API (memd host, memd login) ----------------------
 
-func (h *Handler) servePage(w http.ResponseWriter, r *http.Request) {
+// dashboardRCPath is the SPA's termulaa section (hash routing, so the path
+// never reaches the Go router).
+const dashboardRCPath = "/#/termulaa"
+
+// servePageRedirect keeps /rc a stable entry point — the termulaa CLI prints
+// `<server>/rc` on token expiry and the rc protocol spec says a rendezvous
+// SHOULD serve a pairing page there — but the dashboard SPA now owns the
+// management UI, so /rc simply redirects into it. No auth here: the SPA
+// handles sign-in itself.
+func servePageRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if _, ok := h.auth(w, r); !ok {
-		serveSignInPage(w)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(rcPageHTML))
+	http.Redirect(w, r, dashboardRCPath, http.StatusFound)
 }
 
 // mintAPI mints one token for the logged-in user. Body:

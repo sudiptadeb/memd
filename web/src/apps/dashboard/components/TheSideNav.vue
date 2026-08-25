@@ -30,6 +30,7 @@
         >
           <MIcon :name="item.icon" />
           <span>{{ item.label }}</span>
+          <b v-if="item.badge">{{ item.badge }}</b>
         </router-link>
       </div>
     </nav>
@@ -49,11 +50,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onUnmounted, watch } from "vue";
 import logoLight from "@/shared/assets/logo-light.png";
 import logoDark from "@/shared/assets/logo-dark.png";
 import MIcon from "@/shared/components/MIcon.vue";
 import { useSession } from "@/shared/session";
+import { useRcAgents } from "../rcAgents";
 
 // Primary navigation: a persistent rail on desktop, a slide-in drawer on mobile.
 // Drawer visibility is owned by the shell and passed in as `open`; each link (and
@@ -62,7 +64,22 @@ import { useSession } from "@/shared/session";
 defineProps<{ open: boolean; isMobile: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
-const { user, isSuperAdmin, logout } = useSession();
+const { user, isSuperAdmin, rcEnabled, logout } = useSession();
+const { liveCount, startBadgePolling, stopBadgePolling } = useRcAgents();
+
+// The termulaa badge shows the live session count. Poll only while the server
+// advertises the feature and the nav is mounted — no leaked intervals, and
+// nothing ever fires against a server without the rc routes. `immediate` also
+// covers (re)mounting with the flag already known.
+watch(
+  rcEnabled,
+  (on) => {
+    if (on) startBadgePolling();
+    else stopBadgePolling();
+  },
+  { immediate: true },
+);
+onUnmounted(stopBadgePolling);
 
 const displayName = computed(() => {
   const u = user.value;
@@ -94,6 +111,8 @@ interface NavItem {
   icon: string;
   label: string;
   title: string;
+  // Small count pill on the right (e.g. live termulaa sessions); 0 hides it.
+  badge?: number;
 }
 
 const items = computed<NavItem[]>(() => {
@@ -110,6 +129,16 @@ const items = computed<NavItem[]>(() => {
     { to: "/connectors", icon: "plug", label: "Connectors", title: "Connectors" },
     { to: "/activity", icon: "activity", label: "Activity", title: "Activity" },
   );
+  // Only when the server actually mounts the rc routes (opt-in feature).
+  if (rcEnabled.value) {
+    list.push({
+      to: "/termulaa",
+      icon: "terminal",
+      label: "termulaa",
+      title: "termulaa remote terminals",
+      badge: liveCount.value,
+    });
+  }
   return list;
 });
 </script>

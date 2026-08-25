@@ -567,34 +567,32 @@ func TestMintAPI(t *testing.T) {
 	resp.Body.Close()
 }
 
+// TestManagementPage: the management UI lives in the dashboard SPA; /rc stays
+// a stable entry point (the termulaa CLI prints `<server>/rc` on token expiry,
+// and the rc protocol spec says a rendezvous SHOULD serve a pairing page
+// there) and redirects into the SPA's termulaa section.
 func TestManagementPage(t *testing.T) {
 	r := newRig(t, testViewHost)
 	mainHost := r.server.Listener.Addr().String()
 
 	resp := r.request(mainHost, "/rc", nil)
-	got := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("/rc status = %d", resp.StatusCode)
-	}
-	if strings.Contains(got, "<script>") {
-		t.Error("/rc page contains an inline script, which memd's CSP blocks")
-	}
-	if !strings.Contains(got, `src="/rc/app.js"`) {
-		t.Error("/rc page does not load its same-origin script")
-	}
-
-	resp = r.request(mainHost, "/rc/app.js", nil)
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
-		t.Errorf("app.js content-type = %q", ct)
-	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("/rc status = %d, want 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != dashboardRCPath {
+		t.Errorf("/rc Location = %q, want %q", loc, dashboardRCPath)
+	}
 
+	// The redirect itself needs no login — the SPA handles sign-in.
 	r.authed.Store(false)
 	resp = r.request(mainHost, "/rc", nil)
-	got = body(t, resp)
-	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(got, "Sign in") {
-		t.Errorf("unauthenticated /rc = %d %q", resp.StatusCode, got)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("unauthenticated /rc status = %d, want 302", resp.StatusCode)
 	}
+
+	// The JSON APIs behind the SPA page stay authenticated.
 	resp = r.request(mainHost, "/rc/api/agents", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("unauthenticated agents api = %d", resp.StatusCode)

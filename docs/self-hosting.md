@@ -412,8 +412,9 @@ main vhost template: `proxy_buffering off;` and generous
 
 Everything is then on the main host, behind memd's normal login:
 
-- `https://<domain>/rc` — mint tokens, see connected agents, and open each
-  agent's terminal via its `/rc/t/<agent>/` link.
+- `https://<domain>/rc` — redirects to the dashboard's termulaa section,
+  where users mint tokens, see connected agents, and open each agent's
+  terminal via its `/rc/t/<agent>/` link.
 - `https://<domain>/rc/t/<agent>/` — the terminal itself. The viewer must be
   logged in to memd **and** be the user the agent's tunnel token was minted
   for; anyone else gets a 404. There is no separate pairing step and no
@@ -443,7 +444,7 @@ involved:
 
 | Host | Placeholder | Serves |
 |------|-------------|--------|
-| the rendezvous host | `<domain>` (memd's existing hostname) | `/rc` pairing page, `POST /rc/api/tokens`, and the agent's `GET /rc/tunnel` WebSocket — alongside all of memd's normal routes |
+| the rendezvous host | `<domain>` (memd's existing hostname) | the `/rc` pairing entry point (redirects to the dashboard's termulaa section), `POST /rc/api/tokens`, and the agent's `GET /rc/tunnel` WebSocket — alongside all of memd's normal routes |
 | the view host | `<view-domain>`, e.g. `term.memd.example.com` | every path is proxied to the tunneled terminal |
 
 #### DNS and TLS for the view host
@@ -519,8 +520,8 @@ same `Upgrade`/`Connection` lines as in path mode.
 
 ### Operating notes
 
-- Users mint tunnel tokens at `https://<domain>/rc` (behind the normal memd
-  login). In path mode the terminal link is shown right there; in host mode a
+- Users mint tunnel tokens in the dashboard's termulaa section (behind the
+  normal memd login; `https://<domain>/rc` redirects there). In path mode the terminal link is shown right there; in host mode a
   browser is paired via the one-time `/?t=<token>` link, which moves the
   token into an `HttpOnly` cookie.
 - Tokens are stateless and HMAC-signed; there is no server-side token store.
@@ -530,7 +531,7 @@ same `Upgrade`/`Connection` lines as in path mode.
 - In both modes the tunnel token is the **agent's** credential. In path mode
   it additionally decides which memd user owns the agent — only that user's
   login session can open the terminal.
-- The `/rc` page shows each connected agent with its live tunnel count,
+- The termulaa section shows each connected agent with its live tunnel count,
   straight from the in-process pool — an agent with no live tunnel shows as
   absent, so what you see is what is actually connected.
 
