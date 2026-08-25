@@ -171,3 +171,14 @@ func shortID(id AgentID) string {
 	}
 	return string(id)
 }
+
+// shortInstance is the loggable form of an agent-process instance id.
+func shortInstance(instance string) string {
+	if instance == "" {
+		return "legacy"
+	}
+	if len(instance) > 8 {
+		return instance[:8]
+	}
+	return instance
+}

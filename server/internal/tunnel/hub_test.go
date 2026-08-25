@@ -61,7 +61,7 @@ func TestHubEmptyNeverFabricatesLiveness(t *testing.T) {
 func TestHubRegisterLookupRelease(t *testing.T) {
 	hub := NewHub()
 	info := AgentInfo{UserID: "user-1", Label: "laptop", Port: 17380}
-	release := hub.Register("agent-a", 0, info, sessionPair(t))
+	release := hub.Register("agent-a", "inst-a", 0, info, sessionPair(t), nil)
 
 	got, ok := hub.Lookup("agent-a")
 	if !ok || got != info {
@@ -95,8 +95,8 @@ func TestHubLeastLoadedSpread(t *testing.T) {
 	hub := NewHub()
 	info := AgentInfo{UserID: "user-1", Port: 17380}
 	s0, s1 := sessionPair(t), sessionPair(t)
-	hub.Register("agent-a", 0, info, s0)
-	hub.Register("agent-a", 1, info, s1)
+	hub.Register("agent-a", "inst-a", 0, info, s0, nil)
+	hub.Register("agent-a", "inst-a", 1, info, s1, nil)
 
 	var streams []net.Conn
 	for i := 0; i < 4; i++ {
@@ -120,8 +120,8 @@ func TestHubReapsDeadTunnels(t *testing.T) {
 	hub := NewHub()
 	info := AgentInfo{UserID: "user-1", Port: 17380}
 	s0, s1 := sessionPair(t), sessionPair(t)
-	hub.Register("agent-a", 0, info, s0)
-	hub.Register("agent-a", 1, info, s1)
+	hub.Register("agent-a", "inst-a", 0, info, s0, nil)
+	hub.Register("agent-a", "inst-a", 1, info, s1, nil)
 
 	_ = s0.Close()
 	if got := hub.Tunnels("agent-a"); got != 1 {
@@ -149,9 +149,9 @@ func TestHubReRegistrationReplacesSameSlot(t *testing.T) {
 	hub := NewHub()
 	info := AgentInfo{UserID: "user-1", Port: 17380}
 	stale := sessionPair(t)
-	hub.Register("agent-a", 0, info, stale)
+	hub.Register("agent-a", "inst-a", 0, info, stale, nil)
 	fresh := sessionPair(t)
-	hub.Register("agent-a", 0, info, fresh)
+	hub.Register("agent-a", "inst-a", 0, info, fresh, nil)
 
 	if !stale.IsClosed() {
 		t.Error("stale predecessor in the same slot was not closed")
@@ -160,7 +160,7 @@ func TestHubReRegistrationReplacesSameSlot(t *testing.T) {
 		t.Errorf("Tunnels = %d after same-slot re-registration, want 1", got)
 	}
 	// A different slot joins the pool instead of replacing.
-	hub.Register("agent-a", 1, info, sessionPair(t))
+	hub.Register("agent-a", "inst-a", 1, info, sessionPair(t), nil)
 	if got := hub.Tunnels("agent-a"); got != 2 {
 		t.Errorf("Tunnels = %d with two slots, want 2", got)
 	}
@@ -168,7 +168,7 @@ func TestHubReRegistrationReplacesSameSlot(t *testing.T) {
 
 func TestHubExpiredContext(t *testing.T) {
 	hub := NewHub()
-	hub.Register("agent-a", 0, AgentInfo{UserID: "user-1"}, sessionPair(t))
+	hub.Register("agent-a", "inst-a", 0, AgentInfo{UserID: "user-1"}, sessionPair(t), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := hub.DialStream(ctx, "agent-a"); !errors.Is(err, context.Canceled) {
@@ -179,8 +179,8 @@ func TestHubExpiredContext(t *testing.T) {
 func TestHubConcurrency(t *testing.T) {
 	hub := NewHub()
 	info := AgentInfo{UserID: "user-1", Port: 17380}
-	hub.Register("agent-a", 0, info, sessionPair(t))
-	hub.Register("agent-a", 1, info, sessionPair(t))
+	hub.Register("agent-a", "inst-a", 0, info, sessionPair(t), nil)
+	hub.Register("agent-a", "inst-a", 1, info, sessionPair(t), nil)
 
 	var wg sync.WaitGroup
 	// Dialers open and close streams...
@@ -206,7 +206,7 @@ func TestHubConcurrency(t *testing.T) {
 		go func(slot int) {
 			defer wg.Done()
 			for i := 0; i < 10; i++ {
-				release := hub.Register("agent-a", slot, info, sessionPair(t))
+				release := hub.Register("agent-a", "inst-a", slot, info, sessionPair(t), nil)
 				time.Sleep(time.Millisecond)
 				release()
 			}
@@ -233,5 +233,112 @@ func TestHubConcurrency(t *testing.T) {
 	}
 	if got := hub.Tunnels("agent-a"); got != 2 {
 		t.Errorf("Tunnels = %d after churn settled, want the 2 stable slots", got)
+	}
+}
+
+// A takeover registration by a NEW instance displaces the incumbent instance's
+// ENTIRE pool — every tunnel closed and told it was superseded, not just the
+// colliding slot — so the loser cannot keep half a pool thrashing.
+func TestHubTakeoverDisplacesWholeInstance(t *testing.T) {
+	hub := NewHub()
+	info := AgentInfo{UserID: "user-1", Label: "old-box", Port: 17380}
+	const oldTunnels = 3
+	old := make([]*smux.Session, oldTunnels)
+	told := make([]bool, oldTunnels)
+	for i := range old {
+		old[i] = sessionPair(t)
+		i := i
+		hub.Register("agent-a", "inst-old", i, info, old[i], func() { told[i] = true })
+	}
+	if got := hub.Tunnels("agent-a"); got != oldTunnels {
+		t.Fatalf("Tunnels = %d before takeover, want %d", got, oldTunnels)
+	}
+
+	fresh := sessionPair(t)
+	hub.Register("agent-a", "inst-new", 0, info, fresh, nil)
+
+	for i := range old {
+		if !old[i].IsClosed() {
+			t.Errorf("displaced instance's tunnel %d not closed", i)
+		}
+		if !told[i] {
+			t.Errorf("displaced instance's tunnel %d was not told it was superseded", i)
+		}
+	}
+	if fresh.IsClosed() {
+		t.Error("newcomer's tunnel did not survive the takeover")
+	}
+	if got := hub.Tunnels("agent-a"); got != 1 {
+		t.Errorf("Tunnels = %d after takeover, want only the newcomer's 1", got)
+	}
+	stream, err := hub.DialStream(context.Background(), "agent-a")
+	if err != nil {
+		t.Fatalf("DialStream after takeover: %v", err)
+	}
+	_ = stream.Close()
+	// The newcomer's remaining pool members join without displacing each other.
+	hub.Register("agent-a", "inst-new", 1, info, sessionPair(t), nil)
+	if got := hub.Tunnels("agent-a"); got != 2 {
+		t.Errorf("Tunnels = %d after newcomer's second slot, want 2", got)
+	}
+}
+
+// Incumbent is the handshake-time conflict check: it reports a live pool held
+// by a different instance, never the caller's own pool, and never a corpse —
+// dead tunnels are reaped before deciding, so a killed agent can always
+// restart with its own token.
+func TestHubIncumbent(t *testing.T) {
+	hub := NewHub()
+	if _, held := hub.Incumbent("agent-a", "inst-b"); held {
+		t.Fatal("Incumbent reported a never-connected agent")
+	}
+	info := AgentInfo{UserID: "user-1", Label: "handyman", Port: 17380}
+	s0, s1 := sessionPair(t), sessionPair(t)
+	hub.Register("agent-a", "inst-a", 0, info, s0, nil)
+	hub.Register("agent-a", "inst-a", 1, info, s1, nil)
+
+	if _, held := hub.Incumbent("agent-a", "inst-a"); held {
+		t.Error("an instance's own pool reported as an incumbent (reconnect would be refused)")
+	}
+	inc, held := hub.Incumbent("agent-a", "inst-b")
+	if !held || inc.Tunnels != 2 || inc.Info != info {
+		t.Errorf("Incumbent = %+v, %v; want the live 2-tunnel pool", inc, held)
+	}
+	if inc.ConnectedAt.IsZero() {
+		t.Error("Incumbent reported no ConnectedAt")
+	}
+
+	// Both incumbent tunnels die (agent killed): no conflict remains.
+	_ = s0.Close()
+	_ = s1.Close()
+	if _, held := hub.Incumbent("agent-a", "inst-b"); held {
+		t.Error("Incumbent reported a dead pool — a restart would be refused against a corpse")
+	}
+}
+
+// A legacy agent that sends no instance gets the identity "": two legacy
+// registrations keep today's replace-by-slot behavior, and a legacy pool is a
+// normal incumbent for a new-style instance (and vice versa).
+func TestHubLegacyInstanceIdentity(t *testing.T) {
+	hub := NewHub()
+	info := AgentInfo{UserID: "user-1", Port: 17380}
+	stale := sessionPair(t)
+	hub.Register("agent-a", "", 0, info, stale, nil)
+	fresh := sessionPair(t)
+	hub.Register("agent-a", "", 0, info, fresh, nil)
+	if !stale.IsClosed() {
+		t.Error("legacy same-slot predecessor not replaced")
+	}
+	if fresh.IsClosed() {
+		t.Error("legacy same-slot successor was displaced instead of replacing")
+	}
+	if got := hub.Tunnels("agent-a"); got != 1 {
+		t.Errorf("Tunnels = %d after legacy re-registration, want 1", got)
+	}
+	if _, held := hub.Incumbent("agent-a", ""); held {
+		t.Error("legacy pool conflicts with its own legacy identity")
+	}
+	if inc, held := hub.Incumbent("agent-a", "inst-new"); !held || inc.Tunnels != 1 {
+		t.Errorf("Incumbent for new instance over legacy pool = %+v, %v; want held with 1 tunnel", inc, held)
 	}
 }

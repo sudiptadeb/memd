@@ -211,6 +211,19 @@ func hostOnly(hostport string) string {
 
 // --- Agent endpoint -----------------------------------------------------
 
+// The SUPERSEDED close signal (rc protocol §8): sent to every tunnel of an
+// agent instance displaced by an explicit takeover, so the displaced agent can
+// tell "my token was taken over — stop" from an ordinary network drop it
+// should retry. The reason string is machine-readable and MUST NOT change.
+const (
+	supersededCloseCode   = websocket.ClosePolicyViolation // 1008
+	supersededCloseReason = "superseded"
+)
+
+// instancePattern bounds the agent-chosen instance id (rc protocol §2).
+// Empty is a legacy agent that predates the parameter.
+var instancePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{0,64}$`)
+
 // serveTunnel is the agent's outbound WebSocket endpoint. After the bearer
 // token checks out, the connection becomes one smux session — one tunnel in
 // the agent's pool — with memd as the smux client (memd initiates work when
@@ -247,7 +260,32 @@ func (h *Handler) serveTunnel(w http.ResponseWriter, r *http.Request) {
 	if err != nil || sessionIdx < 0 {
 		sessionIdx = 0
 	}
+	instance := q.Get("instance")
+	if !instancePattern.MatchString(instance) {
+		http.Error(w, "invalid instance", http.StatusBadRequest)
+		return
+	}
+	takeover := q.Get("takeover") == "1"
 	id := TokenAgentID(token)
+
+	// Conflict check (rc protocol §8): a live pool held by a DIFFERENT agent
+	// instance refuses the handshake unless the newcomer carries the explicit
+	// takeover marker. Incumbent reaps dead tunnels first, so a restarted
+	// agent (whose predecessor's sockets are gone) is never refused.
+	if inc, held := h.hub.Incumbent(id, instance); held && !takeover {
+		logs.InfoUser(claims.UserID,
+			"rc: agent %s (%q) tunnel %d refused: token held by another instance (%q, %d tunnels, up %s)",
+			shortID(id), label, sessionIdx, inc.Info.Label, inc.Tunnels,
+			time.Since(inc.ConnectedAt).Round(time.Second))
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":          "conflict",
+			"label":          inc.Info.Label,
+			"tunnels":        inc.Tunnels,
+			"connected_at":   inc.ConnectedAt.UTC().Format(time.RFC3339),
+			"connected_secs": int64(time.Since(inc.ConnectedAt).Seconds()),
+		})
+		return
+	}
 
 	ws, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -262,7 +300,19 @@ func (h *Handler) serveTunnel(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
-	release := h.hub.Register(id, sessionIdx, AgentInfo{UserID: claims.UserID, Label: label, Port: port}, sess)
+	// A displacing takeover must be distinguishable from a network drop, or
+	// the loser retries forever (a close of the smux carrier alone surfaces
+	// as a generic 1006). Send the SUPERSEDED close frame first; the session
+	// close that follows wakes this handler's select for teardown.
+	supersede := func() {
+		_ = ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(supersededCloseCode, supersededCloseReason),
+			time.Now().Add(2*time.Second))
+	}
+	release := h.hub.Register(id, instance, sessionIdx, AgentInfo{UserID: claims.UserID, Label: label, Port: port}, sess, supersede)
+	if takeover {
+		logs.InfoUser(claims.UserID, "rc: agent %s (%q) instance %s took over the token", shortID(id), label, shortInstance(instance))
+	}
 	logs.InfoUser(claims.UserID, "rc: agent %s (%q) tunnel %d connected (%d tunnels up)",
 		shortID(id), label, sessionIdx, h.hub.Tunnels(id))
 	// Close the window between ifEnabled's check and Register: if the feature
