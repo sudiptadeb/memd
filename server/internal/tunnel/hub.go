@@ -49,9 +49,11 @@ type agentState struct {
 }
 
 type member struct {
-	index int // agent-assigned 0-based slot within its pool
-	sess  *smux.Session
-	since time.Time
+	instance  string // agent-process identity from the handshake ("" = legacy agent)
+	index     int    // agent-assigned 0-based slot within its pool
+	sess      *smux.Session
+	supersede func() // sends the SUPERSEDED close signal before teardown; may be nil
+	since     time.Time
 }
 
 // NewHub returns an empty hub.
@@ -61,12 +63,23 @@ func NewHub() *Hub {
 
 // Register adds one tunnel to the agent's pool and returns its release
 // function. Pool members register and release independently; the agent's info
-// is refreshed by each registration. Per the rc protocol (§8), a registration
-// for a (token, session-index) pair replaces any stale predecessor in that
-// slot: the old session is closed and dropped immediately rather than waiting
-// for its keepalive to notice death. Release is idempotent.
-func (h *Hub) Register(id AgentID, sessionIndex int, info AgentInfo, sess *smux.Session) (release func()) {
-	m := &member{index: sessionIndex, sess: sess, since: time.Now()}
+// is refreshed by each registration. Per the rc protocol (§8) the pool is
+// instance-aware:
+//
+//   - same instance, same slot: the stale predecessor in that slot is closed
+//     and dropped immediately (the reconnect path) rather than waiting for its
+//     keepalive to notice death;
+//   - different instance: the newcomer wins and EVERY tunnel of the displaced
+//     instance is closed, each told it was superseded via its supersede hook.
+//     The handshake-time conflict check (Incumbent) is the consent gate; by
+//     the time a registration lands the newest instance takes the pool, so a
+//     check/register race converges instead of oscillating.
+//
+// supersede, when non-nil, is invoked before this tunnel's session is closed
+// by a displacing registration; it must be safe to call concurrently with the
+// tunnel's normal traffic. Release is idempotent.
+func (h *Hub) Register(id AgentID, instance string, sessionIndex int, info AgentInfo, sess *smux.Session, supersede func()) (release func()) {
+	m := &member{instance: instance, index: sessionIndex, sess: sess, supersede: supersede, since: time.Now()}
 	h.mu.Lock()
 	state := h.agents[id]
 	if state == nil {
@@ -74,16 +87,31 @@ func (h *Hub) Register(id AgentID, sessionIndex int, info AgentInfo, sess *smux.
 		h.agents[id] = state
 	}
 	state.info = info
+	var replaced, displaced []*member
 	live := state.members[:0]
 	for _, other := range state.members {
-		if other.index == sessionIndex {
-			_ = other.sess.Close()
-			continue
+		switch {
+		case other.instance != instance:
+			displaced = append(displaced, other)
+		case other.index == sessionIndex:
+			replaced = append(replaced, other)
+		default:
+			live = append(live, other)
 		}
-		live = append(live, other)
 	}
 	state.members = append(live, m)
 	h.mu.Unlock()
+	// Close outside the lock: supersede hooks do network I/O (a WebSocket
+	// close frame), and session closes trigger release callbacks elsewhere.
+	for _, other := range replaced {
+		_ = other.sess.Close()
+	}
+	for _, other := range displaced {
+		if other.supersede != nil {
+			other.supersede()
+		}
+		_ = other.sess.Close()
+	}
 
 	var once sync.Once
 	return func() {
@@ -105,6 +133,37 @@ func (h *Hub) Register(id AgentID, sessionIndex int, info AgentInfo, sess *smux.
 			}
 		})
 	}
+}
+
+// Incumbent reports the live pool a DIFFERENT agent instance currently holds
+// under this id, for the handshake-time conflict check. Dead tunnels are
+// reaped first — a registration must never be refused against a corpse, or a
+// killed agent could not restart with its own token. Tunnels counts only the
+// other instance's live tunnels and ConnectedAt is the earliest of them.
+func (h *Hub) Incumbent(id AgentID, instance string) (AgentStatus, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state, ok := h.agents[id]
+	if !ok {
+		return AgentStatus{}, false
+	}
+	h.pruneLocked(id, state)
+	var status AgentStatus
+	for _, m := range state.members {
+		if m.instance == instance {
+			continue
+		}
+		status.Tunnels++
+		if status.ConnectedAt.IsZero() || m.since.Before(status.ConnectedAt) {
+			status.ConnectedAt = m.since
+		}
+	}
+	if status.Tunnels == 0 {
+		return AgentStatus{}, false
+	}
+	status.ID = id
+	status.Info = state.info
+	return status, true
 }
 
 // DialStream opens one smux stream to the agent, choosing the least-loaded

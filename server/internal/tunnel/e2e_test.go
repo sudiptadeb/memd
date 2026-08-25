@@ -8,6 +8,8 @@ package tunnel
 // accept proxied traffic.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,25 +220,67 @@ func startBackend(t *testing.T) *backend {
 
 // agent mimics termulaa -rc: a pool of outbound WebSocket tunnels, each an
 // smux.Server whose accepted streams are spliced byte-for-byte to the local
-// backend. It parses no HTTP.
+// backend. It parses no HTTP. Every tunnel of one agent carries the same
+// per-process instance id, and any close frame the server sends is recorded.
 type agent struct {
-	t     *testing.T
-	mu    sync.Mutex
-	conns []*websocket.Conn
+	t        *testing.T
+	instance string
+	mu       sync.Mutex
+	conns    []*websocket.Conn
+	closes   []closeFrame
+}
+
+type closeFrame struct {
+	code int
+	text string
+}
+
+func newInstance(t *testing.T) string {
+	t.Helper()
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// dialTunnel performs one agent handshake with the rendezvous.
+func dialTunnel(r *rig, token, rawQuery string) (*websocket.Conn, *http.Response, error) {
+	wsBase := "ws" + strings.TrimPrefix(r.server.URL, "http")
+	header := http.Header{"Authorization": {"Bearer " + token}}
+	return websocket.DefaultDialer.Dial(wsBase+"/rc/tunnel?"+rawQuery, header)
+}
+
+func tunnelQuery(label, instance string, session int, port string, takeover bool) string {
+	q := url.Values{
+		"agent":   {label},
+		"session": {strconv.Itoa(session)},
+		"port":    {port},
+	}
+	if instance != "" {
+		q.Set("instance", instance)
+	}
+	if takeover {
+		q.Set("takeover", "1")
+	}
+	return q.Encode()
 }
 
 func startAgent(t *testing.T, r *rig, token string, backendAddr, backendPort string, tunnels int) *agent {
 	t.Helper()
-	a := &agent{t: t}
-	wsBase := "ws" + strings.TrimPrefix(r.server.URL, "http")
+	a := &agent{t: t, instance: newInstance(t)}
 	for i := 0; i < tunnels; i++ {
-		u := fmt.Sprintf("%s/rc/tunnel?agent=%s&session=%d&port=%s",
-			wsBase, url.QueryEscape("e2e-box"), i, backendPort)
-		header := http.Header{"Authorization": {"Bearer " + token}}
-		ws, resp, err := websocket.DefaultDialer.Dial(u, header)
+		ws, resp, err := dialTunnel(r, token, tunnelQuery("e2e-box", a.instance, i, backendPort, false))
 		if err != nil {
 			t.Fatalf("agent dial tunnel %d: %v (resp=%v)", i, err, resp)
 		}
+		prev := ws.CloseHandler()
+		ws.SetCloseHandler(func(code int, text string) error {
+			a.mu.Lock()
+			a.closes = append(a.closes, closeFrame{code: code, text: text})
+			a.mu.Unlock()
+			return prev(code, text)
+		})
 		a.mu.Lock()
 		a.conns = append(a.conns, ws)
 		a.mu.Unlock()
@@ -259,6 +304,12 @@ func startAgent(t *testing.T, r *rig, token string, backendAddr, backendPort str
 	waitFor(t, func() bool { return r.handler.hub.Tunnels(TokenAgentID(token)) == tunnels },
 		"agent pool registration")
 	return a
+}
+
+func (a *agent) closeFrames() []closeFrame {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]closeFrame(nil), a.closes...)
 }
 
 // splice is the agent's whole data plane: dial loopback, pump bytes.
