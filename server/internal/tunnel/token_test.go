@@ -118,8 +118,11 @@ func TestMintTTLBounds(t *testing.T) {
 	}{
 		{"zero selects default", 0, DefaultTokenTTL},
 		{"negative selects default", -time.Hour, DefaultTokenTTL},
-		{"above max is clamped", 500 * 24 * time.Hour, MaxTokenTTL},
+		{"above max is clamped", 2 * MaxTokenTTL, MaxTokenTTL},
 		{"explicit within range", 48 * time.Hour, 48 * time.Hour},
+		// A pairing meant to outlive routine expiry: honoured, not clamped
+		// down to the old 90-day ceiling.
+		{"very long ttl is honoured", 10000 * 24 * time.Hour, 10000 * 24 * time.Hour},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

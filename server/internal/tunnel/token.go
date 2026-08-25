@@ -27,8 +27,11 @@ const (
 
 	// DefaultTokenTTL applies when a mint request carries no TTL.
 	DefaultTokenTTL = 30 * 24 * time.Hour
-	// MaxTokenTTL is the hard cap a mint request cannot exceed.
-	MaxTokenTTL = 90 * 24 * time.Hour
+	// MaxTokenTTL is the hard cap a mint request cannot exceed. It is set far
+	// enough out that a long-lived agent can be paired once and left alone;
+	// expiry stops being the retirement mechanism at that point, and rotating
+	// the signing secret becomes the only way to revoke such a token.
+	MaxTokenTTL = 36500 * 24 * time.Hour // 100 years
 
 	// hkdfInfo is the domain-separation string used when the token key is
 	// derived from MEMD_SESSION_SECRET instead of a dedicated secret.

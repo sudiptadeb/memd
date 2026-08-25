@@ -548,7 +548,8 @@ same `Upgrade`/`Connection` lines as in path mode.
   browser is paired via the one-time `/?t=<token>` link, which moves the
   token into an `HttpOnly` cookie.
 - Tokens are stateless and HMAC-signed; there is no server-side token store.
-  Expiry (default 30 days, max 90) is the retirement mechanism. Rotating
+  Expiry (default 30 days, max 36500) is the retirement mechanism, unless a
+  token is minted long enough that it will not retire in practice. Rotating
   `MEMD_RC_TOKEN_SECRET` (or `MEMD_SESSION_SECRET` when no dedicated secret is
   set) invalidates every outstanding tunnel token at once.
 - In both modes the tunnel token is the **agent's** credential. In path mode
