@@ -40,6 +40,9 @@ type Handler struct {
 	live     *doctrine.Live // live-editable doctrines (super-admin only)
 	features *feature.Registry
 	baseURL  string
+	// rcEnabled records whether the termulaa reverse-tunnel rendezvous
+	// (internal/tunnel) is mounted, so /api/session can advertise it.
+	rcEnabled bool
 }
 
 // New builds the web UI handler. sessions carries the cookie-sealing key, oidc
@@ -62,6 +65,12 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 		baseURL:  baseURL,
 	}
 }
+
+// SetRCEnabled records whether the termulaa reverse-tunnel rendezvous is
+// mounted. The SPA cannot probe /rc/api/* for availability — with the feature
+// off those paths fall through to the SPA catch-all and answer 200 with
+// index.html — so /api/session carries an explicit capability flag instead.
+func (h *Handler) SetRCEnabled(on bool) { h.rcEnabled = on }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	// Each app is self-contained under dist/<app>: the dashboard is served at the

@@ -1,12 +1,15 @@
 import { computed, ref } from "vue";
 import { auth as authApi, session as sessionApi } from "@/shared/api";
-import type { AuthConfig, SessionUser } from "@/shared/types";
+import type { AuthConfig, SessionUser, UiFeatures } from "@/shared/types";
 
 // Shared session state (module-level singletons). The app shell calls refresh()
 // once on mount; components read `user`/`checked` and call login()/logout().
 
 const user = ref<SessionUser | null>(null);
 const authConfig = ref<AuthConfig>({ oidc_enabled: false });
+// Optional server features (off until /api/session says otherwise, so the UI
+// never flashes a section the server cannot back).
+const features = ref<UiFeatures>({ rc: false });
 const checked = ref(false);
 
 async function refresh(): Promise<void> {
@@ -14,6 +17,7 @@ async function refresh(): Promise<void> {
     const res = await sessionApi.get();
     user.value = res.user;
     authConfig.value = res.auth;
+    if (res.features) features.value = res.features;
   } finally {
     checked.value = true;
   }
@@ -34,8 +38,11 @@ export function useSession() {
   return {
     user,
     auth: authConfig,
+    features,
     checked,
     isSuperAdmin: computed(() => user.value?.super_admin === true),
+    // The termulaa reverse-tunnel rendezvous is an opt-in server feature.
+    rcEnabled: computed(() => features.value.rc === true),
     refresh,
     login,
     logout,

@@ -46,9 +46,18 @@ export interface AuthConfig {
   oidc_enabled: boolean;
 }
 
+// ui.uiFeatures — which optional server features are mounted. The front-end
+// must not probe an optional route instead: unmounted paths fall through to
+// the SPA catch-all and answer 200 with index.html.
+export interface UiFeatures {
+  // The termulaa reverse-tunnel rendezvous (/rc/api/*) is mounted.
+  rc: boolean;
+}
+
 // Response of GET /api/session (ui.sessionAPI). `user` is null when signed out.
 export interface SessionResponse {
   auth: AuthConfig;
+  features: UiFeatures;
   user: SessionUser | null;
 }
 
@@ -615,6 +624,47 @@ export interface UserDataBundle {
   exported_at: string;
   directories: DirectoryConfig[];
   connectors: ConnectorConfig[];
+}
+
+// --- termulaa reverse tunnel (tunnel/handler.go) ---------------------------
+
+// tunnel.agentView — one currently connected termulaa agent, straight from
+// live hub state. `tunnels` is the number of live pooled connections; an
+// agent with zero tunnels is offline and is normally absent from the list.
+export interface RcAgent {
+  // First 8 hex chars of the agent id (sha256 of its token).
+  id: string;
+  label: string;
+  // The local port termulaa serves on the agent's machine.
+  port: number;
+  tunnels: number;
+  connected_at: string;
+  // Path-mode terminal link (/rc/t/<agentID>/); absent in host mode, where
+  // the terminal lives on the dedicated view host instead.
+  url?: string;
+}
+
+// Response of GET /rc/api/agents (tunnel.agentsAPI). `view_host` is the
+// dedicated viewer hostname in host mode, "" in path mode.
+export interface RcAgentsResponse {
+  agents: RcAgent[];
+  view_host: string;
+}
+
+// Body of POST /rc/api/tokens (tunnel.mintAPI). `ttl` is in DAYS (0 selects
+// the 30-day default; capped at 90).
+export interface MintRcTokenRequest {
+  label: string;
+  ttl: number;
+}
+
+// Response of POST /rc/api/tokens. The token is a secret shown exactly once —
+// render it, let the user copy it, and never persist it anywhere.
+export interface MintRcTokenResponse {
+  token: string;
+  expires_at: string;
+  // Path mode only: the terminal URL this token's agent will appear at.
+  open_url?: string;
 }
 
 // --- Generic responses ----------------------------------------------------

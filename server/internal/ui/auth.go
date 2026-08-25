@@ -33,12 +33,23 @@ type authConfig struct {
 	OIDCEnabled bool `json:"oidc_enabled"`
 }
 
+// uiFeatures tells the front-end which optional server features are mounted,
+// so it can hide their sections entirely. Probing an optional route is not an
+// option: unmounted paths fall through to the SPA catch-all and answer 200.
+type uiFeatures struct {
+	// The termulaa reverse-tunnel rendezvous (/rc/api/*). See Handler.SetRCEnabled.
+	RC bool `json:"rc"`
+}
+
 func (h *Handler) sessionAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	resp := map[string]any{"auth": authConfig{OIDCEnabled: h.oidcEnabled()}}
+	resp := map[string]any{
+		"auth":     authConfig{OIDCEnabled: h.oidcEnabled()},
+		"features": uiFeatures{RC: h.rcEnabled},
+	}
 	if user, ok := h.currentUser(w, r); ok {
 		resp["user"] = sessionUserFromAccount(user)
 	} else {
