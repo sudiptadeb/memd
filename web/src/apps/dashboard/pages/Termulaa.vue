@@ -161,6 +161,40 @@
       </template>
     </article>
   </section>
+
+  <section class="app-section">
+    <div class="section-head">
+      <div class="titles">
+        <h2>termulaa on your phone</h2>
+        <span class="desc">
+          The Android app shows your machines, opens their terminals, and notifies you when a
+          session produces output while you're away — useful when agents are running on remote
+          machines. It signs in with the same memd account.
+        </span>
+      </div>
+    </div>
+
+    <article class="setup-card phone-card">
+      <MIcon name="smartphone" class="phone-icon" />
+      <div class="phone-body">
+        <a
+          class="btn primary"
+          href="https://github.com/sudiptadeb/termulaa/releases/latest/download/termulaa.apk"
+          download
+        >
+          <MIcon name="download" />
+          Download the APK
+        </a>
+        <p class="setup-hint">
+          Android only. Sideloaded — your phone will ask you to allow installs from your browser.
+          Source in the
+          <a href="https://github.com/sudiptadeb/termulaa" target="_blank" rel="noopener noreferrer"
+            >termulaa repo</a
+          >.
+        </p>
+      </div>
+    </article>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -504,6 +538,29 @@ a.session-card:hover .open-icon {
 
 .code-copy {
   flex-shrink: 0;
+}
+
+/* --- Phone card --- */
+.phone-card {
+  flex-direction: row;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.phone-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+.phone-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
 }
 
 /* --- Mint form --- */
