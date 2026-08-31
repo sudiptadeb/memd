@@ -197,9 +197,9 @@ func gitWebURL(host, path string) string {
 
 // Connector grants an agent access to one or more directories.
 type Connector struct {
-	ID           string    `json:"id"`
-	OwnerUserID  string    `json:"owner_user_id,omitempty"`
-	TeamID       string    `json:"team_id,omitempty"`
+	ID           string   `json:"id"`
+	OwnerUserID  string   `json:"owner_user_id,omitempty"`
+	TeamID       string   `json:"team_id,omitempty"`
 	Name         string   `json:"name"`
 	Kind         string   `json:"kind,omitempty"` // "mcp" or "http"; empty means "mcp" for older configs
 	Token        string   `json:"token"`

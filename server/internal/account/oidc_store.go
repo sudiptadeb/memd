@@ -133,7 +133,7 @@ func (s *Store) UnlinkUserOIDC(ctx context.Context, userID string) error {
 	return rowsAffectedOrNotFound(res)
 }
 
-// AdoptOIDCUsersIntoProvider links orphaned OIDC users (provider_id = '') whose
+// AdoptOIDCUsersIntoProvider links orphaned OIDC users (empty provider_id) whose
 // recorded issuer matches fromIssuer to the given provider slot. It returns the
 // number adopted and the usernames skipped because another account already
 // holds the same subject under that provider. This is the admin repair tool for

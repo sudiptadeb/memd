@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 10
+const latestSchemaVersion = 11
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -107,6 +107,20 @@ var schemaStatements = []string{
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (owner_user_id, id)
 	)`,
+	// Long-lived phone-app credentials (schema v11). Only the sha256 hex of a
+	// token is stored; the raw "mat_..." secret is handed to the app exactly
+	// once when a pairing code is redeemed. There is no expiry — revocation
+	// (revoked_at) is the lifecycle.
+	`CREATE TABLE IF NOT EXISTS app_tokens (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		token_hash TEXT NOT NULL UNIQUE,
+		label TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		last_used_at TEXT,
+		revoked_at TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_app_tokens_user_id ON app_tokens(user_id)`,
 	// directory_owner_user_id is the directory's owner, which differs from the
 	// connector's owner when a team member attaches a teammate's shared
 	// directory.

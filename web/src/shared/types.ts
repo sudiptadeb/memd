@@ -695,6 +695,31 @@ export interface MintRcTokenResponse {
   open_url?: string;
 }
 
+// --- Phone app pairing (ui/apptokens.go) -----------------------------------
+
+// Response of POST /api/app/pair (ui.appPairAPI). One outstanding code per
+// user: minting again replaces the previous code. The code is 9 chars, single
+// use, and expires after 5 minutes; display it grouped XXX-XXX-XXX (the server
+// accepts it with or without dashes and in any case).
+export interface AppPairResponse {
+  code: string;
+  expires_at: string;
+}
+
+// ui.appTokenView — one paired phone (a long-lived, revocable app token). The
+// token secret itself is only ever returned to the app at redeem time.
+export interface AppTokenView {
+  id: string;
+  label: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+// Response of GET /api/app/tokens (ui.appTokensAPI).
+export interface AppTokensResponse {
+  tokens: AppTokenView[];
+}
+
 // --- Generic responses ----------------------------------------------------
 
 // The `{ "ok": true }` acknowledgement many mutating handlers return.

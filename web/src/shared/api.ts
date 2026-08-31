@@ -13,6 +13,8 @@ import type {
   AdminUserResponse,
   AdminUsersResponse,
   AllTasksResponse,
+  AppPairResponse,
+  AppTokensResponse,
   ApiErrorBody,
   BrowseResponse,
   ConnectorRequest,
@@ -539,6 +541,30 @@ export const rc = {
       method: "POST",
       body: body as unknown as JsonBody,
     });
+  },
+};
+
+// --- Phone app pairing (ui/apptokens.go) --------------------------------------
+
+// The dashboard side of app pairing. The app-side counterparts —
+// POST /api/app/redeem (code -> token) and POST /api/app/session (token ->
+// cookie) — are called by the Android app, never from here.
+export const app = {
+  // POST /api/app/pair — ui.appPairAPI. Mints a single-use pairing code for
+  // the signed-in user (5-minute TTL; a new mint replaces the previous code).
+  pair(): Promise<AppPairResponse> {
+    return request<AppPairResponse>("/api/app/pair", { method: "POST" });
+  },
+
+  // GET /api/app/tokens — ui.appTokensAPI. The user's paired phones.
+  tokens(): Promise<AppTokensResponse> {
+    return request<AppTokensResponse>("/api/app/tokens");
+  },
+
+  // DELETE /api/app/tokens/:id — ui.appTokenAPI. Un-pairs a phone (204). The
+  // phone's next session refresh fails with 401 and it signs itself out.
+  revoke(id: string): Promise<void> {
+    return request<void>(`/api/app/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };
 
