@@ -47,6 +47,10 @@ type Handler struct {
 	rc             RCController
 	rcKillSwitch   bool
 	rcKeyAvailable bool
+	// Phone-app pairing state (see apptokens.go): pending pairing codes are
+	// in-memory only, and the redeem endpoint carries a small per-IP throttle.
+	appPairing    *pairingStore
+	redeemLimiter *ipLimiter
 }
 
 // RCController is the runtime handle on the reverse-tunnel rendezvous: the
@@ -70,13 +74,15 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 		live = doctrine.NewLive()
 	}
 	return &Handler{
-		reg:      reg,
-		accounts: accounts,
-		sessions: sessions,
-		oidc:     oidcMgr,
-		live:     live,
-		features: feature.Builtins(),
-		baseURL:  baseURL,
+		reg:           reg,
+		accounts:      accounts,
+		sessions:      sessions,
+		oidc:          oidcMgr,
+		live:          live,
+		features:      feature.Builtins(),
+		baseURL:       baseURL,
+		appPairing:    newPairingStore(),
+		redeemLimiter: newIPLimiter(redeemAttemptsPerWindow, redeemWindow),
 	}
 }
 
@@ -116,6 +122,14 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/login", h.oidcLogin)
 	mux.HandleFunc("/auth/callback", h.oidcCallback)
 	mux.HandleFunc("/api/data", h.requireUser(h.userDataAPI))
+	// Phone-app pairing (apptokens.go). Redeem and session are unauthenticated
+	// mounts by design: redeem holds only a pairing code, session a bearer app
+	// token. The tokens/{id} route resolves auth itself — /self is bearer-only.
+	mux.HandleFunc("/api/app/pair", h.requireUser(h.appPairAPI))
+	mux.HandleFunc("/api/app/redeem", h.appRedeemAPI)
+	mux.HandleFunc("/api/app/session", h.appSessionAPI)
+	mux.HandleFunc("/api/app/tokens", h.requireUser(h.appTokensAPI))
+	mux.HandleFunc("/api/app/tokens/", h.appTokenAPI)
 	mux.HandleFunc("/api/admin/users", h.requireSuperAdmin(h.adminUsersAPI))
 	mux.HandleFunc("/api/admin/users/", h.requireSuperAdmin(h.adminUserAPI))
 	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))

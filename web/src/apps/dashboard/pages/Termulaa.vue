@@ -177,14 +177,20 @@
     <article class="setup-card phone-card">
       <MIcon name="smartphone" class="phone-icon" />
       <div class="phone-body">
-        <a
-          class="btn primary"
-          href="https://github.com/sudiptadeb/termulaa/releases/latest/download/termulaa.apk"
-          download
-        >
-          <MIcon name="download" />
-          Download the APK
-        </a>
+        <div class="phone-actions">
+          <a
+            class="btn primary"
+            href="https://github.com/sudiptadeb/termulaa/releases/latest/download/termulaa.apk"
+            download
+          >
+            <MIcon name="download" />
+            Download the APK
+          </a>
+          <button class="btn secondary" type="button" :disabled="pairing" @click="pair">
+            <MIcon :name="pairing ? 'refresh-cw' : 'plug'" :class="pairing ? 'spin' : ''" />
+            Pair the app
+          </button>
+        </div>
         <p class="setup-hint">
           Android only. Sideloaded — your phone will ask you to allow installs from your browser.
           Source in the
@@ -192,7 +198,58 @@
             >termulaa repo</a
           >.
         </p>
+
+        <template v-if="pairCode">
+          <span class="field-label">Enter this code in the app</span>
+          <div class="pair-code-row">
+            <code class="pair-code">{{ groupedPairCode }}</code>
+            <span class="pair-countdown">expires in {{ pairCountdown }}</span>
+            <button
+              class="icon-btn"
+              type="button"
+              title="New code"
+              aria-label="Mint a new pairing code"
+              :disabled="pairing"
+              @click="pair"
+            >
+              <MIcon name="refresh-cw" :class="pairing ? 'spin' : ''" />
+            </button>
+          </div>
+          <p class="setup-hint">
+            The code is single use and pairs the app with your account — no password needed, so
+            this works with Google/SSO sign-in too.
+            <a class="pair-link" :href="pairDeepLink"
+              >Reading this on the phone? Tap here to pair.</a
+            >
+          </p>
+        </template>
+        <p class="setup-hint" v-else-if="pairExpired">
+          The pairing code expired. Mint a new one with "Pair the app".
+        </p>
       </div>
+    </article>
+
+    <article class="setup-card" v-if="phones.length">
+      <div class="setup-card-head">
+        <h3>Paired phones</h3>
+      </div>
+      <ul class="phone-list">
+        <li class="phone-row" v-for="phone in phones" :key="phone.id">
+          <MIcon name="smartphone" class="phone-row-icon" />
+          <span class="phone-label">{{ phone.label || "(unnamed)" }}</span>
+          <span class="phone-meta">
+            paired {{ formatDate(phone.created_at) }}
+            <template v-if="phone.last_used_at">
+              · last used {{ formatDate(phone.last_used_at) }}</template
+            >
+          </span>
+          <span class="spacer"></span>
+          <button class="btn ghost" type="button" @click="revokePhone(phone)">Revoke</button>
+        </li>
+      </ul>
+      <p class="setup-hint">
+        Revoking un-pairs the phone: its next sign-in refresh fails and the app signs itself out.
+      </p>
     </article>
   </section>
 </template>
@@ -201,12 +258,12 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import MIcon from "@/shared/components/MIcon.vue";
-import { rc as rcApi, ApiError } from "@/shared/api";
+import { app as appApi, rc as rcApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
 import { useSession } from "@/shared/session";
 import { copyToClipboard, formatDate, pluralize } from "@/shared/utils";
 import { useRcAgents } from "../rcAgents";
-import type { MintRcTokenResponse, RcAgent } from "@/shared/types";
+import type { AppPairResponse, AppTokenView, MintRcTokenResponse, RcAgent } from "@/shared/types";
 
 // The termulaa section: live remote-terminal sessions (each opens in a new
 // tab) plus the install-and-pair flow. The rc feature is opt-in server-side;
@@ -252,6 +309,9 @@ async function poll(): Promise<void> {
       toast(e instanceof ApiError ? e.message : String(e), "error");
     }
   }
+  // While a pairing code is showing, keep the phones list fresh so the phone
+  // appears the moment it redeems the code.
+  if (pairCode.value) void refreshPhones();
 }
 
 function startPolling(): void {
@@ -277,11 +337,13 @@ function onVisibility(): void {
 onMounted(() => {
   void poll();
   startPolling();
+  void refreshPhones();
   document.addEventListener("visibilitychange", onVisibility);
 });
 
 onUnmounted(() => {
   stopPolling();
+  stopPairTimer();
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
@@ -428,6 +490,103 @@ const mintedOpenText = computed(() => {
   if (viewHost.value) return "https://" + viewHost.value + "/";
   return "";
 });
+
+// --- Phone app pairing ------------------------------------------------------
+
+// One outstanding code per user: "Pair the app" (and the regenerate button)
+// mints a fresh code, replacing the previous one server-side. The code is
+// short-lived (5 minutes) and single use, so it is fine to display in clear.
+const pairing = ref(false);
+const pairCode = ref<AppPairResponse | null>(null);
+const pairExpired = ref(false);
+const pairRemaining = ref(0); // whole seconds until expiry
+let pairTimer: number | undefined;
+
+async function pair(): Promise<void> {
+  if (pairing.value) return;
+  pairing.value = true;
+  try {
+    pairCode.value = await appApi.pair();
+    pairExpired.value = false;
+    tickPairCountdown();
+    startPairTimer();
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : String(e), "error");
+  } finally {
+    pairing.value = false;
+  }
+}
+
+function startPairTimer(): void {
+  if (pairTimer !== undefined) return;
+  pairTimer = window.setInterval(tickPairCountdown, 1000);
+}
+
+function stopPairTimer(): void {
+  if (pairTimer === undefined) return;
+  window.clearInterval(pairTimer);
+  pairTimer = undefined;
+}
+
+function tickPairCountdown(): void {
+  if (!pairCode.value) return;
+  const left = Math.floor((new Date(pairCode.value.expires_at).getTime() - Date.now()) / 1000);
+  pairRemaining.value = Math.max(0, left);
+  if (left <= 0) {
+    pairCode.value = null;
+    pairExpired.value = true;
+    stopPairTimer();
+  }
+}
+
+// XXX-XXX-XXX, the form the app shows in its code field.
+const groupedPairCode = computed(() => {
+  const code = pairCode.value?.code ?? "";
+  if (code.length !== 9) return code;
+  return `${code.slice(0, 3)}-${code.slice(3, 6)}-${code.slice(6)}`;
+});
+
+const pairCountdown = computed(() => {
+  const m = Math.floor(pairRemaining.value / 60);
+  const s = pairRemaining.value % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+});
+
+// For people reading this dashboard on the phone itself: the app registers
+// the termulaa://pair scheme and redeems the prefilled code straight away.
+const pairDeepLink = computed(() => {
+  if (!pairCode.value) return "";
+  return (
+    "termulaa://pair?server=" +
+    encodeURIComponent(window.location.origin) +
+    "&code=" +
+    encodeURIComponent(pairCode.value.code)
+  );
+});
+
+// --- Paired phones ----------------------------------------------------------
+
+const phones = ref<AppTokenView[]>([]);
+
+async function refreshPhones(): Promise<void> {
+  try {
+    phones.value = (await appApi.tokens()).tokens ?? [];
+  } catch {
+    // Non-fatal: the list refreshes on the next poll/action.
+  }
+}
+
+async function revokePhone(phone: AppTokenView): Promise<void> {
+  const name = phone.label || "this phone";
+  if (!window.confirm(`Un-pair ${name}? The app on it will be signed out.`)) return;
+  try {
+    await appApi.revoke(phone.id);
+    toast("Phone un-paired", "success");
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : String(e), "error");
+  }
+  await refreshPhones();
+}
 </script>
 
 <style scoped>
@@ -561,6 +720,86 @@ a.session-card:hover .open-icon {
   gap: 10px;
   align-items: flex-start;
   min-width: 0;
+}
+
+.phone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* --- App pairing --- */
+.pair-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pair-code {
+  padding: 8px 12px;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  user-select: all;
+}
+
+.pair-countdown {
+  color: var(--fg-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pair-link {
+  color: var(--accent);
+}
+
+.pair-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Paired phones --- */
+.phone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phone-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.phone-row-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.phone-label {
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.phone-meta {
+  color: var(--fg-3);
+  font-size: 12px;
 }
 
 /* --- Mint form --- */

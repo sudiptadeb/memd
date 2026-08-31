@@ -33,8 +33,8 @@ type Edge struct {
 
 // Graph is the full link graph plus a few precomputed summaries.
 type Graph struct {
-	Nodes   []Node `json:"nodes"`
-	Edges   []Edge `json:"edges"`
+	Nodes   []Node   `json:"nodes"`
+	Edges   []Edge   `json:"edges"`
 	Orphans []string `json:"orphans"` // concept files with no links in or out
 	Broken  []Edge   `json:"broken"`  // edges whose target is missing
 }
