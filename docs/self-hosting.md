@@ -582,7 +582,10 @@ The restart is handled by a systemd path unit (`memd-restart.path`) that
 watches `releases/current/memd` and restarts `memd.service` whenever the file
 changes, so the app user never needs `sudo`.
 
-One-shot setup, as root on the host, after `git pull` in `<app-root>/repo`:
+One-shot setup, as root on the host, after `git pull` in `<app-root>/repo`.
+`build/ci-deploy.sh` must already be on `origin/main`: every deploy resets the
+checkout to `main`, so a forced command pinned from an unmerged branch deletes
+itself on the first run (`ci-setup.sh` warns about this).
 
 ```bash
 sudo bash <app-root>/repo/build/ci-setup.sh --host <public-ip>

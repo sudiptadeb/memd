@@ -56,6 +56,16 @@ APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 [[ -f "$DEPLOY_SCRIPT" ]] || { echo "$DEPLOY_SCRIPT missing; pull main in $REPO first" >&2; exit 1; }
 chmod 755 "$DEPLOY_SCRIPT"
 
+# ci-deploy.sh resets the checkout to origin/main on every run. If main does
+# not carry the script yet (setup was run from a branch), the first deploy
+# removes the forced command out from under itself and every later run fails
+# with "No such file or directory".
+if runuser -u "$APP_USER" -- git -C "$REPO" fetch --quiet origin main 2>/dev/null \
+   && ! runuser -u "$APP_USER" -- git -C "$REPO" cat-file -e origin/main:build/ci-deploy.sh 2>/dev/null; then
+  echo "WARNING: build/ci-deploy.sh is not on origin/main yet; merge it to main before the" >&2
+  echo "         first deploy, or that deploy will delete the forced command it runs as" >&2
+fi
+
 echo "app user : $APP_USER"
 echo "app root : $APP_ROOT"
 echo "binary   : $BINARY"
