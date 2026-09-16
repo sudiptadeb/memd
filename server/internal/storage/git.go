@@ -58,6 +58,14 @@ func validateRemoteURL(raw string) error {
 	return nil
 }
 
+// ValidateRemoteURL is the exported form of validateRemoteURL for callers
+// outside the package that persist a remote before ever constructing a Git
+// (the backup settings form).
+func ValidateRemoteURL(raw string) error { return validateRemoteURL(raw) }
+
+// ValidateBranch is the exported form of validateBranch.
+func ValidateBranch(branch string) error { return validateBranch(branch) }
+
 // validateBranch rejects branch names that could be interpreted as a
 // command-line flag or that contain characters git forbids in refs.
 func validateBranch(branch string) error {
@@ -499,6 +507,37 @@ func (g *Git) Write(path string, content []byte, message string) error {
 func (g *Git) Flush() error {
 	return g.flushDirty("memd: manual checkpoint")
 }
+
+// FlushWithMessage commits everything dirty in the working copy under the
+// given message and pushes. Unlike Flush it does not consult the pending
+// message recorded by Write/Move/Delete; callers that populate the working
+// copy directly (the backup runner) use it to label the commit themselves.
+func (g *Git) FlushWithMessage(msg string) error {
+	if strings.TrimSpace(msg) == "" {
+		return errors.New("commit message required")
+	}
+	g.mu.Lock()
+	g.pendingHave = false
+	g.pendingMsg = ""
+	g.mu.Unlock()
+	return g.flushDirty(msg)
+}
+
+// HeadShort returns the abbreviated commit id of the working copy's HEAD.
+func (g *Git) HeadShort() (string, error) {
+	cmd := exec.Command("git", "-C", g.workdir, "rev-parse", "--short", "HEAD")
+	cmd.Env = g.cmdEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git rev-parse --short HEAD: %v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// WorkDir returns the path of the working copy.
+func (g *Git) WorkDir() string { return g.workdir }
 
 // Close stops timers and flushes any pending commits.
 func (g *Git) Close() error {

@@ -604,6 +604,70 @@ export interface SaveRCRequest {
   enabled: boolean;
 }
 
+// ui.backupStatusView — the persisted outcome of the last backup run.
+export interface BackupStatus {
+  last_run_at: string | null;
+  last_ok: boolean;
+  last_error: string;
+  last_archive: string;
+  last_size: number;
+  last_commit: string;
+  // "scheduled" | "manual"
+  last_trigger: string;
+}
+
+// ui.backupConfigView — the admin-facing state of the encrypted daily backup.
+// The access token and passphrase are never returned; only their presence is.
+export interface BackupConfig {
+  enabled: boolean;
+  remote_url: string;
+  branch: string;
+  auth_username: string;
+  has_auth_token: boolean;
+  has_passphrase: boolean;
+  // "HH:MM" on a 24-hour UTC clock.
+  daily_at_utc: string;
+  // 0 keeps every archive.
+  retention_days: number;
+  // False when the account database is in-memory and cannot be snapshotted.
+  supported: boolean;
+  running: boolean;
+  next_run_at: string | null;
+  status: BackupStatus;
+}
+
+// Response of GET / PUT /api/admin/backup and POST /api/admin/backup/run.
+export interface BackupConfigResponse {
+  backup: BackupConfig;
+}
+
+// Body of PUT /api/admin/backup (ui.updateBackup). auth_token and passphrase
+// are pointers on the Go side: omit to keep the stored value, "" to clear.
+export interface SaveBackupRequest {
+  enabled: boolean;
+  remote_url: string;
+  branch: string;
+  auth_username: string;
+  auth_token?: string | null;
+  passphrase?: string | null;
+  daily_at_utc: string;
+  retention_days: number;
+}
+
+// Body of POST /api/admin/backup/check (ui.adminBackupCheckAPI). Every field
+// is optional; provided values override the stored settings for the test.
+export interface BackupCheckRequest {
+  remote_url?: string;
+  branch?: string;
+  auth_username?: string;
+  auth_token?: string;
+}
+
+export interface BackupCheckResponse {
+  ok: boolean;
+  message: string;
+}
+
 // Body of POST /api/admin/oidc/relink (ui.adminOIDCRelinkAPI).
 export interface OIDCRelinkRequest {
   from_issuer: string;

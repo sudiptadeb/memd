@@ -641,20 +641,72 @@ new deploy fails intentionally.
 
 ## Backups
 
-Back up at least:
+memd has a built-in encrypted backup. A super admin configures it in the admin
+console (`/admin` → **Backup**): a private Git repository (HTTPS URL, Git
+username, personal access token with write access to the repository's
+contents) and a passphrase. From then on memd seals a snapshot of its own
+database once a day at the configured UTC time, and on demand with **Back up
+now**, and commits + pushes it to that repository. **Download backup** hands
+you the same archive as a file without touching the repository.
+
+What an archive holds (a tar.gz sealed with AES-256-GCM under an Argon2id key
+derived from the passphrase):
+
+- `memd.db` — a consistent `VACUUM INTO` snapshot of the account database:
+  users, teams, directory and connector records, Git PATs, OIDC settings and
+  the backup settings themselves. It is verified with `PRAGMA integrity_check`
+  before it is packed.
+- `manifest.json` — format/version, creation time, memd version, hostname.
+- `env` — the `MEMD_SESSION_SECRET` and `MEMD_SESSION_MAX_AGE` lines from the
+  process environment, when set, so sessions can survive a rebuild.
+
+Layout of the backup repository:
 
 ```
-<app-root>/runtime/data/
+README.md                          what the files are + the restore command
+backups/LATEST                     name of the newest archive
+backups/memd-20260916T030000Z.memdbk
+backups/memd-20260915T030000Z.memdbk
+...
 ```
 
-This contains the account database, connector records, Git PATs, and cloned Git
-working copies. Connector tokens and Git PATs are credentials, so treat backups
-as sensitive.
+Each run commits as `memd backup <name> (scheduled|manual)`. Archives older
+than **Retention days** (default 30; 0 keeps all) are deleted from the
+repository after each run, judged by the timestamp in the file name. The
+working copy lives under `<config dir>/workdirs/_backup`.
 
-Memory content should ideally live in user-owned Git repositories configured in
-the UI. Configure private repositories as HTTPS remotes backed by repo-scoped
-PATs entered in the Git directory form. Back up local-folder memory directories
-separately if you use them.
+The passphrase is the only key. An archive can only be opened with the
+passphrase that was in force when it was made — memd keeps no history of old
+passphrases, so changing it does not re-seal existing archives, and losing it
+means those backups cannot be read by anyone. Store it outside memd (a password
+manager), never in the backup repository. The token and passphrase are stored
+in `memd.db` like the other control-plane secrets and are never returned by the
+API; the admin page only shows whether they are set.
+
+Restoring on a fresh host, with the service stopped:
+
+```bash
+git clone https://github.com/<you>/memd-backups.git
+name="$(cat memd-backups/backups/LATEST)"
+export MEMD_BACKUP_PASSPHRASE='<the passphrase>'   # or omit and be prompted
+memd backup inspect --in "memd-backups/backups/$name"
+memd backup restore --in "memd-backups/backups/$name" \
+  --out <app-root>/runtime/data/memd.db            # add --force to overwrite
+```
+
+`restore` refuses to overwrite an existing database unless `--force` is given,
+removes stale `-wal`/`-shm` files next to the destination, verifies the restored
+file, and — if the archive carried environment lines — writes them beside it as
+`env.restored`. That file is not applied automatically: merge the lines you want
+(at least `MEMD_SESSION_SECRET`, if existing sessions and termulaa tokens should
+keep working) into `<app-root>/runtime/env`, recreate the rest of the
+environment from the [Clone And Prepare](#clone-and-prepare) section, and start
+the service. Git working copies under `workdirs/` are re-cloned from their
+remotes on demand and are not part of the archive.
+
+Local-folder memory directories are not included either; back those up
+separately. Memory content should ideally live in user-owned Git repositories
+configured in the UI (HTTPS remotes backed by repo-scoped PATs).
 
 ## Security Notes
 

@@ -227,6 +227,23 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// VacuumInto writes a compact, consistent snapshot of the live database to
+// dest using SQLite's VACUUM INTO. The snapshot is a plain (non-WAL) database
+// file that can be opened independently; the live database is not locked for
+// writers beyond the snapshot's read transaction. dest must not already exist.
+func (s *Store) VacuumInto(ctx context.Context, dest string) error {
+	if s.cfg.SQLitePath == "" || s.cfg.SQLitePath == ":memory:" {
+		return errors.New("snapshot requires a file-backed sqlite database")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("snapshot destination %s already exists", dest)
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, dest); err != nil {
+		return fmt.Errorf("vacuum into: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) IsInitialized(ctx context.Context) (bool, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&n); err != nil {

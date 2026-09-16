@@ -13,9 +13,12 @@ import type {
   AdminUserResponse,
   AdminUsersResponse,
   AllTasksResponse,
+  ApiErrorBody,
   AppPairResponse,
   AppTokensResponse,
-  ApiErrorBody,
+  BackupCheckRequest,
+  BackupCheckResponse,
+  BackupConfigResponse,
   BrowseResponse,
   ConnectorRequest,
   ConnectorSecretResponse,
@@ -27,24 +30,25 @@ import type {
   CreateTeamRequest,
   DirectoryFilesResponse,
   DirectoryTasksResponse,
-  GraphResponse,
   Doctrine,
   DoctrineMutateResponse,
   DoctrinesResponse,
   GitCheckReport,
   GitConfig,
+  GraphResponse,
   InvitePreview,
-  LogsResponse,
   LoginResponse,
   LogoutResponse,
+  LogsResponse,
   MintRcTokenRequest,
   MintRcTokenResponse,
   OIDCConfigResponse,
   OIDCRelinkRequest,
   OIDCRelinkResponse,
   OkResponse,
-  RCConfigResponse,
   RcAgentsResponse,
+  RCConfigResponse,
+  SaveBackupRequest,
   SaveDoctrineRequest,
   SaveOIDCRequest,
   SaveRCRequest,
@@ -52,9 +56,9 @@ import type {
   SetTeamMemberRoleRequest,
   SetUserDisabledRequest,
   SetUserPasswordRequest,
-  Team,
   TaskMutateRequest,
   TaskMutateResponse,
+  Team,
   UpdateDirectoryRequest,
   UpdateDirectoryResponse,
   UpdateTeamRequest,
@@ -653,6 +657,46 @@ export const admin = {
         method: "PUT",
         body: body as unknown as JsonBody,
       });
+    },
+  },
+
+  // ui/admin_backup.go: adminBackupAPI / adminBackupRunAPI /
+  // adminBackupCheckAPI / adminBackupDownloadAPI.
+  backup: {
+    // GET /api/admin/backup — ui.adminBackupAPI. Current settings (no
+    // secrets), last-run status and the next scheduled run.
+    get(): Promise<BackupConfigResponse> {
+      return request<BackupConfigResponse>("/api/admin/backup");
+    },
+
+    // PUT /api/admin/backup — ui.adminBackupAPI (updateBackup). Validates,
+    // persists and re-arms the scheduler at once.
+    save(body: SaveBackupRequest): Promise<BackupConfigResponse> {
+      return request<BackupConfigResponse>("/api/admin/backup", {
+        method: "PUT",
+        body: body as unknown as JsonBody,
+      });
+    },
+
+    // POST /api/admin/backup/run — ui.adminBackupRunAPI. Backs up now
+    // (synchronous); 409 while another run is in progress.
+    run(): Promise<BackupConfigResponse> {
+      return request<BackupConfigResponse>("/api/admin/backup/run", { method: "POST" });
+    },
+
+    // POST /api/admin/backup/check — ui.adminBackupCheckAPI. Non-destructive
+    // repository connection test with the stored (or given) credentials.
+    check(body: BackupCheckRequest = {}): Promise<BackupCheckResponse> {
+      return request<BackupCheckResponse>("/api/admin/backup/check", {
+        method: "POST",
+        body: body as unknown as JsonBody,
+      });
+    },
+
+    // GET /api/admin/backup/download — ui.adminBackupDownloadAPI. A plain
+    // navigation target: streams a freshly sealed archive as a file.
+    downloadUrl(): string {
+      return "/api/admin/backup/download";
     },
   },
 

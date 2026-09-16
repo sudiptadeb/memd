@@ -13,8 +13,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/memd/server/internal/backup"
 	"github.com/sudiptadeb/memd/server/internal/config"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
 	"github.com/sudiptadeb/memd/server/internal/feature"
@@ -47,6 +49,9 @@ type Handler struct {
 	rc             RCController
 	rcKillSwitch   bool
 	rcKeyAvailable bool
+	// backup is the encrypted-backup runner (internal/backup); nil when the
+	// runner could not be constructed at boot.
+	backup BackupController
 	// Phone-app pairing state (see apptokens.go): pending pairing codes are
 	// in-memory only, and the redeem endpoint carries a small per-IP throttle.
 	appPairing    *pairingStore
@@ -61,6 +66,19 @@ type RCController interface {
 	Enabled() bool
 	SetEnabled(bool)
 	ViewHost() string
+}
+
+// BackupController is the runtime handle on the encrypted daily backup: the
+// admin console reads its schedule, triggers runs, tests the repository and
+// streams archives through this. Implemented by *backup.Runner.
+type BackupController interface {
+	Supported() bool
+	Running() bool
+	NextRunAt() (time.Time, bool)
+	Notify()
+	Run(ctx context.Context, trigger string) (account.BackupStatus, error)
+	Check(ctx context.Context, settings account.BackupSettings) (ok bool, message string)
+	Build(ctx context.Context) (backup.Archive, error)
 }
 
 // New builds the web UI handler. sessions carries the cookie-sealing key, oidc
@@ -97,6 +115,9 @@ func (h *Handler) SetRC(ctl RCController, killSwitch, keyAvailable bool) {
 	h.rcKillSwitch = killSwitch
 	h.rcKeyAvailable = keyAvailable
 }
+
+// SetBackup wires the backup runner into the admin console.
+func (h *Handler) SetBackup(ctl BackupController) { h.backup = ctl }
 
 // rcActive is the EFFECTIVE rc state: the feature can run and its runtime
 // switch is on. This is what /api/session advertises, so the dashboard's
@@ -135,6 +156,10 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/oidc", h.requireSuperAdmin(h.adminOIDCAPI))
 	mux.HandleFunc("/api/admin/oidc/relink", h.requireSuperAdmin(h.adminOIDCRelinkAPI))
 	mux.HandleFunc("/api/admin/rc", h.requireSuperAdmin(h.adminRCAPI))
+	mux.HandleFunc("/api/admin/backup", h.requireSuperAdmin(h.adminBackupAPI))
+	mux.HandleFunc("/api/admin/backup/run", h.requireSuperAdmin(h.adminBackupRunAPI))
+	mux.HandleFunc("/api/admin/backup/check", h.requireSuperAdmin(h.adminBackupCheckAPI))
+	mux.HandleFunc("/api/admin/backup/download", h.requireSuperAdmin(h.adminBackupDownloadAPI))
 	mux.HandleFunc("/api/admin/doctrines", h.requireSuperAdmin(h.adminDoctrinesAPI))
 	mux.HandleFunc("/api/admin/doctrines/", h.requireSuperAdmin(h.adminDoctrineAPI))
 	mux.HandleFunc("/api/teams", h.requireUser(h.teamsAPI))

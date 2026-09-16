@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/memd/server/internal/backup"
 	"github.com/sudiptadeb/memd/server/internal/doctrine"
 	"github.com/sudiptadeb/memd/server/internal/feature"
 	"github.com/sudiptadeb/memd/server/internal/logs"
@@ -135,6 +136,30 @@ func RunOptions(opts Options) error {
 	}
 	uiHandler.SetRC(rcCtl, tunnel.KillSwitchActive(), tunnel.KeyAvailable())
 
+	// Encrypted daily backup of memd.db to a Git repository, configured by a
+	// super admin in the admin console. The scheduler gets its own context:
+	// ctx is rebound to the signal context below, and the loop must outlive
+	// that assignment and stop only at shutdown (next to reg.Close()).
+	backupStop := func() {}
+	if backupRunner, err := backup.New(accountStore, backup.Options{}); err != nil {
+		logs.Warn("backup: %v; built-in backups unavailable", err)
+	} else {
+		uiHandler.SetBackup(backupRunner)
+		var backupCtx context.Context
+		backupCtx, backupStop = context.WithCancel(context.Background())
+		backupRunner.Start(backupCtx)
+		switch settings, _, err := accountStore.GetBackupSettings(ctx); {
+		case err != nil:
+			logs.Warn("backup: read settings: %v", err)
+		case !backupRunner.Supported():
+			logs.Info("backup unsupported: the account database is in-memory")
+		case !settings.Enabled:
+			logs.Info("backup disabled (configure it in the admin console)")
+		default:
+			logs.Info("backup scheduled daily at %s UTC branch=%s", settings.DailyAtUTC, settings.Branch)
+		}
+	}
+
 	fmt.Fprintf(opts.Stdout, "memd web UI:  %s\n", baseURL)
 	fmt.Fprintln(opts.Stdout, "Press Ctrl-C to stop.")
 	logs.Info("memd %s started on %s", version.Value, baseURL)
@@ -167,11 +192,13 @@ func RunOptions(opts Options) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		shutdownErr := srv.Shutdown(shutdownCtx)
+		backupStop()
 		if err := reg.Close(); err != nil {
 			logs.Warn("registry close: %v", err)
 		}
 		return shutdownErr
 	case err := <-errCh:
+		backupStop()
 		if err := reg.Close(); err != nil {
 			logs.Warn("registry close: %v", err)
 		}

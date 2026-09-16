@@ -24,6 +24,10 @@
         <MIcon name="info" />
         <span>Doctrines</span>
       </router-link>
+      <router-link class="admin-tab" active-class="on" to="/backup" title="Encrypted backup">
+        <MIcon name="hard-drive" />
+        <span>Backup</span>
+      </router-link>
     </nav>
 
     <span class="spacer"></span>
