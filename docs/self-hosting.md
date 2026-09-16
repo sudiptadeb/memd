@@ -34,6 +34,9 @@ The examples use placeholders. Replace:
   rollback.sh
 ```
 
+`repo/build/ci-deploy.sh` and `repo/build/ci-setup.sh` add GitHub Actions deploys
+on top of this layout; see "CI Deploys From GitHub" below.
+
 `repo/` is build input. `runtime/` is persistent state and should be backed up.
 `releases/current/memd` is the stable executable path used by systemd.
 
@@ -559,6 +562,54 @@ same `Upgrade`/`Connection` lines as in path mode.
   straight from the in-process pool — an agent with no live tunnel shows as
   absent, so what you see is what is actually connected.
 
+
+## CI Deploys From GitHub
+
+Once the manual setup above works, pushes to `main` can deploy themselves. The
+repository ships the two halves:
+
+- `.github/workflows/deploy.yml` — the GitHub Actions workflow. On every push to
+  `main` (or a manual run) it opens one SSH connection to the host.
+- `build/ci-deploy.sh` — what that connection runs. The deploy key is pinned in
+  `authorized_keys` to this single forced command with `restrict`, so the key
+  cannot open a shell, forward ports, or run anything else. It syncs
+  `<app-root>/repo` to `origin/main`, builds, swaps the binary into
+  `releases/current/`, then waits for the service to answer on the new binary.
+  If it does not within 60 seconds the previous binary is restored and the run
+  fails, so a green run means the service is serving.
+
+The restart is handled by a systemd path unit (`memd-restart.path`) that
+watches `releases/current/memd` and restarts `memd.service` whenever the file
+changes, so the app user never needs `sudo`.
+
+One-shot setup, as root on the host, after `git pull` in `<app-root>/repo`:
+
+```bash
+sudo bash <app-root>/repo/build/ci-setup.sh --host <public-ip>
+```
+
+It reads the app user and root from the installed `memd.service`, installs the
+path unit, generates an ed25519 deploy key and pins it, and prints the four
+values to store as repository secrets (Settings -> Secrets and variables ->
+Actions):
+
+| Secret | Value |
+|--------|-------|
+| `DEPLOY_HOST` | the `--host` you passed (an IP keeps SSH independent of DNS or a CDN proxy) |
+| `DEPLOY_USER` | `<app-user>` |
+| `DEPLOY_SSH_KEY` | the private key, printed once and not kept on the host |
+| `DEPLOY_KNOWN_HOSTS` | the host's ed25519 key line |
+
+Pass `--pubkey <file>` instead to pin a key you generated elsewhere. Optionally
+set the repository variable `DEPLOY_URL` to `https://<domain>`; the workflow
+then verifies the public site after each deploy.
+
+The forced command runs without a login profile, so `go` and `npm` must be
+reachable at `/usr/local/go/bin`, `/usr/local/bin`, `/usr/bin`, or under the app
+user's `~/go/bin` / `~/.local/bin`. `ci-setup.sh` warns when they are not.
+
+Rollback after a bad CI deploy is automatic. For a manual one, `rollback.sh`
+above still works and the path unit restarts the service for you.
 
 ## Future Deploys
 

@@ -1,10 +1,17 @@
 name: Deploy to production
 
 # Pushes to main (and manual runs) deploy to the memd host. The SSH key used
-# here is pinned on the server to a single forced command (ci-deploy.sh), so it
-# can only sync main + redeploy — it cannot open a shell or run anything else.
-# The service restart happens on the server via a systemd path unit that watches
-# the deployed binary; nothing here needs sudo.
+# here is pinned on the server to a single forced command
+# (build/ci-deploy.sh, installed by build/ci-setup.sh), so it can only sync
+# main + redeploy — it cannot open a shell or run anything else. The service
+# restart happens on the server via a systemd path unit that watches the
+# deployed binary; nothing here needs sudo. ci-deploy.sh health-checks the new
+# binary and restores the previous one if it does not come up, so a red run
+# means the old build is still serving.
+#
+# Secrets: DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER, DEPLOY_KNOWN_HOSTS
+# (ci-setup.sh prints all four). Optional repository variable DEPLOY_URL:
+# the public site to verify after the deploy, e.g. https://memd.example.com.
 
 on:
   push:
@@ -26,6 +33,12 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
+          for v in DEPLOY_SSH_KEY DEPLOY_HOST DEPLOY_USER DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!v}" ]; then
+              echo "::error::secret $v is not set; run build/ci-setup.sh on the host and store its output"
+              exit 1
+            fi
+          done
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
@@ -37,3 +50,12 @@ jobs:
               -o ConnectTimeout=20 \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               "$DEPLOY_USER@$DEPLOY_HOST" deploy
+
+      - name: Verify public site
+        if: vars.DEPLOY_URL != ''
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          curl -fsS -o /dev/null --retry 5 --retry-delay 3 --retry-all-errors \
+               --max-time 15 -w 'public site answered %{http_code} in %{time_total}s\n' \
+               "$DEPLOY_URL/"
