@@ -51,15 +51,29 @@ func CheckGitConnection(cfg GitConfig) GitConnectionReport {
 		return report
 	}
 
-	if !add("read", "Read remote repository", g.runNoWorkdir("ls-remote", g.remoteURL), "Verified HTTPS credentials can read refs.") {
+	heads, err := g.outputNoWorkdir("ls-remote", "--heads", g.remoteURL)
+	if !add("read", "Read remote repository", err, "Verified HTTPS credentials can read refs.") {
 		return report
 	}
+	// A repository with no branches yet needs a different push check: the
+	// first branch pushed to an empty GitHub/GitLab repository becomes its
+	// default branch, which the cleanup step is then refused to delete, and
+	// the leftover branch breaks every later check.
+	emptyRemote := strings.TrimSpace(heads) == ""
 	if !add("clone", "Clone repository", g.clone(), "Cloned into a temporary workspace.") {
 		return report
 	}
 
 	checkBranch := fmt.Sprintf("memd-connection-check/%d", time.Now().UnixNano())
 	if !add("write", "Create local test commit", g.createConnectionCheckCommit(checkBranch), "Created a commit only in the temporary workspace.") {
+		return report
+	}
+
+	if emptyRemote {
+		if !add("push_dry_run", "Verify push access (dry run)", g.runQuiet("push", "--dry-run", "origin", "HEAD:refs/heads/"+checkBranch), "The repository is empty, so a real test branch would become its default branch; write access was verified with a dry-run push instead.") {
+			return report
+		}
+		report.OK = true
 		return report
 	}
 
@@ -74,15 +88,16 @@ func CheckGitConnection(cfg GitConfig) GitConnectionReport {
 	return report
 }
 
-func (g *Git) runNoWorkdir(args ...string) error {
+func (g *Git) outputNoWorkdir(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Env = g.cmdEnv()
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return nil
+	return stdout.String(), nil
 }
 
 func (g *Git) createConnectionCheckCommit(branch string) error {
@@ -90,16 +105,26 @@ func (g *Git) createConnectionCheckCommit(branch string) error {
 		return err
 	}
 	path := filepath.Join(g.workdir, ".memd-connection-check")
-	body := []byte("temporary memd connection check\n")
+	// The body carries the branch name so the file always differs from any
+	// earlier check that was left behind on the remote; an unchanged file
+	// would make the commit fail with "nothing to commit".
+	body := []byte("temporary memd connection check " + branch + "\n")
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return err
 	}
 	if err := g.runQuiet("add", ".memd-connection-check"); err != nil {
 		return err
 	}
-	return g.runQuiet(
+	// git commit reports "nothing to commit" on stdout, so capture both
+	// streams here rather than the stderr-only runQuiet.
+	cmd := exec.Command("git", "-C", g.workdir,
 		"-c", "user.name="+g.authorName,
 		"-c", "user.email="+g.authorEmail,
 		"commit", "-m", "memd: connection check",
 	)
+	cmd.Env = g.cmdEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
