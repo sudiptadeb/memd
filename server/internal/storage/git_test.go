@@ -249,6 +249,82 @@ func TestCheckGitConnectionPushesAndCleansTemporaryBranch(t *testing.T) {
 	}
 }
 
+// TestCheckGitConnectionEmptyRemoteLeavesNoBranch: against a repository with
+// no branches yet, the check verifies push access with a dry run and pushes
+// nothing. A real test branch would become the repository's default branch
+// on GitHub, the cleanup step would then be refused, and the leftover branch
+// would break every later check.
+func TestCheckGitConnectionEmptyRemoteLeavesNoBranch(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runGitRaw(t, "", "init", "--bare", remote)
+
+	report := CheckGitConnection(GitConfig{
+		RemoteURL:   remote,
+		Branch:      "main",
+		AuthorName:  "memd test",
+		AuthorEmail: "memd@example.com",
+	})
+	if !report.OK {
+		t.Fatalf("report not ok: %+v", report)
+	}
+	var sawDryRun bool
+	for _, check := range report.Checks {
+		if !check.OK {
+			t.Fatalf("check failed: %+v", check)
+		}
+		if check.ID == "push_dry_run" {
+			sawDryRun = true
+		}
+		if check.ID == "push_pr_branch" || check.ID == "cleanup" {
+			t.Fatalf("empty remote must not get a real test branch: %+v", check)
+		}
+	}
+	if !sawDryRun {
+		t.Fatalf("expected a dry-run push check, got %+v", report.Checks)
+	}
+	out := runGitRaw(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads")
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("empty remote gained branches:\n%s", out)
+	}
+}
+
+// TestCheckGitConnectionSurvivesLeftoverCheckBranch: a remote whose only
+// branch is an earlier check's temporary branch (the state an empty GitHub
+// repository ends up in after one check) still passes. The check file it
+// carries must not make the new test commit fail with "nothing to commit".
+func TestCheckGitConnectionSurvivesLeftoverCheckBranch(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runGitRaw(t, "", "init", "--bare", remote)
+	seed := filepath.Join(root, "seed")
+	runGitRaw(t, "", "clone", remote, seed)
+	runGit(t, seed, "checkout", "-B", "memd-connection-check/1")
+	if err := os.WriteFile(filepath.Join(seed, ".memd-connection-check"), []byte("temporary memd connection check\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, seed, "add", "-A")
+	runGit(t, seed, "-c", "user.name=memd test", "-c", "user.email=memd@example.com", "commit", "-m", "memd: connection check")
+	runGit(t, seed, "push", "-u", "origin", "memd-connection-check/1")
+	runGitRaw(t, "", "--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/memd-connection-check/1")
+
+	report := CheckGitConnection(GitConfig{
+		RemoteURL:   remote,
+		Branch:      "main",
+		AuthorName:  "memd test",
+		AuthorEmail: "memd@example.com",
+	})
+	if !report.OK {
+		t.Fatalf("report not ok: %+v", report)
+	}
+	out := runGitRaw(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads")
+	if strings.TrimSpace(out) != "refs/heads/memd-connection-check/1" {
+		t.Fatalf("remote branches changed unexpectedly:\n%s", out)
+	}
+}
+
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
