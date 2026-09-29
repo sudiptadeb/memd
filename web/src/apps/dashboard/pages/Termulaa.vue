@@ -59,8 +59,8 @@
         <h2>Set up a machine</h2>
         <span class="desc">
           termulaa runs on macOS and Linux. Its PTY layer is POSIX-only, so there is no
-          native Windows build — on Windows, install it inside WSL2. Install it, then pair
-          it with a token minted here.
+          native Windows build — on Windows, install it inside WSL2. Install it, pair it
+          with a token minted here, then hand the agent to a service so it keeps running.
         </span>
       </div>
     </div>
@@ -150,6 +150,21 @@
             <MIcon :name="copiedKey === 'pair' ? 'check' : 'copy'" />
           </button>
         </div>
+        <div class="pair-status" role="status">
+          <span class="dot" :class="mintedAgent ? 'success' : ''">
+            {{ mintedAgent ? pluralize(mintedAgent.tunnels, "tunnel") + " up" : "waiting for the agent" }}
+          </span>
+          <span v-if="mintedAgent">
+            Connected. If that is still the foreground command above, continue with step 3 so
+            the agent outlives its terminal.
+          </span>
+          <span v-else>This updates by itself once the agent dials in.</span>
+        </div>
+        <p class="setup-hint">
+          The command runs in the foreground and stops when its terminal closes. It saves the
+          server, token and label to ~/.termulaa/rc.json first, so every later start is a bare
+          "termulaa -rc" with no token on the command line.
+        </p>
         <p class="setup-hint" v-if="mintedOpenURL">
           Once the agent connects, its terminal opens at
           <a :href="mintedOpenURL" target="_blank" rel="noopener noreferrer">{{ mintedOpenText }}</a>
@@ -159,6 +174,108 @@
           Once the agent connects, it will show up in the sessions list above.
         </p>
       </template>
+    </article>
+
+    <article class="setup-card">
+      <div class="setup-card-head">
+        <span class="step">Step 3</span>
+        <h3>Keep it running</h3>
+      </div>
+      <div class="seg-control setup-tabs" role="tablist" aria-label="How to keep the agent running">
+        <button
+          v-for="tab in keepTabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          :aria-selected="keepTab === tab.id ? 'true' : 'false'"
+          :class="keepTab === tab.id ? 'on' : ''"
+          @click="keepTabPicked = tab.id"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+      <div class="code-block">
+        <code>{{ activeKeep.command }}</code>
+        <button
+          class="icon-btn code-copy"
+          type="button"
+          :title="copiedKey === 'keep' ? 'Copied' : 'Copy command'"
+          :aria-label="copiedKey === 'keep' ? 'Command copied' : 'Copy keep-running command'"
+          @click="copy(activeKeep.command, 'keep')"
+        >
+          <MIcon :name="copiedKey === 'keep' ? 'check' : 'copy'" />
+        </button>
+      </div>
+      <p class="setup-hint">
+        Press Ctrl-C on the step 2 command first — a second agent on the same token is refused.
+        {{ activeKeep.hint }}
+      </p>
+    </article>
+  </section>
+
+  <section class="app-section">
+    <div class="section-head">
+      <div class="titles">
+        <h2>What keeps running</h2>
+        <span class="desc">
+          How long a machine stays reachable depends on how its agent was started in step 3.
+        </span>
+      </div>
+    </div>
+
+    <div class="mtable-wrap persist-table">
+      <table class="mtable mtable-stack">
+        <thead>
+          <tr>
+            <th>Started as</th>
+            <th>Close the terminal</th>
+            <th>Log out</th>
+            <th>Restart the machine</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in persistence" :key="row.setup">
+            <td data-label="Started as"><span class="cell-strong">{{ row.setup }}</span></td>
+            <td data-label="Close the terminal">{{ row.terminal }}</td>
+            <td data-label="Log out">{{ row.logout }}</td>
+            <td data-label="Restart the machine">{{ row.restart }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <article class="setup-card">
+      <ul class="persist-notes">
+        <li v-for="note in persistenceNotes" :key="note.topic">
+          <b>{{ note.topic }}</b>
+          {{ note.text }}
+        </li>
+      </ul>
+    </article>
+  </section>
+
+  <section class="app-section">
+    <div class="section-head">
+      <div class="titles">
+        <h2>Keyboard shortcuts</h2>
+        <span class="desc">
+          Inside a terminal tab. {{ shortcutGuideKey }} or the ? in the corner shows this list
+          there, and every shortcut can be rebound.
+        </span>
+      </div>
+    </div>
+
+    <article class="setup-card">
+      <ul class="shortcut-list">
+        <li class="shortcut-row" v-for="s in shortcuts" :key="s.label">
+          <span class="shortcut-label">{{ s.label }}</span>
+          <kbd class="shortcut-key">{{ s.keys }}</kbd>
+        </li>
+      </ul>
+      <p class="setup-hint" v-if="!isMac">
+        These use Ctrl, so Ctrl+D (shell EOF) and Ctrl+W (word erase) go to termulaa instead of
+        the shell — rebind them if you need those.
+      </p>
     </article>
   </section>
 
@@ -368,6 +485,14 @@ function toggleSetup(): void {
 const installScript =
   "curl -fsSL https://raw.githubusercontent.com/sudiptadeb/termulaa/main/install.sh | bash -s -- --service";
 
+// What --service really does: the terminal server starts now, but the tunnel
+// agent's service stays off until a token is saved — hence steps 2 and 3.
+const installHint =
+  "Installs the latest release to ~/.local/bin and starts the terminal server as a per-user " +
+  "service. The tunnel agent's service is installed too, but stays off until you pair. If the " +
+  "installer reports that the services failed to load — typical over SSH, when this account " +
+  "has no desktop login session — carry on and pick \"No service\" in step 3.";
+
 interface InstallTab {
   id: string;
   label: string;
@@ -380,13 +505,13 @@ const installTabs: InstallTab[] = [
     id: "macos",
     label: "macOS",
     command: installScript,
-    hint: "Installs the latest release and registers it as a per-user service, so the agent survives reboots.",
+    hint: installHint,
   },
   {
     id: "linux",
     label: "Linux",
     command: installScript,
-    hint: "Installs the latest release and registers it as a per-user service, so the agent survives reboots.",
+    hint: installHint,
   },
   {
     id: "wsl",
@@ -401,7 +526,9 @@ const installTabs: InstallTab[] = [
     id: "go",
     label: "Go",
     command: "go install github.com/sudiptadeb/termulaa/src/cmd/termulaa@latest",
-    hint: "Builds from source with your own Go toolchain. No service is set up — you run the agent yourself.",
+    hint:
+      "Builds from source with your own Go toolchain. No service is set up — pick " +
+      "\"No service\" in step 3 to start the terminal server and the agent yourself.",
   },
 ];
 
@@ -409,6 +536,157 @@ const installTab = ref(installTabs[0].id);
 const activeInstall = computed(
   () => installTabs.find((t) => t.id === installTab.value) ?? installTabs[0],
 );
+
+// --- Keep-running tabs ------------------------------------------------------
+
+// The pairing command is a foreground process; these hand the agent to
+// something that outlives the terminal. The service commands start the unit
+// the installer wrote. "No service" is the fallback for accounts launchd or
+// systemd cannot serve (SSH into a Mac account with no desktop login, a
+// container, a Go install): it starts both processes, since there the terminal
+// server is not running either.
+interface KeepTab {
+  id: string;
+  label: string;
+  command: string;
+  hint: string;
+}
+
+const keepTabs: KeepTab[] = [
+  {
+    id: "launchd",
+    label: "macOS",
+    command: "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.termulaa.rc.plist",
+    hint:
+      "The agent then starts at login and restarts on failure. This needs the account to be " +
+      "logged in at the Mac's desktop; if launchctl answers with error 125, use \"No service\".",
+  },
+  {
+    id: "systemd",
+    label: "Linux / WSL2",
+    command: "systemctl --user enable --now termulaa-rc",
+    hint:
+      "The agent then starts at boot, restarts on failure and keeps running after you log out. " +
+      "This needs a systemd user session; without one, use \"No service\".",
+  },
+  {
+    id: "manual",
+    label: "No service",
+    command:
+      "mkdir -p ~/.termulaa/logs\n" +
+      'nohup "$(command -v termulaa)" >> ~/.termulaa/logs/server.log 2>&1 &\n' +
+      'nohup "$(command -v termulaa)" -rc >> ~/.termulaa/logs/rc.log 2>&1 &',
+    hint:
+      "Starts the terminal server and the agent detached from your terminal, so both survive " +
+      "closing it or an SSH disconnect — but not a reboot. The first nohup line exits " +
+      "harmlessly if a terminal server is already running. Stop both with \"pkill -x termulaa\".",
+  },
+];
+
+const keepTabFor: Record<string, string> = {
+  macos: "launchd",
+  linux: "systemd",
+  wsl: "systemd",
+  go: "manual",
+};
+
+// Follows the install tab until the user picks one here.
+const keepTabPicked = ref("");
+const keepTab = computed(() => keepTabPicked.value || keepTabFor[installTab.value] || keepTabs[0].id);
+const activeKeep = computed(() => keepTabs.find((t) => t.id === keepTab.value) ?? keepTabs[0]);
+
+// --- Persistence ------------------------------------------------------------
+
+// What each way of starting the agent in step 3 survives. The rows mirror the
+// keep-running tabs; WSL2 is split out because its lifetime is bound to the
+// WSL VM, not to the Linux service inside it.
+const persistence = [
+  {
+    setup: "macOS service",
+    terminal: "Keeps running",
+    logout: "Stops",
+    restart: "Starts when you log in at the desktop",
+  },
+  {
+    setup: "Linux service",
+    terminal: "Keeps running",
+    logout: "Keeps running",
+    restart: "Starts at boot, no login needed",
+  },
+  {
+    setup: "WSL2 service",
+    terminal: "Keeps running while WSL is up",
+    logout: "Stops",
+    restart: "Starts when WSL is next started",
+  },
+  {
+    setup: "No service",
+    terminal: "Keeps running",
+    logout: "Keeps running",
+    restart: "Stays down until you run step 3 again",
+  },
+];
+
+const persistenceNotes = [
+  {
+    topic: "macOS.",
+    text:
+      "A Mac starts a user's services only when that user logs in at its desktop. An SSH login " +
+      "does not count, and one user logging in does not start another user's services. With " +
+      "FileVault on, nothing starts until the disk is unlocked. Starting at boot with nobody " +
+      "logged in needs a LaunchDaemon, set up by hand with sudo.",
+  },
+  {
+    topic: "Linux.",
+    text:
+      "Running without a login relies on lingering, which the installer switches on. If it " +
+      "reported that it could not, run \"loginctl enable-linger\" yourself; without it the " +
+      "services stop at logout and start at login.",
+  },
+  {
+    topic: "WSL2.",
+    text:
+      "The services run only while WSL itself is running, and Windows does not start WSL at " +
+      "boot. Open a WSL window, or start WSL from a scheduled task, to bring them up.",
+  },
+  {
+    topic: "Your terminals.",
+    text:
+      "They live in the terminal server, not in the tunnel agent, so restarting the agent loses " +
+      "nothing. When the terminal server restarts, running programs end; tabs, scrollback and " +
+      "the working directory come back.",
+  },
+  {
+    topic: "Token expiry.",
+    text:
+      "The agent exits once its token is no longer valid, however it was started. Mint a new " +
+      "token and repeat steps 2 and 3.",
+  },
+];
+
+// --- Keyboard shortcuts -----------------------------------------------------
+
+// termulaa's default bindings (its ui/keybindings.js), shown in the notation
+// of the machine this dashboard is open on — that is where the keys are
+// pressed. A user's own rebinds live in the terminal page's localStorage and
+// are not visible from here.
+const isMac = navigator.platform.indexOf("Mac") !== -1;
+
+function shortcutKeys(key: string, shift = false): string {
+  if (isMac) return (shift ? "⇧" : "") + "⌘" + key;
+  return "Ctrl+" + (shift ? "Shift+" : "") + key;
+}
+
+const shortcuts = [
+  { label: "Split pane vertically", keys: shortcutKeys("D") },
+  { label: "Split pane horizontally", keys: shortcutKeys("D", true) },
+  { label: "Close pane", keys: shortcutKeys("W") },
+  { label: "Focus next pane", keys: shortcutKeys("]") },
+  { label: "Focus previous pane", keys: shortcutKeys("[") },
+  { label: "Shortcut guide", keys: shortcutKeys("/") },
+];
+
+const shortcutGuideKey = shortcutKeys("/");
 
 // --- Copy (shared confirmation state) ---------------------------------------
 
@@ -482,6 +760,34 @@ const mintedOpenURL = computed(() => {
     return "https://" + viewHost.value + "/?t=" + encodeURIComponent(minted.value.token);
   }
   return "";
+});
+
+// The live agent started with the freshly minted token, once it has dialled
+// in. An agent id is the sha256 of its token and the list carries the first 8
+// hex chars; path mode has the full id in open_url, host mode hashes the token
+// here (crypto.subtle needs a secure context — without one the status simply
+// stays on "waiting").
+const mintedAgentId = ref("");
+
+watch(minted, async (m) => {
+  mintedAgentId.value = "";
+  if (!m) return;
+  const fromURL = m.open_url?.match(/\/rc\/t\/([0-9a-f]{8})/);
+  if (fromURL) {
+    mintedAgentId.value = fromURL[1];
+    return;
+  }
+  if (!window.crypto?.subtle) return;
+  const sum = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(m.token));
+  if (minted.value !== m) return;
+  mintedAgentId.value = Array.from(new Uint8Array(sum).slice(0, 4), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+});
+
+const mintedAgent = computed(() => {
+  if (!mintedAgentId.value) return undefined;
+  return agents.value.find((a) => a.id === mintedAgentId.value && a.tunnels > 0);
 });
 
 const mintedOpenText = computed(() => {
@@ -664,6 +970,8 @@ a.session-card:hover .open-icon {
 
 .setup-hint a {
   color: var(--accent);
+  /* Terminal URLs carry a 64-char agent id; let them wrap inside the card. */
+  overflow-wrap: anywhere;
 }
 
 .setup-hint a:hover {
@@ -697,6 +1005,77 @@ a.session-card:hover .open-icon {
 
 .code-copy {
   flex-shrink: 0;
+}
+
+/* --- Persistence --- */
+.persist-table {
+  max-width: 760px;
+}
+
+.persist-table td {
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+.persist-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  color: var(--fg-3);
+  font-size: 12px;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.persist-notes b {
+  color: var(--fg-2);
+  font-weight: 600;
+}
+
+/* Stacked on phones the value sits right of its label; let long ones wrap. */
+@media (max-width: 640px) {
+  .persist-table td {
+    align-items: baseline;
+    text-align: right;
+  }
+
+  .persist-table td::before {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+/* --- Keyboard shortcuts --- */
+.shortcut-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+.shortcut-key {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.3;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 /* --- Phone card --- */
@@ -842,6 +1221,16 @@ a.session-card:hover .open-icon {
   line-height: 1.45;
   background: color-mix(in oklab, var(--warning) 9%, transparent);
   border-radius: var(--radius-sm);
+}
+
+.pair-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .mint-once .icon {
