@@ -519,7 +519,8 @@ const installTabs: InstallTab[] = [
     command: installScript,
     hint:
       "Run this inside your WSL2 distribution — the terminal you get is a WSL shell, not PowerShell. " +
-      "The agent only runs while WSL is running, and --service needs systemd enabled " +
+      "The agent only runs while WSL is running (see \"What keeps running\" below), and " +
+      "--service needs systemd enabled " +
       "([boot] systemd=true in /etc/wsl.conf).",
   },
   {
@@ -615,7 +616,7 @@ const persistence = [
   },
   {
     setup: "WSL2 service",
-    terminal: "Keeps running while WSL is up",
+    terminal: "Stops soon after the last WSL window closes",
     logout: "Stops",
     restart: "Starts when WSL is next started",
   },
@@ -646,8 +647,10 @@ const persistenceNotes = [
   {
     topic: "WSL2.",
     text:
-      "The services run only while WSL itself is running, and Windows does not start WSL at " +
-      "boot. Open a WSL window, or start WSL from a scheduled task, to bring them up.",
+      "The services run only while WSL itself is running. By default Windows shuts WSL down " +
+      "about a minute after its last window closes, and does not start it at boot. To keep the " +
+      "machine reachable, start a hidden WSL process at Windows login and disable the idle " +
+      "timeouts in .wslconfig.",
   },
   {
     topic: "Your terminals.",
