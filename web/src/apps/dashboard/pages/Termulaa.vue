@@ -59,8 +59,9 @@
         <h2>Set up a machine</h2>
         <span class="desc">
           termulaa runs on macOS and Linux. Its PTY layer is POSIX-only, so there is no
-          native Windows build — on Windows, install it inside WSL2. Install it, pair it
-          with a token minted here, then hand the agent to a service so it keeps running.
+          native Windows build — on Windows, install it inside WSL2. Mint a token here, then run
+          one command on the machine: it installs termulaa, pairs it with this server and keeps
+          it running.
         </span>
       </div>
     </div>
@@ -68,40 +69,7 @@
     <article class="setup-card">
       <div class="setup-card-head">
         <span class="step">Step 1</span>
-        <h3>Install termulaa</h3>
-      </div>
-      <div class="seg-control setup-tabs" role="tablist" aria-label="Installation method">
-        <button
-          v-for="tab in installTabs"
-          :key="tab.id"
-          type="button"
-          role="tab"
-          :aria-selected="installTab === tab.id ? 'true' : 'false'"
-          :class="installTab === tab.id ? 'on' : ''"
-          @click="installTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
-      <div class="code-block">
-        <code>{{ activeInstall.command }}</code>
-        <button
-          class="icon-btn code-copy"
-          type="button"
-          :title="copiedKey === 'install' ? 'Copied' : 'Copy command'"
-          :aria-label="copiedKey === 'install' ? 'Command copied' : 'Copy install command'"
-          @click="copy(activeInstall.command, 'install')"
-        >
-          <MIcon :name="copiedKey === 'install' ? 'check' : 'copy'" />
-        </button>
-      </div>
-      <p class="setup-hint">{{ activeInstall.hint }}</p>
-    </article>
-
-    <article class="setup-card">
-      <div class="setup-card-head">
-        <span class="step">Step 2</span>
-        <h3>Pair it with this server</h3>
+        <h3>Mint a pairing token</h3>
       </div>
       <form class="mint-form" @submit.prevent="mint">
         <div class="mint-field">
@@ -128,88 +96,91 @@
           Mint token
         </button>
       </form>
-
-      <template v-if="minted">
-        <div class="mint-once">
-          <MIcon name="triangle-alert" />
-          <span>
-            This token is shown once and never stored here — copy the command now. The token expires
-            {{ formatDate(minted.expires_at) }}.
-          </span>
-        </div>
-        <span class="field-label">Run on the machine</span>
-        <div class="code-block">
-          <code>{{ pairCommand }}</code>
-          <button
-            class="icon-btn code-copy"
-            type="button"
-            :title="copiedKey === 'pair' ? 'Copied' : 'Copy command'"
-            :aria-label="copiedKey === 'pair' ? 'Command copied' : 'Copy pairing command'"
-            @click="copy(pairCommand, 'pair')"
-          >
-            <MIcon :name="copiedKey === 'pair' ? 'check' : 'copy'" />
-          </button>
-        </div>
-        <div class="pair-status" role="status">
-          <span class="dot" :class="mintedAgent ? 'success' : ''">
-            {{ mintedAgent ? pluralize(mintedAgent.tunnels, "tunnel") + " up" : "waiting for the agent" }}
-          </span>
-          <span v-if="mintedAgent">
-            Connected. If that is still the foreground command above, continue with step 3 so
-            the agent outlives its terminal.
-          </span>
-          <span v-else>This updates by itself once the agent dials in.</span>
-        </div>
-        <p class="setup-hint">
-          The command runs in the foreground and stops when its terminal closes. It saves the
-          server, token and label to ~/.termulaa/rc.json first, so every later start is a bare
-          "termulaa -rc" with no token on the command line.
-        </p>
-        <p class="setup-hint" v-if="mintedOpenURL">
-          Once the agent connects, its terminal opens at
-          <a :href="mintedOpenURL" target="_blank" rel="noopener noreferrer">{{ mintedOpenText }}</a>
-          — and it will show up in the sessions list above.
-        </p>
-        <p class="setup-hint" v-else>
-          Once the agent connects, it will show up in the sessions list above.
-        </p>
-      </template>
+      <p class="setup-hint" v-if="!minted">
+        The install command for the machine appears here once the token is minted.
+      </p>
     </article>
 
-    <article class="setup-card">
+    <article class="setup-card" v-if="minted">
       <div class="setup-card-head">
-        <span class="step">Step 3</span>
-        <h3>Keep it running</h3>
+        <span class="step">Step 2</span>
+        <h3>Run on the machine</h3>
       </div>
-      <div class="seg-control setup-tabs" role="tablist" aria-label="How to keep the agent running">
+      <div class="mint-once">
+        <MIcon name="triangle-alert" />
+        <span>
+          This token is shown once and never stored here — copy the command now. The token expires
+          {{ formatDate(minted.expires_at) }}.
+        </span>
+      </div>
+      <div class="seg-control setup-tabs" role="tablist" aria-label="Operating system">
         <button
-          v-for="tab in keepTabs"
+          v-for="tab in installTabs"
           :key="tab.id"
           type="button"
           role="tab"
-          :aria-selected="keepTab === tab.id ? 'true' : 'false'"
-          :class="keepTab === tab.id ? 'on' : ''"
-          @click="keepTabPicked = tab.id"
+          :aria-selected="installTab === tab.id ? 'true' : 'false'"
+          :class="installTab === tab.id ? 'on' : ''"
+          @click="installTab = tab.id"
         >
           {{ tab.label }}
         </button>
       </div>
       <div class="code-block">
-        <code>{{ activeKeep.command }}</code>
+        <code>{{ installCommand }}</code>
         <button
           class="icon-btn code-copy"
           type="button"
-          :title="copiedKey === 'keep' ? 'Copied' : 'Copy command'"
-          :aria-label="copiedKey === 'keep' ? 'Command copied' : 'Copy keep-running command'"
-          @click="copy(activeKeep.command, 'keep')"
+          :title="copiedKey === 'install' ? 'Copied' : 'Copy command'"
+          :aria-label="copiedKey === 'install' ? 'Command copied' : 'Copy install command'"
+          @click="copy(installCommand, 'install')"
         >
-          <MIcon :name="copiedKey === 'keep' ? 'check' : 'copy'" />
+          <MIcon :name="copiedKey === 'install' ? 'check' : 'copy'" />
         </button>
       </div>
+      <div class="pair-status" role="status">
+        <span class="dot" :class="mintedAgent ? 'success' : ''">
+          {{ mintedAgent ? pluralize(mintedAgent.tunnels, "tunnel") + " up" : "waiting for the agent" }}
+        </span>
+        <span v-if="mintedAgent">Connected — the machine is paired and running.</span>
+        <span v-else>This updates by itself once the agent dials in.</span>
+      </div>
+      <p class="setup-hint">{{ activeInstall.hint }}</p>
       <p class="setup-hint">
-        Press Ctrl-C on the step 2 command first — a second agent on the same token is refused.
-        {{ activeKeep.hint }}
+        Already paired, or the token expired? Mint a new token and re-run the command: it
+        re-pairs, restarts only the tunnel agent and leaves open terminals alone.
       </p>
+      <p class="setup-hint" v-if="mintedOpenURL">
+        Once the agent connects, its terminal opens at
+        <a :href="mintedOpenURL" target="_blank" rel="noopener noreferrer">{{ mintedOpenText }}</a>
+        — and it will show up in the sessions list above.
+      </p>
+      <p class="setup-hint" v-else>
+        Once the agent connects, it will show up in the sessions list above.
+      </p>
+
+      <details class="go-alt">
+        <summary>Go toolchain instead</summary>
+        <div class="go-alt-body">
+          <div class="code-block">
+            <code>{{ goCommand }}</code>
+            <button
+              class="icon-btn code-copy"
+              type="button"
+              :title="copiedKey === 'go' ? 'Copied' : 'Copy commands'"
+              :aria-label="copiedKey === 'go' ? 'Commands copied' : 'Copy Go install commands'"
+              @click="copy(goCommand, 'go')"
+            >
+              <MIcon :name="copiedKey === 'go' ? 'check' : 'copy'" />
+            </button>
+          </div>
+          <p class="setup-hint">
+            Builds from source and saves the pairing to ~/.termulaa/rc.json. No service is set
+            up: start the terminal server with "termulaa" and the agent with "termulaa -rc"
+            yourself, and keep both running.
+          </p>
+        </div>
+      </details>
     </article>
   </section>
 
@@ -218,7 +189,9 @@
       <div class="titles">
         <h2>What keeps running</h2>
         <span class="desc">
-          How long a machine stays reachable depends on how its agent was started in step 3.
+          How long a machine stays reachable depends on how the install command could start it.
+          It uses the system's service manager where one serves the account, and otherwise
+          falls back to running detached — the installer picks that by itself and says so.
         </span>
       </div>
     </div>
@@ -249,6 +222,30 @@
         <li v-for="note in persistenceNotes" :key="note.topic">
           <b>{{ note.topic }}</b>
           {{ note.text }}
+        </li>
+      </ul>
+    </article>
+  </section>
+
+  <section class="app-section">
+    <div class="section-head">
+      <div class="titles">
+        <h2>Updating</h2>
+        <span class="desc">Nothing updates by itself — an update happens only when you run one of these.</span>
+      </div>
+    </div>
+
+    <article class="setup-card">
+      <ul class="persist-notes">
+        <li>
+          <b>Re-run the install command.</b>
+          The full update: new binary, services restarted onto it. Open terminals stay open — a
+          terminal server already on the new version is left untouched.
+        </li>
+        <li>
+          <b>termulaa --update-check.</b>
+          Downloads the latest release, verifies it and swaps the binary in place. Running
+          services keep the old binary until they are restarted.
         </li>
       </ul>
     </article>
@@ -482,54 +479,44 @@ function toggleSetup(): void {
 // termulaa's PTY layer is POSIX-only, so there is no native Windows build.
 // WSL2 is a real Linux kernel, so the Linux binary runs there unchanged — the
 // terminal you get is a WSL shell, which is normally what is wanted anyway.
-const installScript =
-  "curl -fsSL https://raw.githubusercontent.com/sudiptadeb/termulaa/main/install.sh | bash -s -- --service";
-
-// What --service really does: the terminal server starts now, but the tunnel
-// agent's service stays off until a token is saved — hence steps 2 and 3.
-const installHint =
-  "Installs the latest release to ~/.local/bin and starts the terminal server as a per-user " +
-  "service. The tunnel agent's service is installed too, but stays off until you pair. If the " +
-  "installer reports that the services failed to load — typical over SSH, when this account " +
-  "has no desktop login session — carry on and pick \"No service\" in step 3.";
-
+// The command is the same everywhere; the tabs only change the hint.
 interface InstallTab {
   id: string;
   label: string;
-  command: string;
   hint: string;
 }
+
+const serviceHint =
+  "Installs or updates termulaa in ~/.local/bin, saves the pairing to ~/.termulaa/rc.json " +
+  "(the token is not left on a long-lived command line) and starts the terminal server and " +
+  "the tunnel agent as per-user services.";
 
 const installTabs: InstallTab[] = [
   {
     id: "macos",
     label: "macOS",
-    command: installScript,
-    hint: installHint,
+    hint:
+      serviceHint +
+      " On macOS these are launchd LaunchAgents. Over SSH into an account with no desktop " +
+      "login there is no launchd session to load them into; the installer says so and starts " +
+      "both detached instead.",
   },
   {
     id: "linux",
     label: "Linux",
-    command: installScript,
-    hint: installHint,
+    hint:
+      serviceHint +
+      " On Linux these are systemd user units. Without a systemd user session the installer " +
+      "says so and starts both detached instead.",
   },
   {
     id: "wsl",
     label: "Windows (WSL2)",
-    command: installScript,
     hint:
-      "Run this inside your WSL2 distribution — the terminal you get is a WSL shell, not PowerShell. " +
-      "The agent only runs while WSL is running (see \"What keeps running\" below), and " +
-      "--service needs systemd enabled " +
-      "([boot] systemd=true in /etc/wsl.conf).",
-  },
-  {
-    id: "go",
-    label: "Go",
-    command: "go install github.com/sudiptadeb/termulaa/src/cmd/termulaa@latest",
-    hint:
-      "Builds from source with your own Go toolchain. No service is set up — pick " +
-      "\"No service\" in step 3 to start the terminal server and the agent yourself.",
+      "Run this inside your WSL2 distribution — the terminal you get is a WSL shell, not " +
+      "PowerShell. The services are systemd user units, so systemd must be enabled " +
+      "([boot] systemd=true in /etc/wsl.conf). They stop soon after the last WSL window " +
+      "closes (see \"What keeps running\" below).",
   },
 ];
 
@@ -538,69 +525,12 @@ const activeInstall = computed(
   () => installTabs.find((t) => t.id === installTab.value) ?? installTabs[0],
 );
 
-// --- Keep-running tabs ------------------------------------------------------
-
-// The pairing command is a foreground process; these hand the agent to
-// something that outlives the terminal. The service commands start the unit
-// the installer wrote. "No service" is the fallback for accounts launchd or
-// systemd cannot serve (SSH into a Mac account with no desktop login, a
-// container, a Go install): it starts both processes, since there the terminal
-// server is not running either.
-interface KeepTab {
-  id: string;
-  label: string;
-  command: string;
-  hint: string;
-}
-
-const keepTabs: KeepTab[] = [
-  {
-    id: "launchd",
-    label: "macOS",
-    command: "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.termulaa.rc.plist",
-    hint:
-      "The agent then starts at login and restarts on failure. This needs the account to be " +
-      "logged in at the Mac's desktop; if launchctl answers with error 125, use \"No service\".",
-  },
-  {
-    id: "systemd",
-    label: "Linux / WSL2",
-    command: "systemctl --user enable --now termulaa-rc",
-    hint:
-      "The agent then starts at boot, restarts on failure and keeps running after you log out. " +
-      "This needs a systemd user session; without one, use \"No service\".",
-  },
-  {
-    id: "manual",
-    label: "No service",
-    command:
-      "mkdir -p ~/.termulaa/logs\n" +
-      'nohup "$(command -v termulaa)" >> ~/.termulaa/logs/server.log 2>&1 &\n' +
-      'nohup "$(command -v termulaa)" -rc >> ~/.termulaa/logs/rc.log 2>&1 &',
-    hint:
-      "Starts the terminal server and the agent detached from your terminal, so both survive " +
-      "closing it or an SSH disconnect — but not a reboot. The first nohup line exits " +
-      "harmlessly if a terminal server is already running. Stop both with \"pkill -x termulaa\".",
-  },
-];
-
-const keepTabFor: Record<string, string> = {
-  macos: "launchd",
-  linux: "systemd",
-  wsl: "systemd",
-  go: "manual",
-};
-
-// Follows the install tab until the user picks one here.
-const keepTabPicked = ref("");
-const keepTab = computed(() => keepTabPicked.value || keepTabFor[installTab.value] || keepTabs[0].id);
-const activeKeep = computed(() => keepTabs.find((t) => t.id === keepTab.value) ?? keepTabs[0]);
-
 // --- Persistence ------------------------------------------------------------
 
-// What each way of starting the agent in step 3 survives. The rows mirror the
-// keep-running tabs; WSL2 is split out because its lifetime is bound to the
-// WSL VM, not to the Linux service inside it.
+// What each way the install command can start the agent survives. WSL2 is
+// split out because its lifetime is bound to the WSL VM, not to the Linux
+// service inside it. "Detached" is the installer's own fallback when no
+// service manager serves the account.
 const persistence = [
   {
     setup: "macOS service",
@@ -621,10 +551,10 @@ const persistence = [
     restart: "Starts when WSL is next started",
   },
   {
-    setup: "No service",
+    setup: "Detached (no service manager)",
     terminal: "Keeps running",
     logout: "Keeps running",
-    restart: "Stays down until you run step 3 again",
+    restart: "Stays down until you re-run the install command",
   },
 ];
 
@@ -653,6 +583,14 @@ const persistenceNotes = [
       "timeouts in .wslconfig.",
   },
   {
+    topic: "Detached.",
+    text:
+      "Where no service manager serves the account — SSH into a Mac account with no desktop " +
+      "login, Linux without a systemd user session — the installer picks this mode by itself " +
+      "and says so: it starts both processes with nohup, so they survive closing the terminal " +
+      "or an SSH disconnect, but not a reboot.",
+  },
+  {
     topic: "Your terminals.",
     text:
       "They live in the terminal server, not in the tunnel agent, so restarting the agent loses " +
@@ -663,7 +601,7 @@ const persistenceNotes = [
     topic: "Token expiry.",
     text:
       "The agent exits once its token is no longer valid, however it was started. Mint a new " +
-      "token and repeat steps 2 and 3.",
+      "token and re-run the install command with it.",
   },
 ];
 
@@ -743,15 +681,33 @@ function shellQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-// The one command to run on the target machine. The server this dashboard is
-// served from is the rendezvous, so the origin comes from the address bar —
-// never a hardcoded hostname.
-const pairCommand = computed(() => {
+// The one command to run on the target machine: install.sh installs or
+// updates the binary, saves the pairing and starts both services (or runs them
+// detached where no service manager serves the account). The server this
+// dashboard is served from is the rendezvous, so the origin comes from the
+// address bar — never a hardcoded hostname.
+const installScriptURL = "https://raw.githubusercontent.com/sudiptadeb/termulaa/main/install.sh";
+
+const pairFlags = computed(() => {
   if (!minted.value) return "";
-  let cmd =
-    "termulaa -rc -rc-server " + window.location.origin + " -rc-token " + shellQuote(minted.value.token);
-  if (mintedLabel.value) cmd += " -rc-label " + shellQuote(mintedLabel.value);
-  return cmd;
+  let flags = " --rc-server " + window.location.origin + " --rc-token " + shellQuote(minted.value.token);
+  if (mintedLabel.value) flags += " --rc-label " + shellQuote(mintedLabel.value);
+  return flags;
+});
+
+const installCommand = computed(() => {
+  if (!minted.value) return "";
+  return "curl -fsSL " + installScriptURL + " | bash -s -- --service" + pairFlags.value;
+});
+
+// The no-service alternative: build from source, save the pairing, and leave
+// starting "termulaa" and "termulaa -rc" to the user.
+const goCommand = computed(() => {
+  if (!minted.value) return "";
+  let save =
+    "termulaa -rc-save -rc-server " + window.location.origin + " -rc-token " + shellQuote(minted.value.token);
+  if (mintedLabel.value) save += " -rc-label " + shellQuote(mintedLabel.value);
+  return "go install github.com/sudiptadeb/termulaa/src/cmd/termulaa@latest\n" + save;
 });
 
 // Where the paired terminal will open: the token's path-mode URL, or the
@@ -1008,6 +964,25 @@ a.session-card:hover .open-icon {
 
 .code-copy {
   flex-shrink: 0;
+}
+
+/* Go toolchain alternative: tucked away under the main command. */
+.go-alt summary {
+  width: fit-content;
+  color: var(--fg-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.go-alt summary:hover {
+  color: var(--fg-1);
+}
+
+.go-alt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* --- Persistence --- */
