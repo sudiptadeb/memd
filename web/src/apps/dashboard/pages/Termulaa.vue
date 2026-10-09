@@ -243,9 +243,9 @@
           terminal server already on the new version is left untouched.
         </li>
         <li>
-          <b>termulaa --update-check.</b>
-          Downloads the latest release, verifies it and swaps the binary in place. Running
-          services keep the old binary until they are restarted.
+          <b>termulaa update.</b>
+          Downloads the latest release, verifies it, swaps the binary in place and prints the
+          version. Running services keep the old binary until they are restarted.
         </li>
       </ul>
     </article>
