@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2400" viewBox="0 0 2400 2400">
+  <rect width="2400" height="2400" fill="#000000"/>
+  <g font-family="Space Mono" font-size="40" fill="#F4F1EA" opacity="0.6">
+    <text x="140" y="190">SELF-UPDATE / UNDER A LIVE SHELL</text>
+    <text x="2260" y="190" text-anchor="end">amarit</text>
+  </g>
+
+  <!-- left: the dense ledger -->
+  <g font-family="Space Mono" font-size="44" fill="#F4F1EA" opacity="0.72">
+    <text x="140" y="420">16:58:38  termulaa v0.5.4 starting on :17399</text>
+    <text x="140" y="500">17:02:11  session a3f1 opened, shell pid 43164</text>
+    <text x="140" y="580">17:03:52  amarit: stable is 0.5.5, on 0.5.4</text>
+    <text x="140" y="660">17:03:52  amarit: get termulaa-darwin-arm64-v0.5.5</text>
+    <text x="140" y="740">17:03:53  amarit: sha256 ok, 12.4 MB</text>
+    <text x="140" y="820">17:03:53  amarit: smoke test ok, v0.5.5</text>
+    <text x="140" y="900">17:03:53  amarit: drain</text>
+    <text x="140" y="980">17:03:53  amarit: handoff 2 fds</text>
+    <text x="200" y="1060">listener</text>
+    <text x="200" y="1140">pty:a3f1:43164</text>
+    <text x="140" y="1220">17:03:53  amarit: exec, pid 42899</text>
+    <text x="140" y="1300">17:03:53  termulaa v0.5.5 starting on :17399</text>
+    <text x="140" y="1380">17:03:53  restored 1 sessions</text>
+    <text x="140" y="1460">17:03:54  session a3f1, shell pid 43164, alive</text>
+  </g>
+
+  <!-- right: the sparse verdict -->
+  <g font-family="SG Bold" fill="#F4F1EA">
+    <text x="2260" y="1800" text-anchor="end" font-size="150">Same PID.</text>
+    <text x="2260" y="1960" text-anchor="end" font-size="150">Same shell.</text>
+    <text x="2260" y="2120" text-anchor="end" font-size="150">Port never closed.</text>
+  </g>
+
+  <line x1="140" y1="1620" x2="2260" y2="1620" stroke="#F4F1EA" stroke-width="2" opacity="0.35"/>
+  <g font-family="Space Mono" font-size="44" fill="#F4F1EA" opacity="0.6">
+    <text x="140" y="1720">pid 42899 before. pid 42899 after.</text>
+    <text x="140" y="2270">$ _</text>
+  </g>
+</svg>
