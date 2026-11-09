@@ -514,6 +514,12 @@ Security posture:
   straight from the in-process pool; a disconnected agent shows as offline
   immediately, never as stale last-known-good state.
 
+The Android app and termulaa's command-line client (`termulaa pair`, `machines`,
+`shell`, `exec`, 0.6.0 and later) sign in the same way: a single-use pairing code
+from the dashboard becomes a long-lived app token, listed under Paired devices,
+where it can be revoked. An app token reaches every machine on the account. memd
+only proxies the traffic, so the client needs nothing further from the server.
+
 See [docs/self-hosting.md](docs/self-hosting.md) for the nginx vhost, DNS, and
 TLS-certificate notes for the view host.
 

@@ -266,7 +266,7 @@ func (h *Handler) appRedeemAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	logs.InfoUser(user.ID, "paired the phone app (token id=%s, label=%q)", tok.ID, tok.Label)
+	logs.InfoUser(user.ID, "paired a device (token id=%s, label=%q)", tok.ID, tok.Label)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": secret,
 		"user":  sessionUserFromAccount(user),
@@ -353,7 +353,7 @@ func (h *Handler) appTokenAPI(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, statusForAccountError(err), err)
 		return
 	}
-	logs.InfoUser(user.ID, "un-paired phone app token id=%s", id)
+	logs.InfoUser(user.ID, "un-paired device token id=%s", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

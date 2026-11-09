@@ -279,6 +279,66 @@
   <section class="app-section">
     <div class="section-head">
       <div class="titles">
+        <h2>termulaa from the command line</h2>
+        <span class="desc">
+          Open a machine's terminal from your own terminal, or have a script or agent run commands
+          there and get the real exit code. Needs termulaa 0.6.0 or later on both ends.
+        </span>
+      </div>
+    </div>
+
+    <article class="setup-card phone-card">
+      <MIcon name="terminal" class="phone-icon" />
+      <div class="phone-body cli-body">
+        <button class="btn secondary" type="button" :disabled="pairing" @click="pair('cli')">
+          <MIcon :name="pairing ? 'refresh-cw' : 'plug'" :class="pairing ? 'spin' : ''" />
+          Pair a computer
+        </button>
+
+        <template v-if="pairCode && pairTarget === 'cli'">
+          <span class="field-label">Run on that computer</span>
+          <div class="code-block cli-command">
+            <code>{{ cliPairCommand }}</code>
+            <button
+              class="icon-btn code-copy"
+              type="button"
+              :title="copiedKey === 'cli-pair' ? 'Copied' : 'Copy command'"
+              :aria-label="copiedKey === 'cli-pair' ? 'Command copied' : 'Copy pair command'"
+              @click="copy(cliPairCommand, 'cli-pair')"
+            >
+              <MIcon :name="copiedKey === 'cli-pair' ? 'check' : 'copy'" />
+            </button>
+          </div>
+          <p class="setup-hint">The code is single use and expires in {{ pairCountdown }}.</p>
+        </template>
+        <p class="setup-hint" v-else-if="pairExpired && pairTarget === 'cli'">
+          The pairing code expired. Mint a new one with "Pair a computer".
+        </p>
+
+        <span class="field-label">Then</span>
+        <div class="code-block cli-command">
+          <code>{{ cliUsage }}</code>
+          <button
+            class="icon-btn code-copy"
+            type="button"
+            :title="copiedKey === 'cli-usage' ? 'Copied' : 'Copy commands'"
+            :aria-label="copiedKey === 'cli-usage' ? 'Commands copied' : 'Copy example commands'"
+            @click="copy(cliUsage, 'cli-usage')"
+          >
+            <MIcon :name="copiedKey === 'cli-usage' ? 'check' : 'copy'" />
+          </button>
+        </div>
+        <p class="setup-hint">
+          Agents start with <code>termulaa help agents</code>. A paired computer can reach every
+          machine on your account, so revoke it below when you no longer use it.
+        </p>
+      </div>
+    </article>
+  </section>
+
+  <section class="app-section">
+    <div class="section-head">
+      <div class="titles">
         <h2>termulaa on your phone</h2>
         <span class="desc">
           The Android app shows your machines, opens their terminals, and notifies you when a
@@ -300,7 +360,7 @@
             <MIcon name="download" />
             Download the APK
           </a>
-          <button class="btn secondary" type="button" :disabled="pairing" @click="pair">
+          <button class="btn secondary" type="button" :disabled="pairing" @click="pair('app')">
             <MIcon :name="pairing ? 'refresh-cw' : 'plug'" :class="pairing ? 'spin' : ''" />
             Pair the app
           </button>
@@ -313,7 +373,7 @@
           >.
         </p>
 
-        <template v-if="pairCode">
+        <template v-if="pairCode && pairTarget === 'app'">
           <span class="field-label">Enter this code in the app</span>
           <div class="pair-code-row">
             <code class="pair-code">{{ groupedPairCode }}</code>
@@ -324,7 +384,7 @@
               title="New code"
               aria-label="Mint a new pairing code"
               :disabled="pairing"
-              @click="pair"
+              @click="pair('app')"
             >
               <MIcon name="refresh-cw" :class="pairing ? 'spin' : ''" />
             </button>
@@ -337,19 +397,24 @@
             >
           </p>
         </template>
-        <p class="setup-hint" v-else-if="pairExpired">
+        <p class="setup-hint" v-else-if="pairExpired && pairTarget === 'app'">
           The pairing code expired. Mint a new one with "Pair the app".
         </p>
       </div>
     </article>
+  </section>
 
-    <article class="setup-card" v-if="phones.length">
-      <div class="setup-card-head">
-        <h3>Paired phones</h3>
+  <section class="app-section" v-if="phones.length">
+    <div class="section-head">
+      <div class="titles">
+        <h2>Paired devices</h2>
       </div>
+    </div>
+
+    <article class="setup-card">
       <ul class="phone-list">
         <li class="phone-row" v-for="phone in phones" :key="phone.id">
-          <MIcon name="smartphone" class="phone-row-icon" />
+          <MIcon name="plug" class="phone-row-icon" />
           <span class="phone-label">{{ phone.label || "(unnamed)" }}</span>
           <span class="phone-meta">
             paired {{ formatDate(phone.created_at) }}
@@ -362,7 +427,8 @@
         </li>
       </ul>
       <p class="setup-hint">
-        Revoking un-pairs the phone: its next sign-in refresh fails and the app signs itself out.
+        Revoking un-pairs the device: its next sign-in fails, so the app signs itself out and the
+        command line asks to pair again.
       </p>
     </article>
   </section>
@@ -764,12 +830,14 @@ const mintedOpenText = computed(() => {
 const pairing = ref(false);
 const pairCode = ref<AppPairResponse | null>(null);
 const pairExpired = ref(false);
+const pairTarget = ref<"app" | "cli">("app"); // the section showing the one outstanding code
 const pairRemaining = ref(0); // whole seconds until expiry
 let pairTimer: number | undefined;
 
-async function pair(): Promise<void> {
+async function pair(target: "app" | "cli"): Promise<void> {
   if (pairing.value) return;
   pairing.value = true;
+  pairTarget.value = target;
   try {
     pairCode.value = await appApi.pair();
     pairExpired.value = false;
@@ -805,6 +873,16 @@ function tickPairCountdown(): void {
 }
 
 // XXX-XXX-XXX, the form the app shows in its code field.
+const cliPairCommand = computed(
+  () => `termulaa pair -server ${window.location.origin} ${pairCode.value?.code ?? ""}`,
+);
+
+const cliUsage = [
+  "termulaa machines",
+  "termulaa shell <machine>",
+  "termulaa exec <machine> -- 'make test'",
+].join("\n");
+
 const groupedPairCode = computed(() => {
   const code = pairCode.value?.code ?? "";
   if (code.length !== 9) return code;
@@ -842,8 +920,8 @@ async function refreshPhones(): Promise<void> {
 }
 
 async function revokePhone(phone: AppTokenView): Promise<void> {
-  const name = phone.label || "this phone";
-  if (!window.confirm(`Un-pair ${name}? The app on it will be signed out.`)) return;
+  const name = phone.label || "this device";
+  if (!window.confirm(`Un-pair ${name}? It will be signed out.`)) return;
   try {
     await appApi.revoke(phone.id);
     toast("Phone un-paired", "success");
@@ -1077,6 +1155,11 @@ a.session-card:hover .open-icon {
   gap: 10px;
   align-items: flex-start;
   min-width: 0;
+}
+
+.cli-body,
+.cli-command {
+  width: 100%;
 }
 
 .phone-actions {
