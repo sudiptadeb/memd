@@ -231,16 +231,26 @@
     <div class="section-head">
       <div class="titles">
         <h2>Updating</h2>
-        <span class="desc">Nothing updates by itself — an update happens only when you run one of these.</span>
+        <span class="desc">
+          Installed with termulaa 0.6.1 or later, a machine keeps itself current: the server and
+          the tunnel agent check for a release every five minutes and move onto it in place, with
+          open terminals kept.
+        </span>
       </div>
     </div>
 
     <article class="setup-card">
       <ul class="persist-notes">
         <li>
-          <b>Re-run the install command.</b>
-          The full update: new binary, services restarted onto it. Open terminals stay open — a
-          terminal server already on the new version is left untouched.
+          <b>Where amarit is installed system-wide,</b>
+          the install command hands both to amarit, which keeps them running and current. Switching
+          an existing machine over closes its open terminals once; the installer says so.
+        </li>
+        <li>
+          <b>Installed before 0.6.1?</b>
+          Re-run the install command once to turn this on. It changes only what changed: a terminal
+          server already on the latest version is left running, so open terminals stay open, and
+          the server starts checking for updates at its next start.
         </li>
         <li>
           <b>termulaa update.</b>
@@ -555,7 +565,8 @@ interface InstallTab {
 const serviceHint =
   "Installs or updates termulaa in ~/.local/bin, saves the pairing to ~/.termulaa/rc.json " +
   "(the token is not left on a long-lived command line) and starts the terminal server and " +
-  "the tunnel agent as per-user services.";
+  "the tunnel agent as per-user services that keep themselves updated. Where amarit is " +
+  "installed system-wide, amarit runs them instead.";
 
 const installTabs: InstallTab[] = [
   {
