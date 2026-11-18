@@ -336,9 +336,12 @@ Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP conne
 memd also hosts sync buckets for apps that sync a person's data between their
 devices with [synckosh](https://github.com/sudiptadeb/synckosh). A sync bucket
 is one synced space: a user makes one on the dashboard's **Sync buckets** page,
-which shows its token once (only its sha256 hash is stored). **New token**
-replaces it, and the old one stops working at once; **Delete** removes the
-bucket and everything synced to it.
+which shows its address and token to its owner at any time, so another device
+can be set up later. The token is stored readable in `memd.db`, like a
+connector's, with its sha256 hash, which requests are looked up by. **New
+token** replaces it, and the old one stops working at once; **Delete** removes
+the bucket and everything synced to it. A bucket made while only the hash was
+kept still syncs with its old token but shows none until it gets a new one.
 
 A device configures the bucket in either form, as with connectors:
 
@@ -351,6 +354,14 @@ With the synckosh client that is `client.Client{URL: "https://<host>/sync", Toke
 or `client.Client{URL: "https://<host>/sync/" + token}`. The token decides the
 bucket; a missing, wrong or replaced token gets 401, and a token never reaches
 another bucket.
+
+Each bucket also has **Open in Project B**, a link that opens the Project B
+browser's Sync settings with the address filled in. Its one parameter,
+`address`, is the single-address form, percent-encoded:
+
+```
+project-b://sync?address=https%3A%2F%2F<host>%2Fsync%2F<token>
+```
 
 Devices seal each item's private part with a key only they hold, so memd stores
 what it cannot read. It still sees collection and datatype names, ids,
