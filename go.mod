@@ -1,15 +1,16 @@
 module github.com/sudiptadeb/memd
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/gorilla/websocket v1.5.3
+	github.com/sudiptadeb/synckosh v0.0.0-20261118165407-d1fd96f66997
 	github.com/xtaci/smux v1.5.34
-	golang.org/x/crypto v0.52.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/term v0.43.0
+	golang.org/x/term v0.48.0
 	modernc.org/sqlite v1.51.0
 )
 
@@ -19,7 +20,8 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	go.etcd.io/bbolt v1.5.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

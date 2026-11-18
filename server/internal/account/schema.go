@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 11
+const latestSchemaVersion = 12
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -121,6 +121,27 @@ var schemaStatements = []string{
 		revoked_at TEXT
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_app_tokens_user_id ON app_tokens(user_id)`,
+	// Sync data (schema v12): what the synckosh server keeps for each bucket
+	// (SyncStore), its store id and last sequence number, and the newest
+	// version of each item as the device sent it, private part sealed.
+	`CREATE TABLE IF NOT EXISTS sync_stores (
+		bucket TEXT PRIMARY KEY,
+		store_id TEXT NOT NULL DEFAULT '',
+		last_seq INTEGER NOT NULL DEFAULT 0
+	)`,
+	`CREATE TABLE IF NOT EXISTS sync_items (
+		bucket TEXT NOT NULL,
+		collection TEXT NOT NULL,
+		guid TEXT NOT NULL,
+		seq INTEGER NOT NULL,
+		timestamp INTEGER NOT NULL,
+		deleted INTEGER NOT NULL DEFAULT 0,
+		deleted_at INTEGER NOT NULL DEFAULT 0,
+		item BLOB NOT NULL,
+		PRIMARY KEY (bucket, collection, guid)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_sync_items_seq ON sync_items(bucket, seq)`,
+	`CREATE INDEX IF NOT EXISTS idx_sync_items_collection_seq ON sync_items(bucket, collection, seq)`,
 	// directory_owner_user_id is the directory's owner, which differs from the
 	// connector's owner when a team member attaches a teammate's shared
 	// directory.
