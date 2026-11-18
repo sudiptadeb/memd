@@ -10,6 +10,7 @@ export const routes: RouteRecordRaw[] = [
   { path: "/directories/:dirId/graph", name: "directory-graph", component: () => import("./pages/DirGraph.vue") },
   { path: "/tasks", name: "tasks", component: () => import("./pages/Tasks.vue") },
   { path: "/connectors", name: "connectors", component: () => import("./pages/Connectors.vue") },
+  { path: "/sync-buckets", name: "sync-buckets", component: () => import("./pages/SyncBuckets.vue") },
   { path: "/activity", name: "activity", component: () => import("./pages/Activity.vue") },
   { path: "/termulaa", name: "termulaa", component: () => import("./pages/Termulaa.vue") },
   { path: "/invite/:token", name: "invite", component: () => import("./pages/InviteAccept.vue") },

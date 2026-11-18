@@ -56,6 +56,8 @@ import type {
   SetTeamMemberRoleRequest,
   SetUserDisabledRequest,
   SetUserPasswordRequest,
+  SyncBucketSecretResponse,
+  SyncBucketsResponse,
   TaskMutateRequest,
   TaskMutateResponse,
   Team,
@@ -569,6 +571,35 @@ export const app = {
   // phone's next session refresh fails with 401 and it signs itself out.
   revoke(id: string): Promise<void> {
     return request<void>(`/api/app/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+};
+
+// --- Sync buckets (ui/syncbuckets.go) ---------------------------------------
+
+export const sync = {
+  // GET /api/sync/buckets — ui.syncBucketsAPI. The user's buckets.
+  list(): Promise<SyncBucketsResponse> {
+    return request<SyncBucketsResponse>("/api/sync/buckets");
+  },
+
+  // POST /api/sync/buckets — ui.syncBucketsAPI. Makes a bucket; the answer
+  // carries its token, which is not shown again.
+  create(name: string): Promise<SyncBucketSecretResponse> {
+    return request<SyncBucketSecretResponse>("/api/sync/buckets", { method: "POST", body: { name } });
+  },
+
+  // POST /api/sync/buckets/:id/rotate — ui.syncBucketAPI. A new token; the
+  // old one stops working at once.
+  rotate(id: string): Promise<SyncBucketSecretResponse> {
+    return request<SyncBucketSecretResponse>(`/api/sync/buckets/${encodeURIComponent(id)}/rotate`, {
+      method: "POST",
+    });
+  },
+
+  // DELETE /api/sync/buckets/:id — ui.syncBucketAPI. Deletes the bucket and
+  // everything synced to it (204).
+  remove(id: string): Promise<void> {
+    return request<void>(`/api/sync/buckets/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };
 

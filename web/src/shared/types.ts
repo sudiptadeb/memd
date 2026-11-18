@@ -784,6 +784,31 @@ export interface AppTokensResponse {
   tokens: AppTokenView[];
 }
 
+// --- Sync buckets (ui/syncbuckets.go) ---------------------------------------
+
+// ui.syncBucketView — one sync bucket. `url` is its address for the header
+// form (Authorization: Bearer <token>); the token itself is never listed.
+export interface SyncBucketView {
+  id: string;
+  name: string;
+  created_at: string;
+  url: string;
+}
+
+// Response of GET /api/sync/buckets (ui.syncBucketsAPI).
+export interface SyncBucketsResponse {
+  buckets: SyncBucketView[];
+}
+
+// Response of POST /api/sync/buckets and POST /api/sync/buckets/:id/rotate:
+// the bucket with its token, shown once, and the path-form address that
+// carries the token.
+export interface SyncBucketSecretResponse {
+  bucket: SyncBucketView;
+  token: string;
+  token_url: string;
+}
+
 // --- Generic responses ----------------------------------------------------
 
 // The `{ "ok": true }` acknowledgement many mutating handlers return.
