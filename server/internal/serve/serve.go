@@ -20,6 +20,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/logs"
 	"github.com/sudiptadeb/memd/server/internal/mcp"
 	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/sudiptadeb/memd/server/internal/syncbucket"
 	"github.com/sudiptadeb/memd/server/internal/tunnel"
 	"github.com/sudiptadeb/memd/server/internal/ui"
 	"github.com/sudiptadeb/memd/server/internal/version"
@@ -94,6 +95,14 @@ func RunOptions(opts Options) error {
 	mcpSrv.MountHTTP(mux, "/http/")
 	uiHandler := ui.New(reg, accountStore, baseURL, sessions, oidcMgr, live)
 	uiHandler.Mount(mux)
+
+	// Sync buckets (synckosh) at /sync, each reached with its token, and the
+	// daily removal of old deletes, which stops when memd does.
+	syncHandler := syncbucket.New(accountStore)
+	syncHandler.Mount(mux)
+	syncCtx, syncStop := context.WithCancel(context.Background())
+	defer syncStop()
+	syncHandler.Start(syncCtx)
 
 	// The reverse-tunnel rendezvous (termulaa rc) is on by default and toggled
 	// at runtime by a super admin (the setting persists in app_settings, so it
