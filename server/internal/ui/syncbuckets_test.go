@@ -93,6 +93,13 @@ func TestSyncBucketsAPI(t *testing.T) {
 		t.Fatal("the old token still works")
 	}
 
+	if rec := call(&bob, http.MethodPost, path+"/reset", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("bob resetting ada's bucket: %d", rec.Code)
+	}
+	if rec := call(&ada, http.MethodPost, path+"/reset", ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
+	}
+
 	if rec := call(&ada, http.MethodDelete, path, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rec.Code)
 	}

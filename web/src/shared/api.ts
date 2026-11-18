@@ -595,6 +595,13 @@ export const sync = {
     });
   },
 
+  // POST /api/sync/buckets/:id/reset — ui.syncBucketAPI. The server forgets
+  // the bucket's items and takes a new store id, so the devices push theirs
+  // back (204). The bucket and its token stay.
+  reset(id: string): Promise<void> {
+    return request<void>(`/api/sync/buckets/${encodeURIComponent(id)}/reset`, { method: "POST" });
+  },
+
   // DELETE /api/sync/buckets/:id — ui.syncBucketAPI. Deletes the bucket and
   // everything synced to it (204).
   remove(id: string): Promise<void> {

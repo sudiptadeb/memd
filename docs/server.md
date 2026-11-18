@@ -342,6 +342,9 @@ connector's, with its sha256 hash, which requests are looked up by. **New
 token** replaces it, and the old one stops working at once; **Delete** removes
 the bucket and everything synced to it. A bucket made while only the hash was
 kept still syncs with its old token but shows none until it gets a new one.
+**Reset** makes the server forget the bucket's items and take a new store id;
+each device still in the bucket then sends its own copy back on its next sync.
+The bucket, its address and its token stay as they are.
 
 A device configures the bucket in either form, as with connectors:
 

@@ -174,3 +174,62 @@ func TestHashOnlySyncBucket(t *testing.T) {
 		t.Fatal("the new token is not shown")
 	}
 }
+
+func TestResetSyncBucket(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	ada := newSyncTestUser(t, store, "ada")
+	bob := newSyncTestUser(t, store, "bob")
+	reset, _ := store.CreateSyncBucket(ctx, ada.ID, "reset")
+	other, _ := store.CreateSyncBucket(ctx, ada.ID, "other")
+	st := store.SyncStore()
+	ids := map[string]string{}
+	for _, b := range []string{reset.ID, other.ID} {
+		id, err := st.StoreID(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[b] = id
+		err = st.Update(b, func(tx server.Tx) error {
+			return tx.Put([]synckosh.Item{{Collection: "notes", Datatype: "note", GUID: "n1", Timestamp: 1, Sequence: 1}})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	items := func(bucket string) int {
+		n := 0
+		if err := st.Since(bucket, "", 0, func(synckosh.Item) bool { n++; return true }); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	if err := store.ResetSyncBucket(ctx, bob.ID, reset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bob resetting ada's bucket: %v", err)
+	}
+	if items(reset.ID) != 1 {
+		t.Fatal("bob's reset removed items")
+	}
+	if err := store.ResetSyncBucket(ctx, ada.ID, reset.ID); err != nil {
+		t.Fatalf("ResetSyncBucket: %v", err)
+	}
+	if items(reset.ID) != 0 {
+		t.Fatal("the reset bucket still has items")
+	}
+	if id, _ := st.StoreID(reset.ID); id == "" || id == ids[reset.ID] {
+		t.Fatalf("store id after reset: %q, was %q", id, ids[reset.ID])
+	}
+	if items(other.ID) != 1 {
+		t.Fatal("resetting one bucket touched another's items")
+	}
+	if id, _ := st.StoreID(other.ID); id != ids[other.ID] {
+		t.Fatal("resetting one bucket changed another's store id")
+	}
+	if b, err := store.SyncBucketByToken(ctx, reset.Token); err != nil || b.ID != reset.ID {
+		t.Fatalf("the token after reset: %+v %v", b, err)
+	}
+}

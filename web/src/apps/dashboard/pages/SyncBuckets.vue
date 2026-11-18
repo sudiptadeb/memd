@@ -80,6 +80,10 @@
               <MIcon name="refresh-cw" />
               New token
             </button>
+            <button class="btn ghost" type="button" @click="reset(bucket)">
+              <MIcon name="eraser" />
+              Reset
+            </button>
             <button class="btn danger" type="button" @click="remove(bucket)">
               <MIcon name="trash-2" />
               Delete
@@ -219,6 +223,18 @@ async function rotate(bucket: SyncBucketView): Promise<void> {
     toast(errText(e), "error");
   }
   await reload();
+}
+
+async function reset(bucket: SyncBucketView): Promise<void> {
+  const message =
+    "Reset " + bucket.name + "? The server's copy is removed and your devices send theirs again.";
+  if (!window.confirm(message)) return;
+  try {
+    await syncApi.reset(bucket.id);
+    toast("Bucket reset", "success");
+  } catch (e) {
+    toast("Could not reset sync bucket: " + errText(e), "error");
+  }
 }
 
 async function remove(bucket: SyncBucketView): Promise<void> {

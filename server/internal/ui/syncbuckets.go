@@ -84,7 +84,9 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/sync/buckets/{id}/rotate gives a bucket a new token, ending the
-// old one; DELETE /api/sync/buckets/{id} deletes the bucket and its items.
+// old one; POST /api/sync/buckets/{id}/reset empties the server's copy so the
+// devices push theirs back; DELETE /api/sync/buckets/{id} deletes the bucket
+// and its items.
 func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
@@ -101,6 +103,13 @@ func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		logs.InfoUser(user.ID, "rotated sync bucket token %q (id=%s)", b.Name, b.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"bucket": h.syncBucketView(b)})
+	case id != "" && action == "reset" && r.Method == http.MethodPost:
+		if err := h.accounts.ResetSyncBucket(r.Context(), user.ID, id); err != nil {
+			httpErr(w, statusForAccountError(err), err)
+			return
+		}
+		logs.InfoUser(user.ID, "reset sync bucket id=%s", id)
+		w.WriteHeader(http.StatusNoContent)
 	case id != "" && action == "" && r.Method == http.MethodDelete:
 		if err := h.accounts.DeleteSyncBucket(r.Context(), user.ID, id); err != nil {
 			httpErr(w, statusForAccountError(err), err)

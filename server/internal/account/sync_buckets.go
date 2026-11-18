@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/token"
+	"github.com/sudiptadeb/synckosh/server"
 )
 
 // A sync bucket is one synckosh bucket: a synced space for a user's devices,
@@ -134,6 +135,35 @@ func (s *Store) DeleteSyncBucket(ctx context.Context, userID, id string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sync_stores WHERE bucket = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ResetSyncBucket makes the server forget one of the user's buckets' items
+// and gives the bucket a new store id, as synckosh's server.ResetStore does,
+// in one transaction. Every device still in the bucket then sees the new
+// store id and pushes its own copy back. The bucket and its token stay.
+func (s *Store) ResetSyncBucket(ctx context.Context, userID, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var one int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM sync_buckets WHERE id = ? AND user_id = ?`, id, userID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sync_items WHERE bucket = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO sync_stores(bucket, store_id, last_seq) VALUES (?, ?, 0)
+		ON CONFLICT(bucket) DO UPDATE SET store_id = excluded.store_id`, id, server.NewStoreID()); err != nil {
 		return err
 	}
 	return tx.Commit()

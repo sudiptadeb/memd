@@ -241,3 +241,67 @@ func TestBucketsAreKeptApart(t *testing.T) {
 		t.Fatalf("bucket a: %d items, %v", len(p.Items), err)
 	}
 }
+
+// After a reset the server holds nothing; a device's next Sync sees the new
+// store id and pushes its copy back, and the other device keeps its items
+// through its own Sync.
+func TestResetRefillsFromTheDevices(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	b, tok := e.bucket("browser")
+
+	key, err := client.Create(ctx, e.bearer(tok), "a long enough passphrase", "Main passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := e.replica(e.bearer(tok), key)
+	two := e.replica(e.inPath(tok), key)
+	if _, err := one.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", Private: json.RawMessage(`{"title":"one"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := two.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", Private: json.RawMessage(`{"title":"two"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []*client.Replica{one, two, one} {
+		if err := r.Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serverItems := func() int {
+		p, err := e.bearer(tok).Pull(ctx, "", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(p.Items)
+	}
+	before := serverItems() // the two bookmarks and the sealed key copy
+	if before != 3 {
+		t.Fatalf("before the reset the server has %d items, want 3", before)
+	}
+
+	if err := e.accounts.ResetSyncBucket(ctx, e.user.ID, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := serverItems(); n != 0 {
+		t.Fatalf("after the reset the server has %d items", n)
+	}
+
+	if err := one.Sync(ctx); err != nil {
+		t.Fatalf("Sync after the reset: %v", err)
+	}
+	if n := serverItems(); n != before {
+		t.Fatalf("after one device's refill the server has %d items, want %d", n, before)
+	}
+	if err := two.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for name, r := range map[string]*client.Replica{"one": one, "two": two} {
+		if got, err := r.Items("bookmarks"); err != nil || len(got) != 2 {
+			t.Fatalf("device %s has %d bookmarks, %v", name, len(got), err)
+		}
+	}
+	// The passphrase still opens the bucket: the sealed key copy came back.
+	if _, err := client.Join(ctx, e.bearer(tok), "a long enough passphrase"); err != nil {
+		t.Fatalf("Join after the refill: %v", err)
+	}
+}
