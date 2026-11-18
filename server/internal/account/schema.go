@@ -142,6 +142,16 @@ var schemaStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_sync_items_seq ON sync_items(bucket, seq)`,
 	`CREATE INDEX IF NOT EXISTS idx_sync_items_collection_seq ON sync_items(bucket, collection, seq)`,
+	// Sync buckets (schema v12): one synckosh bucket each, reached with its
+	// token. Like app tokens, only the sha256 hex of the token is stored.
+	`CREATE TABLE IF NOT EXISTS sync_buckets (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_sync_buckets_user_id ON sync_buckets(user_id)`,
 	// directory_owner_user_id is the directory's owner, which differs from the
 	// connector's owner when a team member attaches a teammate's shared
 	// directory.
