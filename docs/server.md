@@ -331,6 +331,33 @@ Authorization: Bearer 9f2c4a...
 
 Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP connector in the web UI and use **Copy skill** on the connector card. The copied instructions include the tokenless URL base, `Authorization: Bearer <token>`, and endpoints for `memory_load`, `memory_list`, `memory_read`, `memory_search`, status, and workflows. Write-enabled HTTP connectors expose write operations through POST only. If you are using a tunnel, open the web UI through the tunnel URL before copying so the pasted skill uses the reachable host.
 
+## Sync Buckets
+
+memd also hosts sync buckets for apps that sync a person's data between their
+devices with [synckosh](https://github.com/sudiptadeb/synckosh). A sync bucket
+is one synced space: a user makes one on the dashboard's **Sync buckets** page,
+which shows its token once (only its sha256 hash is stored). **New token**
+replaces it, and the old one stops working at once; **Delete** removes the
+bucket and everything synced to it.
+
+A device configures the bucket in either form, as with connectors:
+
+```
+URL   https://<host>/sync           with  Authorization: Bearer <token>
+URL   https://<host>/sync/<token>   alone
+```
+
+With the synckosh client that is `client.Client{URL: "https://<host>/sync", Token: token}`
+or `client.Client{URL: "https://<host>/sync/" + token}`. The token decides the
+bucket; a missing, wrong or replaced token gets 401, and a token never reaches
+another bucket.
+
+Devices seal each item's private part with a key only they hold, so memd stores
+what it cannot read. It still sees collection and datatype names, ids,
+timestamps, public parts and sizes. Items live in `memd.db` (`sync_stores` and
+`sync_items`). synckosh's default limits apply, and deletes older than 90 days
+are removed once a day; a device away longer starts over from the server's copy.
+
 ## Where Config Lives
 
 | Platform | Path |
@@ -343,7 +370,7 @@ Layout inside that path:
 
 ```
 config.json      # legacy directory/connector registry, import source only
-memd.db          # local account/user/directory/connector metadata database
+memd.db          # local account/user/directory/connector metadata database, and sync bucket items
 workdirs/
   <id>/          # working copy for each Git-backed directory
 ```

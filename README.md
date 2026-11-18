@@ -148,6 +148,7 @@ Create an **HTTP connector** in the web UI for agents that can fetch URLs but ca
 | **Team**     | A shared space owned by regular users. Team admins can expose selected directories/connectors to members. |
 | **Invite link** | A copyable team join URL with optional expiry and max-use limits.             |
 | **User**     | A login account (local password **or** SSO via OIDC) that owns directories and connectors. |
+| **Sync bucket** | A synced space for a person's devices, reached at `/sync` with its token. Devices seal what they send; memd stores it without reading it ([details](docs/server.md#sync-buckets)). |
 | **Super admin** | A bootstrap/admin account for managing users and configuring SSO. |
 | **MEMORY.md**| The directory's curated, sectioned index. Preloaded into every conversation.     |
 | **memory/**  | Detailed files, reached via `memory_read` (`.md`, `.html`, `.csv`, etc.).        |
@@ -161,7 +162,7 @@ work.
 ## Teams And The Web UI
 
 Configured mode uses a responsive app shell with primary views for **How it
-works**, **Teams**, **Directories**, **Tasks**, **Connectors**, and **Activity**.
+works**, **Teams**, **Directories**, **Tasks**, **Connectors**, **Sync buckets**, and **Activity**.
 Desktop keeps the navigation rail visible. Smaller screens collapse navigation
 into a hamburger drawer, keep dark mode in the top bar, and show Activity as a
 normal page instead of a cramped side panel. Each view is reflected in the URL
