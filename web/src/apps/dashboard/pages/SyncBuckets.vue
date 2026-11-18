@@ -71,6 +71,10 @@
             </div>
           </div>
           <div class="card-foot">
+            <a class="btn ghost" v-if="bucket.token_url" :href="syncDeepLink(publicURL(bucket.token_url))">
+              <MIcon name="external-link" />
+              Open in Project B
+            </a>
             <span class="spacer"></span>
             <button class="btn ghost" type="button" @click="rotate(bucket)">
               <MIcon name="refresh-cw" />
@@ -139,11 +143,13 @@ import { sync as syncApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
 import { copyToClipboard, formatDate } from "@/shared/utils";
 import { publicURL, truncate } from "../components/connUrls";
+import { syncDeepLink } from "../components/syncLink";
 import type { SyncBucketView } from "@/shared/types";
 
 // Sync buckets: each is a synckosh bucket at /sync, reached with its token in
 // an Authorization header or in the path. Like a connector card, each bucket
-// expands to its address and token.
+// expands to its address and token, and "Open in Project B" hands the
+// single-address form to the app.
 
 const buckets = ref<SyncBucketView[]>([]);
 const loaded = ref(false);

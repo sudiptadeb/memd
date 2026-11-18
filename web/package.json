@@ -6,7 +6,8 @@
     "dev": "vite",
     "dev:admin": "VITE_APP=admin vite",
     "build": "vite build",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "node --test \"src/**/*.test.mjs\""
   },
   "dependencies": {
     "@types/cytoscape": "^3.21.9",
