@@ -14,56 +14,59 @@ import (
 )
 
 // A sync bucket is one synckosh bucket: a synced space for a user's devices,
-// reached at /sync with its token (see internal/syncbucket). The token is
-// shown once, when the bucket is made or given a new token; only its sha256
-// hex is stored. Its items live in sync_stores and sync_items under the
-// bucket's id.
+// reached at /sync with its token (see internal/syncbucket). The token is kept
+// readable, like a connector's, so its owner can set up another device from
+// the dashboard; requests are looked up by its sha256 hex. Its items live in
+// sync_stores and sync_items under the bucket's id.
 
 const syncBucketNameMax = 64
 
 // SyncBucket is one of a user's sync buckets.
 type SyncBucket struct {
-	ID        string
-	UserID    string
-	Name      string
+	ID     string
+	UserID string
+	Name   string
+	// Token is empty for a bucket made while only the token's hash was kept;
+	// its old token still works, and a new token makes one to show.
+	Token     string
 	CreatedAt time.Time
 }
 
-// CreateSyncBucket makes a bucket for userID and returns it with its token.
-func (s *Store) CreateSyncBucket(ctx context.Context, userID, name string) (SyncBucket, string, error) {
+// CreateSyncBucket makes a bucket for userID, with a new token.
+func (s *Store) CreateSyncBucket(ctx context.Context, userID, name string) (SyncBucket, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return SyncBucket{}, "", errors.New("name is required")
+		return SyncBucket{}, errors.New("name is required")
 	}
 	if len(name) > syncBucketNameMax {
-		return SyncBucket{}, "", fmt.Errorf("name is longer than %d characters", syncBucketNameMax)
+		return SyncBucket{}, fmt.Errorf("name is longer than %d characters", syncBucketNameMax)
 	}
 	user, err := s.UserByID(ctx, userID)
 	if err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
 	if user.Disabled {
-		return SyncBucket{}, "", fmt.Errorf("%w: disabled users cannot make sync buckets", ErrForbidden)
+		return SyncBucket{}, fmt.Errorf("%w: disabled users cannot make sync buckets", ErrForbidden)
 	}
 	raw, err := token.New()
 	if err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
 	now := nowString()
-	b := SyncBucket{ID: newID("syn"), UserID: userID, Name: name, CreatedAt: mustParseTime(now)}
+	b := SyncBucket{ID: newID("syn"), UserID: userID, Name: name, Token: raw, CreatedAt: mustParseTime(now)}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO sync_buckets(id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		b.ID, b.UserID, b.Name, syncTokenHash(raw), now)
+		INSERT INTO sync_buckets(id, user_id, name, token, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		b.ID, b.UserID, b.Name, raw, syncTokenHash(raw), now)
 	if err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
-	return b, raw, nil
+	return b, nil
 }
 
 // ListSyncBuckets returns the user's buckets, oldest first.
 func (s *Store) ListSyncBuckets(ctx context.Context, userID string) ([]SyncBucket, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, name, created_at FROM sync_buckets
+		SELECT id, user_id, name, token, created_at FROM sync_buckets
 		 WHERE user_id = ? ORDER BY created_at, id`, userID)
 	if err != nil {
 		return nil, err
@@ -84,7 +87,7 @@ func (s *Store) ListSyncBuckets(ctx context.Context, userID string) ([]SyncBucke
 // token, or one whose owner is disabled, is ErrNotFound.
 func (s *Store) SyncBucketByToken(ctx context.Context, rawToken string) (SyncBucket, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT b.id, b.user_id, b.name, b.created_at FROM sync_buckets b
+		SELECT b.id, b.user_id, b.name, b.token, b.created_at FROM sync_buckets b
 		  JOIN users u ON u.id = b.user_id
 		 WHERE b.token_hash = ? AND u.disabled = 0`, syncTokenHash(rawToken))
 	b, err := scanSyncBucket(row)
@@ -94,23 +97,22 @@ func (s *Store) SyncBucketByToken(ctx context.Context, rawToken string) (SyncBuc
 	return b, err
 }
 
-// RotateSyncBucketToken gives one of the user's buckets a new token and
-// returns it. The old token stops working at once; the items stay.
-func (s *Store) RotateSyncBucketToken(ctx context.Context, userID, id string) (SyncBucket, string, error) {
+// RotateSyncBucketToken gives one of the user's buckets a new token. The old
+// token stops working at once; the items stay.
+func (s *Store) RotateSyncBucketToken(ctx context.Context, userID, id string) (SyncBucket, error) {
 	raw, err := token.New()
 	if err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE sync_buckets SET token_hash = ? WHERE id = ? AND user_id = ?`,
-		syncTokenHash(raw), id, userID)
+	res, err := s.db.ExecContext(ctx, `UPDATE sync_buckets SET token = ?, token_hash = ? WHERE id = ? AND user_id = ?`,
+		raw, syncTokenHash(raw), id, userID)
 	if err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
 	if err := rowsAffectedOrNotFound(res); err != nil {
-		return SyncBucket{}, "", err
+		return SyncBucket{}, err
 	}
-	b, err := scanSyncBucket(s.db.QueryRowContext(ctx, `SELECT id, user_id, name, created_at FROM sync_buckets WHERE id = ?`, id))
-	return b, raw, err
+	return scanSyncBucket(s.db.QueryRowContext(ctx, `SELECT id, user_id, name, token, created_at FROM sync_buckets WHERE id = ?`, id))
 }
 
 // DeleteSyncBucket removes one of the user's buckets and everything synced
@@ -145,7 +147,7 @@ func syncTokenHash(rawToken string) string {
 func scanSyncBucket(row userScanner) (SyncBucket, error) {
 	var b SyncBucket
 	var created string
-	if err := row.Scan(&b.ID, &b.UserID, &b.Name, &created); err != nil {
+	if err := row.Scan(&b.ID, &b.UserID, &b.Name, &b.Token, &created); err != nil {
 		return SyncBucket{}, err
 	}
 	b.CreatedAt = mustParseTime(created)

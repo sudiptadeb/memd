@@ -56,7 +56,7 @@ import type {
   SetTeamMemberRoleRequest,
   SetUserDisabledRequest,
   SetUserPasswordRequest,
-  SyncBucketSecretResponse,
+  SyncBucketResponse,
   SyncBucketsResponse,
   TaskMutateRequest,
   TaskMutateResponse,
@@ -582,16 +582,15 @@ export const sync = {
     return request<SyncBucketsResponse>("/api/sync/buckets");
   },
 
-  // POST /api/sync/buckets — ui.syncBucketsAPI. Makes a bucket; the answer
-  // carries its token, which is not shown again.
-  create(name: string): Promise<SyncBucketSecretResponse> {
-    return request<SyncBucketSecretResponse>("/api/sync/buckets", { method: "POST", body: { name } });
+  // POST /api/sync/buckets — ui.syncBucketsAPI. Makes a bucket.
+  create(name: string): Promise<SyncBucketResponse> {
+    return request<SyncBucketResponse>("/api/sync/buckets", { method: "POST", body: { name } });
   },
 
   // POST /api/sync/buckets/:id/rotate — ui.syncBucketAPI. A new token; the
   // old one stops working at once.
-  rotate(id: string): Promise<SyncBucketSecretResponse> {
-    return request<SyncBucketSecretResponse>(`/api/sync/buckets/${encodeURIComponent(id)}/rotate`, {
+  rotate(id: string): Promise<SyncBucketResponse> {
+    return request<SyncBucketResponse>(`/api/sync/buckets/${encodeURIComponent(id)}/rotate`, {
       method: "POST",
     });
   },

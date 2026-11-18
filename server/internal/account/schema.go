@@ -143,11 +143,14 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_sync_items_seq ON sync_items(bucket, seq)`,
 	`CREATE INDEX IF NOT EXISTS idx_sync_items_collection_seq ON sync_items(bucket, collection, seq)`,
 	// Sync buckets (schema v12): one synckosh bucket each, reached with its
-	// token. Like app tokens, only the sha256 hex of the token is stored.
+	// token. The token is kept readable, like a connector's, so its owner can
+	// copy it to another device; requests are looked up by its sha256 hex.
+	// Buckets made before the token was kept have only the hash.
 	`CREATE TABLE IF NOT EXISTS sync_buckets (
 		id TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
+		token TEXT NOT NULL DEFAULT '',
 		token_hash TEXT NOT NULL UNIQUE,
 		created_at TEXT NOT NULL
 	)`,

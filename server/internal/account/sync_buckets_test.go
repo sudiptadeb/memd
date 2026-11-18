@@ -27,22 +27,23 @@ func TestSyncBucketTokenLifecycle(t *testing.T) {
 	ada := newSyncTestUser(t, store, "ada")
 	bob := newSyncTestUser(t, store, "bob")
 
-	if _, _, err := store.CreateSyncBucket(ctx, ada.ID, "  "); err == nil {
+	if _, err := store.CreateSyncBucket(ctx, ada.ID, "  "); err == nil {
 		t.Fatal("a bucket with no name was made")
 	}
-	b, tok, err := store.CreateSyncBucket(ctx, ada.ID, " Browser ")
+	b, err := store.CreateSyncBucket(ctx, ada.ID, " Browser ")
+	tok := b.Token
 	if err != nil {
 		t.Fatalf("CreateSyncBucket: %v", err)
 	}
 	if b.Name != "Browser" || len(tok) != 32 {
 		t.Fatalf("bucket %+v, token length %d", b, len(tok))
 	}
-	var stored string
-	if err := store.db.QueryRowContext(ctx, `SELECT token_hash FROM sync_buckets WHERE id = ?`, b.ID).Scan(&stored); err != nil {
+	var stored, hash string
+	if err := store.db.QueryRowContext(ctx, `SELECT token, token_hash FROM sync_buckets WHERE id = ?`, b.ID).Scan(&stored, &hash); err != nil {
 		t.Fatal(err)
 	}
-	if stored == tok || stored != syncTokenHash(tok) {
-		t.Fatalf("stored %q: want the token's hash, not the token", stored)
+	if stored != tok || hash != syncTokenHash(tok) {
+		t.Fatal("want the token kept readable, with its hash")
 	}
 
 	got, err := store.SyncBucketByToken(ctx, tok)
@@ -54,7 +55,7 @@ func TestSyncBucketTokenLifecycle(t *testing.T) {
 	}
 
 	list, err := store.ListSyncBuckets(ctx, ada.ID)
-	if err != nil || len(list) != 1 || list[0].ID != b.ID {
+	if err != nil || len(list) != 1 || list[0].ID != b.ID || list[0].Token != tok {
 		t.Fatalf("ListSyncBuckets: %+v %v", list, err)
 	}
 	if list, _ := store.ListSyncBuckets(ctx, bob.ID); len(list) != 0 {
@@ -62,16 +63,20 @@ func TestSyncBucketTokenLifecycle(t *testing.T) {
 	}
 
 	// Only the owner can replace the token or delete the bucket.
-	if _, _, err := store.RotateSyncBucketToken(ctx, bob.ID, b.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.RotateSyncBucketToken(ctx, bob.ID, b.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("bob rotating ada's bucket: %v", err)
 	}
 	if err := store.DeleteSyncBucket(ctx, bob.ID, b.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("bob deleting ada's bucket: %v", err)
 	}
 
-	_, tok2, err := store.RotateSyncBucketToken(ctx, ada.ID, b.ID)
+	rotated, err := store.RotateSyncBucketToken(ctx, ada.ID, b.ID)
 	if err != nil {
 		t.Fatalf("RotateSyncBucketToken: %v", err)
+	}
+	tok2 := rotated.Token
+	if tok2 == "" || tok2 == tok {
+		t.Fatal("rotate gave no new token")
 	}
 	if _, err := store.SyncBucketByToken(ctx, tok); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("old token after rotate: %v", err)
@@ -95,8 +100,8 @@ func TestDeleteSyncBucketRemovesItsItems(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 	ada := newSyncTestUser(t, store, "ada")
-	keep, _, _ := store.CreateSyncBucket(ctx, ada.ID, "keep")
-	gone, _, _ := store.CreateSyncBucket(ctx, ada.ID, "gone")
+	keep, _ := store.CreateSyncBucket(ctx, ada.ID, "keep")
+	gone, _ := store.CreateSyncBucket(ctx, ada.ID, "gone")
 	st := store.SyncStore()
 	for _, b := range []string{keep.ID, gone.ID} {
 		if _, err := st.StoreID(b); err != nil {
@@ -128,5 +133,44 @@ func TestDeleteSyncBucketRemovesItsItems(t *testing.T) {
 	}
 	if list, _ := store.ListSyncBuckets(ctx, ada.ID); len(list) != 1 || list[0].ID != keep.ID {
 		t.Fatalf("after delete: %+v", list)
+	}
+}
+
+// A bucket made while only the token's hash was kept: Init adds the token
+// column, the bucket shows no token, its old token still syncs, and a new
+// token is readable.
+func TestHashOnlySyncBucket(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if _, err := store.db.ExecContext(ctx, `CREATE TABLE sync_buckets (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	ada := newSyncTestUser(t, store, "ada")
+	old := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO sync_buckets(id, user_id, name, token_hash, created_at) VALUES ('syn_old', ?, 'old', ?, ?)`,
+		ada.ID, syncTokenHash(old), nowString()); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := store.ListSyncBuckets(ctx, ada.ID); err != nil || len(list) != 1 || list[0].Token != "" {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	if b, err := store.SyncBucketByToken(ctx, old); err != nil || b.ID != "syn_old" {
+		t.Fatalf("the old token: %+v %v", b, err)
+	}
+	b, err := store.RotateSyncBucketToken(ctx, ada.ID, "syn_old")
+	if err != nil || b.Token == "" {
+		t.Fatalf("rotate: %+v %v", b, err)
+	}
+	if list, _ := store.ListSyncBuckets(ctx, ada.ID); list[0].Token != b.Token {
+		t.Fatal("the new token is not shown")
 	}
 }

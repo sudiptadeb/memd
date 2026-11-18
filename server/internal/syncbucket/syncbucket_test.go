@@ -48,13 +48,26 @@ func newEnv(t *testing.T) *env {
 	return &env{t: t, accounts: accounts, user: user, url: ts.URL}
 }
 
+// bucket makes a bucket and returns it with the token its owner sees in the
+// list.
 func (e *env) bucket(name string) (account.SyncBucket, string) {
 	e.t.Helper()
-	b, tok, err := e.accounts.CreateSyncBucket(context.Background(), e.user.ID, name)
+	ctx := context.Background()
+	made, err := e.accounts.CreateSyncBucket(ctx, e.user.ID, name)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return b, tok
+	list, err := e.accounts.ListSyncBuckets(ctx, e.user.ID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, b := range list {
+		if b.ID == made.ID && b.Token != "" {
+			return b, b.Token
+		}
+	}
+	e.t.Fatalf("bucket %s shows no token", made.ID)
+	return account.SyncBucket{}, ""
 }
 
 // bearer is the header form: the bucket's address, and its token apart.
@@ -176,10 +189,11 @@ func TestWrongMissingAndReplacedTokens(t *testing.T) {
 		}
 	}
 
-	_, tok2, err := e.accounts.RotateSyncBucketToken(context.Background(), e.user.ID, b.ID)
+	rotated, err := e.accounts.RotateSyncBucketToken(context.Background(), e.user.ID, b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	tok2 := rotated.Token
 	if got := e.status(http.MethodGet, "/sync/v1/pull", tok); got != http.StatusUnauthorized {
 		t.Errorf("replaced token, header form: %d", got)
 	}

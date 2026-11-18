@@ -15,66 +15,72 @@
       </button>
     </div>
 
-    <article class="card secret-card" v-if="secret">
-      <div class="card-head">
-        <span class="card-name">{{ secret.bucket.name }}</span>
-        <span class="dot accent">token shown once</span>
-        <span class="spacer"></span>
-        <button class="icon-btn" type="button" title="Done" aria-label="Hide the token" @click="secret = null">
-          <MIcon name="x" />
-        </button>
-      </div>
-      <div class="connector-fold">
-        <div class="connector-instructions">
-          <div class="instruction-line">Copy the token now: memd keeps only its hash.</div>
-          <div class="instruction-grid">
-            <span>URL</span>
-            <code>{{ publicURL(secret.bucket.url) }}</code>
-            <span>Token</span>
-            <code>{{ secret.token }}</code>
-            <span>Or</span>
-            <code>{{ publicURL(secret.token_url) }}</code>
-          </div>
-          <div class="instruction-line muted">
-            Configure the URL with the token as a bearer token, or the one URL that carries it.
-          </div>
-        </div>
-        <div class="card-foot">
-          <button class="btn ghost" type="button" @click="copy(publicURL(secret.bucket.url), 'URL copied')">
-            <MIcon name="copy" />
-            Copy URL
-          </button>
-          <button class="btn ghost" type="button" @click="copy(secret.token, 'Token copied')">
-            <MIcon name="copy" />
-            Copy token
-          </button>
-          <button class="btn ghost" type="button" @click="copy(publicURL(secret.token_url), 'URL with token copied')">
-            <MIcon name="copy" />
-            Copy URL with token
-          </button>
-        </div>
-      </div>
-    </article>
-
     <div class="cards" v-if="buckets.length">
-      <article class="card" v-for="bucket in buckets" :key="bucket.id">
+      <article
+        class="card connector-card"
+        v-for="bucket in buckets"
+        :key="bucket.id"
+        :class="expanded[bucket.id] ? 'expanded' : ''"
+        @click="toggle(bucket.id)"
+        @keydown.enter.prevent="toggle(bucket.id)"
+        @keydown.space.prevent="toggle(bucket.id)"
+        tabindex="0"
+        role="button"
+        :aria-expanded="expanded[bucket.id] ? 'true' : 'false'"
+      >
         <div class="card-head">
-          <MIcon name="refresh-cw" class="bucket-icon" />
           <span class="card-name">{{ bucket.name }}</span>
-        </div>
-        <div class="card-meta">
-          <code>{{ publicURL(bucket.url) }}</code> · created {{ formatDate(bucket.created_at) }}
-        </div>
-        <div class="card-foot">
           <span class="spacer"></span>
-          <button class="btn ghost" type="button" @click="rotate(bucket)">
-            <MIcon name="refresh-cw" />
-            New token
-          </button>
-          <button class="btn danger" type="button" @click="remove(bucket)">
-            <MIcon name="trash-2" />
-            Delete
-          </button>
+          <MIcon name="chevron-right" class="expand-icon" />
+        </div>
+        <div class="card-meta">Created {{ formatDate(bucket.created_at) }}</div>
+        <div class="connector-fold" v-if="expanded[bucket.id]" @click.stop>
+          <div class="connector-instructions" v-if="bucket.token && bucket.token_url">
+            <div class="instruction-grid">
+              <span>URL</span>
+              <code>{{ publicURL(bucket.url) }}</code>
+              <span>Token</span>
+              <code>{{ bucket.token }}</code>
+              <span>Or</span>
+              <code>{{ publicURL(bucket.token_url) }}</code>
+            </div>
+            <div class="instruction-line muted">
+              Configure the URL with the token as a bearer token, or the one URL that carries it.
+            </div>
+          </div>
+          <div class="instruction-line muted" v-else>
+            This bucket's token was kept only as a hash. New token makes one to show here.
+          </div>
+          <div class="url-row" v-if="bucket.token && bucket.token_url">
+            <code :class="revealed[bucket.id] ? 'revealed' : ''">{{
+              revealed[bucket.id] ? publicURL(bucket.token_url) : truncate(publicURL(bucket.token_url))
+            }}</code>
+            <div class="url-actions">
+              <button type="button" @click="revealed[bucket.id] = !revealed[bucket.id]">
+                <MIcon :name="revealed[bucket.id] ? 'eye-off' : 'eye'" />
+                <span>{{ revealed[bucket.id] ? "Hide" : "Reveal" }}</span>
+              </button>
+              <button type="button" @click="copy(publicURL(bucket.token_url), 'Address copied')">
+                <MIcon name="copy" />
+                Copy
+              </button>
+              <button type="button" @click="copy(bucket.token, 'Token copied')">
+                <MIcon name="copy" />
+                Copy token
+              </button>
+            </div>
+          </div>
+          <div class="card-foot">
+            <span class="spacer"></span>
+            <button class="btn ghost" type="button" @click="rotate(bucket)">
+              <MIcon name="refresh-cw" />
+              New token
+            </button>
+            <button class="btn danger" type="button" @click="remove(bucket)">
+              <MIcon name="trash-2" />
+              Delete
+            </button>
+          </div>
         </div>
       </article>
     </div>
@@ -132,22 +138,27 @@ import MIcon from "@/shared/components/MIcon.vue";
 import { sync as syncApi, ApiError } from "@/shared/api";
 import { toast } from "@/shared/bus";
 import { copyToClipboard, formatDate } from "@/shared/utils";
-import { publicURL } from "../components/connUrls";
-import type { SyncBucketSecretResponse, SyncBucketView } from "@/shared/types";
+import { publicURL, truncate } from "../components/connUrls";
+import type { SyncBucketView } from "@/shared/types";
 
 // Sync buckets: each is a synckosh bucket at /sync, reached with its token in
-// an Authorization header or in the path. The token is only in the answer that
-// made it, so it is shown once, here, until dismissed.
+// an Authorization header or in the path. Like a connector card, each bucket
+// expands to its address and token.
 
 const buckets = ref<SyncBucketView[]>([]);
 const loaded = ref(false);
-const secret = ref<SyncBucketSecretResponse | null>(null);
+const expanded = reactive<Record<string, boolean>>({});
+const revealed = reactive<Record<string, boolean>>({});
 
 const showNew = ref(false);
 const form = reactive({ name: "", err: "", submitting: false });
 
 function errText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
+}
+
+function toggle(id: string): void {
+  expanded[id] = !expanded[id];
 }
 
 async function reload(): Promise<void> {
@@ -180,7 +191,8 @@ async function create(): Promise<void> {
   form.err = "";
   form.submitting = true;
   try {
-    secret.value = await syncApi.create(form.name.trim());
+    const made = await syncApi.create(form.name.trim());
+    expanded[made.bucket.id] = true;
     closeNew();
     await reload();
   } catch (e) {
@@ -195,7 +207,8 @@ async function rotate(bucket: SyncBucketView): Promise<void> {
     "New token for " + bucket.name + "? The current token stops working at once on every device.";
   if (!window.confirm(message)) return;
   try {
-    secret.value = await syncApi.rotate(bucket.id);
+    await syncApi.rotate(bucket.id);
+    toast("Token replaced", "success");
   } catch (e) {
     toast(errText(e), "error");
   }
@@ -206,7 +219,6 @@ async function remove(bucket: SyncBucketView): Promise<void> {
   if (!window.confirm("Delete sync bucket " + bucket.name + " and everything synced to it?")) return;
   try {
     await syncApi.remove(bucket.id);
-    if (secret.value?.bucket.id === bucket.id) secret.value = null;
   } catch (e) {
     toast("Could not delete sync bucket: " + errText(e), "error");
   }
@@ -217,20 +229,6 @@ onMounted(reload);
 </script>
 
 <style scoped>
-.secret-card {
-  margin-bottom: 14px;
-}
-
-.bucket-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--fg-3);
-}
-
-.card-meta code {
-  overflow-wrap: anywhere;
-}
-
 .modal-body {
   display: flex;
   flex-direction: column;

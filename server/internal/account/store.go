@@ -281,6 +281,9 @@ func (s *Store) Init(ctx context.Context) error {
 	if err := ensureUserConnectorColumns(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureSyncBucketColumns(ctx, tx); err != nil {
+		return err
+	}
 	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
 		return err
 	}
@@ -500,6 +503,21 @@ func ensureUserConnectorColumns(ctx context.Context, tx *sql.Tx) error {
 	}
 	if !cols["attach_teams"] {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE user_connectors ADD COLUMN attach_teams TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureSyncBucketColumns adds the readable token to sync buckets made while
+// only its hash was kept. Those keep an empty token until given a new one.
+func ensureSyncBucketColumns(ctx context.Context, tx *sql.Tx) error {
+	cols, err := tableColumns(ctx, tx, "sync_buckets")
+	if err != nil {
+		return err
+	}
+	if !cols["token"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE sync_buckets ADD COLUMN token TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}

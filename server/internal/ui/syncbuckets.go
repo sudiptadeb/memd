@@ -12,8 +12,8 @@ import (
 )
 
 // Sync buckets (internal/syncbucket serves them at /sync). The dashboard
-// lists the user's buckets, makes one, gives one a new token and deletes one.
-// A token is in the answer only when it is made: memd keeps only its hash.
+// lists the user's buckets with their tokens, makes one, gives one a new token
+// and deletes one. Each answer is the signed-in user's own buckets only.
 
 type syncBucketView struct {
 	ID        string `json:"id"`
@@ -22,27 +22,26 @@ type syncBucketView struct {
 	// URL is the bucket's address for the header form: the token goes in
 	// "Authorization: Bearer <token>".
 	URL string `json:"url"`
+	// Token and TokenURL, the address that carries the token, are empty for a
+	// bucket made while only the token's hash was kept, until a new token.
+	Token    string `json:"token,omitempty"`
+	TokenURL string `json:"token_url,omitempty"`
 }
 
 func (h *Handler) syncURL() string { return h.baseURL + "/sync" }
 
 func (h *Handler) syncBucketView(b account.SyncBucket) syncBucketView {
-	return syncBucketView{
+	v := syncBucketView{
 		ID:        b.ID,
 		Name:      b.Name,
 		CreatedAt: b.CreatedAt.UTC().Format(time.RFC3339),
 		URL:       h.syncURL(),
+		Token:     b.Token,
 	}
-}
-
-// syncSecret is the answer that carries a token, with the path-form address
-// that holds it.
-func (h *Handler) syncSecret(b account.SyncBucket, tok string) map[string]any {
-	return map[string]any{
-		"bucket":    h.syncBucketView(b),
-		"token":     tok,
-		"token_url": h.syncURL() + "/" + tok,
+	if b.Token != "" {
+		v.TokenURL = h.syncURL() + "/" + b.Token
 	}
+	return v
 }
 
 // GET /api/sync/buckets lists the user's buckets; POST makes one.
@@ -72,13 +71,13 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusBadRequest, err)
 			return
 		}
-		b, tok, err := h.accounts.CreateSyncBucket(r.Context(), user.ID, body.Name)
+		b, err := h.accounts.CreateSyncBucket(r.Context(), user.ID, body.Name)
 		if err != nil {
 			httpErr(w, statusForAccountError(err), err)
 			return
 		}
 		logs.InfoUser(user.ID, "added sync bucket %q (id=%s)", b.Name, b.ID)
-		writeJSON(w, http.StatusOK, h.syncSecret(b, tok))
+		writeJSON(w, http.StatusOK, map[string]any{"bucket": h.syncBucketView(b)})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -95,13 +94,13 @@ func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 	id, action, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/sync/buckets/"), "/")
 	switch {
 	case id != "" && action == "rotate" && r.Method == http.MethodPost:
-		b, tok, err := h.accounts.RotateSyncBucketToken(r.Context(), user.ID, id)
+		b, err := h.accounts.RotateSyncBucketToken(r.Context(), user.ID, id)
 		if err != nil {
 			httpErr(w, statusForAccountError(err), err)
 			return
 		}
 		logs.InfoUser(user.ID, "rotated sync bucket token %q (id=%s)", b.Name, b.ID)
-		writeJSON(w, http.StatusOK, h.syncSecret(b, tok))
+		writeJSON(w, http.StatusOK, map[string]any{"bucket": h.syncBucketView(b)})
 	case id != "" && action == "" && r.Method == http.MethodDelete:
 		if err := h.accounts.DeleteSyncBucket(r.Context(), user.ID, id); err != nil {
 			httpErr(w, statusForAccountError(err), err)

@@ -786,13 +786,17 @@ export interface AppTokensResponse {
 
 // --- Sync buckets (ui/syncbuckets.go) ---------------------------------------
 
-// ui.syncBucketView — one sync bucket. `url` is its address for the header
-// form (Authorization: Bearer <token>); the token itself is never listed.
+// ui.syncBucketView — one of the user's sync buckets. `url` is its address for
+// the header form (Authorization: Bearer <token>); `token_url` is the single
+// address that carries the token. Both token fields are absent for a bucket
+// made while only the token's hash was kept, until it gets a new token.
 export interface SyncBucketView {
   id: string;
   name: string;
   created_at: string;
   url: string;
+  token?: string;
+  token_url?: string;
 }
 
 // Response of GET /api/sync/buckets (ui.syncBucketsAPI).
@@ -800,13 +804,9 @@ export interface SyncBucketsResponse {
   buckets: SyncBucketView[];
 }
 
-// Response of POST /api/sync/buckets and POST /api/sync/buckets/:id/rotate:
-// the bucket with its token, shown once, and the path-form address that
-// carries the token.
-export interface SyncBucketSecretResponse {
+// Response of POST /api/sync/buckets and POST /api/sync/buckets/:id/rotate.
+export interface SyncBucketResponse {
   bucket: SyncBucketView;
-  token: string;
-  token_url: string;
 }
 
 // --- Generic responses ----------------------------------------------------

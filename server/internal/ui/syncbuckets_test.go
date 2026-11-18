@@ -29,10 +29,8 @@ func TestSyncBucketsAPI(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		return rec
 	}
-	type secret struct {
-		Bucket   syncBucketView `json:"bucket"`
-		Token    string         `json:"token"`
-		TokenURL string         `json:"token_url"`
+	type answer struct {
+		Bucket syncBucketView `json:"bucket"`
 	}
 
 	if rec := call(nil, http.MethodGet, "/api/sync/buckets", ""); rec.Code != http.StatusUnauthorized {
@@ -46,23 +44,32 @@ func TestSyncBucketsAPI(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
-	var made secret
+	var made answer
 	if err := json.Unmarshal(rec.Body.Bytes(), &made); err != nil {
 		t.Fatal(err)
 	}
 	if made.Bucket.Name != "Browser" || made.Bucket.URL != "http://127.0.0.1:7878/sync" ||
-		made.Token == "" || made.TokenURL != "http://127.0.0.1:7878/sync/"+made.Token {
+		made.Bucket.Token == "" || made.Bucket.TokenURL != "http://127.0.0.1:7878/sync/"+made.Bucket.Token {
 		t.Fatalf("create answer: %+v", made)
 	}
-	if b, err := accounts.SyncBucketByToken(ctx, made.Token); err != nil || b.ID != made.Bucket.ID {
+	if b, err := accounts.SyncBucketByToken(ctx, made.Bucket.Token); err != nil || b.ID != made.Bucket.ID {
 		t.Fatalf("the token is not the bucket's: %+v %v", b, err)
 	}
 
+	// The owner's list carries the token, so another device can be set up
+	// later; another user's list has neither the bucket nor its token.
 	rec = call(&ada, http.MethodGet, "/api/sync/buckets", "")
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), made.Token) || !strings.Contains(rec.Body.String(), made.Bucket.ID) {
+	var list struct {
+		Buckets []syncBucketView `json:"buckets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := call(&bob, http.MethodGet, "/api/sync/buckets", ""); strings.Contains(rec.Body.String(), made.Bucket.ID) {
+	if len(list.Buckets) != 1 || list.Buckets[0].Token != made.Bucket.Token || list.Buckets[0].TokenURL != made.Bucket.TokenURL {
+		t.Fatalf("list: %+v", list.Buckets)
+	}
+	if rec := call(&bob, http.MethodGet, "/api/sync/buckets", ""); strings.Contains(rec.Body.String(), made.Bucket.ID) ||
+		strings.Contains(rec.Body.String(), made.Bucket.Token) {
 		t.Fatalf("bob's list has ada's bucket: %s", rec.Body.String())
 	}
 
@@ -75,21 +82,21 @@ func TestSyncBucketsAPI(t *testing.T) {
 	}
 
 	rec = call(&ada, http.MethodPost, path+"/rotate", "")
-	var rotated secret
+	var rotated answer
 	if err := json.Unmarshal(rec.Body.Bytes(), &rotated); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("rotate: %d %s", rec.Code, rec.Body.String())
 	}
-	if rotated.Token == made.Token || rotated.Bucket.ID != made.Bucket.ID {
+	if rotated.Bucket.Token == made.Bucket.Token || rotated.Bucket.ID != made.Bucket.ID {
 		t.Fatalf("rotate answer: %+v", rotated)
 	}
-	if _, err := accounts.SyncBucketByToken(ctx, made.Token); err == nil {
+	if _, err := accounts.SyncBucketByToken(ctx, made.Bucket.Token); err == nil {
 		t.Fatal("the old token still works")
 	}
 
 	if rec := call(&ada, http.MethodDelete, path, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rec.Code)
 	}
-	if _, err := accounts.SyncBucketByToken(ctx, rotated.Token); err == nil {
+	if _, err := accounts.SyncBucketByToken(ctx, rotated.Bucket.Token); err == nil {
 		t.Fatal("a deleted bucket's token still works")
 	}
 }
