@@ -171,6 +171,8 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/check", h.requireUser(h.gitCheckAPI))
 	mux.HandleFunc("/api/connectors", h.requireUser(h.connectorsAPI))
 	mux.HandleFunc("/api/connectors/", h.requireUser(h.connectorAPI))
+	mux.HandleFunc("/api/sync/buckets", h.requireUser(h.syncBucketsAPI))
+	mux.HandleFunc("/api/sync/buckets/", h.requireUser(h.syncBucketAPI))
 	mux.HandleFunc("/api/browse", h.requireUser(h.browseAPI))
 	mux.HandleFunc("/api/logs", h.requireUser(h.logsAPI))
 }
