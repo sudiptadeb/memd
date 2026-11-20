@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 12
+const latestSchemaVersion = 13
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -138,6 +138,7 @@ var schemaStatements = []string{
 		deleted INTEGER NOT NULL DEFAULT 0,
 		deleted_at INTEGER NOT NULL DEFAULT 0,
 		item BLOB NOT NULL,
+		identity TEXT NOT NULL DEFAULT '',
 		PRIMARY KEY (bucket, collection, guid)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_sync_items_seq ON sync_items(bucket, seq)`,

@@ -172,6 +172,23 @@ func (t *syncTx) Get(collection, guid string) (synckosh.Item, bool, error) {
 	return it, true, json.Unmarshal(raw, &it)
 }
 
+// Identity finds a live item of the collection by its identity, in the index
+// of live items by identity.
+func (t *syncTx) Identity(collection, identity string) (synckosh.Item, bool, error) {
+	var it synckosh.Item
+	var raw []byte
+	err := t.tx.QueryRowContext(t.ctx, `SELECT item FROM sync_items
+		WHERE bucket = ? AND collection = ? AND identity = ? AND identity != '' AND deleted = 0 LIMIT 1`,
+		t.bucket, collection, identity).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return it, false, nil
+	}
+	if err != nil {
+		return it, false, err
+	}
+	return it, true, json.Unmarshal(raw, &it)
+}
+
 func (t *syncTx) Put(items []synckosh.Item) error {
 	last, err := t.Last()
 	if err != nil {
@@ -187,12 +204,12 @@ func (t *syncTx) Put(items []synckosh.Item) error {
 			deleted = 1
 		}
 		if _, err := t.tx.ExecContext(t.ctx, `
-			INSERT INTO sync_items(bucket, collection, guid, seq, timestamp, deleted, deleted_at, item)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO sync_items(bucket, collection, guid, seq, timestamp, deleted, deleted_at, item, identity)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(bucket, collection, guid) DO UPDATE SET
 				seq = excluded.seq, timestamp = excluded.timestamp, deleted = excluded.deleted,
-				deleted_at = excluded.deleted_at, item = excluded.item`,
-			t.bucket, it.Collection, it.GUID, it.Sequence, it.Timestamp, deleted, it.DeletedAt, raw); err != nil {
+				deleted_at = excluded.deleted_at, item = excluded.item, identity = excluded.identity`,
+			t.bucket, it.Collection, it.GUID, it.Sequence, it.Timestamp, deleted, it.DeletedAt, raw, it.Identity); err != nil {
 			return err
 		}
 		last = max(last, it.Sequence)

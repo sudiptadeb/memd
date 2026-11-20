@@ -284,6 +284,9 @@ func (s *Store) Init(ctx context.Context) error {
 	if err := ensureSyncBucketColumns(ctx, tx); err != nil {
 		return err
 	}
+	if err := ensureSyncItemIdentity(ctx, tx); err != nil {
+		return err
+	}
 	if err := backfillUserIssuerFromSettings(ctx, tx); err != nil {
 		return err
 	}
@@ -522,6 +525,23 @@ func ensureSyncBucketColumns(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// ensureSyncItemIdentity gives sync_items its identity column (schema v13) and
+// the index of live items by identity, which a push looks a new item up in.
+func ensureSyncItemIdentity(ctx context.Context, tx *sql.Tx) error {
+	cols, err := tableColumns(ctx, tx, "sync_items")
+	if err != nil {
+		return err
+	}
+	if !cols["identity"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE sync_items ADD COLUMN identity TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_sync_items_identity
+		ON sync_items(bucket, collection, identity) WHERE identity != '' AND deleted = 0`)
+	return err
 }
 
 func tableColumns(ctx context.Context, tx *sql.Tx, table string) (map[string]bool, error) {
