@@ -202,7 +202,7 @@ func TestResetSyncBucket(t *testing.T) {
 	}
 	items := func(bucket string) int {
 		n := 0
-		if err := st.Since(bucket, "", 0, func(synckosh.Item) bool { n++; return true }); err != nil {
+		if err := st.Since(bucket, synckosh.Filter{}, 0, func(synckosh.Item) bool { n++; return true }); err != nil {
 			t.Fatal(err)
 		}
 		return n

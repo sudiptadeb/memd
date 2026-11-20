@@ -142,8 +142,9 @@ func (s *Store) DeleteSyncBucket(ctx context.Context, userID, id string) error {
 
 // ResetSyncBucket makes the server forget one of the user's buckets' items
 // and gives the bucket a new store id, as synckosh's server.ResetStore does,
-// in one transaction. Every device still in the bucket then sees the new
-// store id and pushes its own copy back. The bucket and its token stay.
+// in one transaction. The sealed copies of its key go too, so every device
+// still in the bucket stops on its next sync and is set up again, with a new
+// key. The bucket and its token stay.
 func (s *Store) ResetSyncBucket(ctx context.Context, userID, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -84,8 +84,8 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/sync/buckets/{id}/rotate gives a bucket a new token, ending the
-// old one; POST /api/sync/buckets/{id}/reset empties the server's copy so the
-// devices push theirs back; DELETE /api/sync/buckets/{id} deletes the bucket
+// old one; POST /api/sync/buckets/{id}/reset empties the server's copy, so the
+// devices are set up again; DELETE /api/sync/buckets/{id} deletes the bucket
 // and its items.
 func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())

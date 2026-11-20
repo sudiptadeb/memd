@@ -6,7 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/gorilla/websocket v1.5.3
-	github.com/sudiptadeb/synckosh v0.0.0-20261120062723-03dbe772eb46
+	github.com/sudiptadeb/synckosh v0.0.0-20261120094705-879e5cdb11c6
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.59.0
 	golang.org/x/oauth2 v0.36.0

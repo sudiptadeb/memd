@@ -227,7 +227,7 @@ async function rotate(bucket: SyncBucketView): Promise<void> {
 
 async function reset(bucket: SyncBucketView): Promise<void> {
   const message =
-    "Reset " + bucket.name + "? The server's copy is removed and your devices send theirs again.";
+    "Reset " + bucket.name + "? The server's copy and its key are removed, and each device asks to set sync up again.";
   if (!window.confirm(message)) return;
   try {
     await syncApi.reset(bucket.id);

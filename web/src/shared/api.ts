@@ -596,8 +596,9 @@ export const sync = {
   },
 
   // POST /api/sync/buckets/:id/reset — ui.syncBucketAPI. The server forgets
-  // the bucket's items and takes a new store id, so the devices push theirs
-  // back (204). The bucket and its token stay.
+  // the bucket's items, its key's sealed copies among them, and takes a new
+  // store id, so the devices are set up again (204). The bucket and its token
+  // stay.
   reset(id: string): Promise<void> {
     return request<void>(`/api/sync/buckets/${encodeURIComponent(id)}/reset`, { method: "POST" });
   },

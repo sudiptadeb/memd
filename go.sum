@@ -24,8 +24,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/sudiptadeb/synckosh v0.0.0-20261120062723-03dbe772eb46 h1:9bXlBFeDziyuBg1qA/wakLXaF5fOnJzz7oxr0jHBH3Q=
-github.com/sudiptadeb/synckosh v0.0.0-20261120062723-03dbe772eb46/go.mod h1:VSoq59Xs+xwxt7RJwIQYSvg3pIfI1Mo3uzAbIBlqdTA=
+github.com/sudiptadeb/synckosh v0.0.0-20261120094705-879e5cdb11c6 h1:oCbZSMr5ialNpx88ZjQItCqa5eBiUOF1ZytBLWQhrUI=
+github.com/sudiptadeb/synckosh v0.0.0-20261120094705-879e5cdb11c6/go.mod h1:VSoq59Xs+xwxt7RJwIQYSvg3pIfI1Mo3uzAbIBlqdTA=
 github.com/xtaci/smux v1.5.34 h1:OUA9JaDFHJDT8ZT3ebwLWPAgEfE6sWo2LaTy3anXqwg=
 github.com/xtaci/smux v1.5.34/go.mod h1:OMlQbT5vcgl2gb49mFkYo6SMf+zP3rcjcwQz7ZU7IGY=
 go.etcd.io/bbolt v1.5.0 h1:S7GAl7Fxv12yohbwFfIbQCGDWbQbtDGPET4P/bD4lxU=

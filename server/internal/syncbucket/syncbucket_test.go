@@ -3,6 +3,7 @@ package syncbucket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -129,7 +130,7 @@ func TestBothAddressFormsSyncOneBucket(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	mac := e.replica(e.bearer(tok), key)
-	if _, err := mac.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark",
+	if _, err := mac.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", GUID: synckosh.NewGUID(),
 		Private: json.RawMessage(`{"title":"Go","url":"https://go.dev/"}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func TestBothAddressFormsSyncOneBucket(t *testing.T) {
 		t.Fatalf("the second device has %+v %v", got, err)
 	}
 
-	if _, err := phone.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark",
+	if _, err := phone.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", GUID: synckosh.NewGUID(),
 		Private: json.RawMessage(`{"title":"memd"}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestBucketsAreKeptApart(t *testing.T) {
 	_, tokB := e.bucket("b")
 
 	a := e.replica(e.bearer(tokA), nil)
-	if _, err := a.Put(synckosh.Item{Collection: "notes", Datatype: "note", Private: json.RawMessage(`{"text":"a's"}`)}); err != nil {
+	if _, err := a.Put(synckosh.Item{Collection: "notes", Datatype: "note", GUID: synckosh.NewGUID(), Private: json.RawMessage(`{"text":"a's"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Sync(ctx); err != nil {
@@ -229,7 +230,7 @@ func TestBucketsAreKeptApart(t *testing.T) {
 	}
 
 	for _, c := range []*client.Client{e.bearer(tokB), e.inPath(tokB)} {
-		p, err := c.Pull(ctx, "", 0, 0)
+		p, err := c.Pull(ctx, synckosh.Filter{}, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,15 +238,15 @@ func TestBucketsAreKeptApart(t *testing.T) {
 			t.Fatalf("bucket b's token pulled %d of bucket a's items", len(p.Items))
 		}
 	}
-	if p, err := e.inPath(tokA).Pull(ctx, "", 0, 0); err != nil || len(p.Items) != 1 {
+	if p, err := e.inPath(tokA).Pull(ctx, synckosh.Filter{}, 0, 0); err != nil || len(p.Items) != 1 {
 		t.Fatalf("bucket a: %d items, %v", len(p.Items), err)
 	}
 }
 
-// After a reset the server holds nothing; a device's next Sync sees the new
-// store id and pushes its copy back, and the other device keeps its items
-// through its own Sync.
-func TestResetRefillsFromTheDevices(t *testing.T) {
+// After a reset the server holds nothing, not even a sealed copy of the key: each device's next
+// Sync stops with client.ErrBucketReset and pushes nothing, and sync is set up again from the
+// start, a new key on the first device and a join on the next.
+func TestResetMakesTheDevicesSetUpAgain(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	b, tok := e.bucket("browser")
@@ -256,52 +257,43 @@ func TestResetRefillsFromTheDevices(t *testing.T) {
 	}
 	one := e.replica(e.bearer(tok), key)
 	two := e.replica(e.inPath(tok), key)
-	if _, err := one.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", Private: json.RawMessage(`{"title":"one"}`)}); err != nil {
+	if _, err := one.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", GUID: synckosh.NewGUID(), Private: json.RawMessage(`{"title":"one"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := two.Put(synckosh.Item{Collection: "bookmarks", Datatype: "bookmark", Private: json.RawMessage(`{"title":"two"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range []*client.Replica{one, two, one} {
+	for _, r := range []*client.Replica{one, two} {
 		if err := r.Sync(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	serverItems := func() int {
-		p, err := e.bearer(tok).Pull(ctx, "", 0, 0)
+		p, err := e.bearer(tok).Pull(ctx, synckosh.Filter{}, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return len(p.Items)
 	}
-	before := serverItems() // the two bookmarks and the sealed key copy
-	if before != 3 {
-		t.Fatalf("before the reset the server has %d items, want 3", before)
+	if n := serverItems(); n != 2 { // the bookmark and the sealed key copy
+		t.Fatalf("before the reset the server has %d items, want 2", n)
 	}
 
 	if err := e.accounts.ResetSyncBucket(ctx, e.user.ID, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n := serverItems(); n != 0 {
-		t.Fatalf("after the reset the server has %d items", n)
-	}
-
-	if err := one.Sync(ctx); err != nil {
-		t.Fatalf("Sync after the reset: %v", err)
-	}
-	if n := serverItems(); n != before {
-		t.Fatalf("after one device's refill the server has %d items, want %d", n, before)
-	}
-	if err := two.Sync(ctx); err != nil {
-		t.Fatal(err)
-	}
 	for name, r := range map[string]*client.Replica{"one": one, "two": two} {
-		if got, err := r.Items("bookmarks"); err != nil || len(got) != 2 {
-			t.Fatalf("device %s has %d bookmarks, %v", name, len(got), err)
+		if err := r.Sync(ctx); !errors.Is(err, client.ErrBucketReset) {
+			t.Fatalf("device %s after the reset: %v, want client.ErrBucketReset", name, err)
 		}
 	}
-	// The passphrase still opens the bucket: the sealed key copy came back.
-	if _, err := client.Join(ctx, e.bearer(tok), "a long enough passphrase"); err != nil {
-		t.Fatalf("Join after the refill: %v", err)
+	if n := serverItems(); n != 0 {
+		t.Fatalf("after the reset the devices pushed %d items", n)
+	}
+
+	// Set up again: the first device makes a new key, the next joins with its passphrase.
+	fresh, err := client.Create(ctx, e.bearer(tok), "a new long passphrase", "Main passphrase")
+	if err != nil {
+		t.Fatalf("Create after the reset: %v", err)
+	}
+	if joined, err := client.Join(ctx, e.inPath(tok), "a new long passphrase"); err != nil || joined.ID != fresh.ID {
+		t.Fatalf("Join after the reset: %v", err)
 	}
 }

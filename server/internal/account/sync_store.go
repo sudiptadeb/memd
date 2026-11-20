@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/sudiptadeb/synckosh"
 	"github.com/sudiptadeb/synckosh/server"
@@ -85,14 +86,18 @@ func (s *SyncStore) ResetAll() error {
 	return tx.Commit()
 }
 
-func (s *SyncStore) Since(bucket, collection string, after uint64, fn func(synckosh.Item) bool) error {
-	q := `SELECT item FROM sync_items WHERE bucket = ? AND seq > ? ORDER BY seq`
+// Since reads the bucket's items by sequence, of the filter's collections in SQL, and leaves out
+// in Go those of datatypes the filter doesn't ask for.
+func (s *SyncStore) Since(bucket string, f synckosh.Filter, after uint64, fn func(synckosh.Item) bool) error {
+	q := `SELECT item FROM sync_items WHERE bucket = ? AND seq > ?`
 	args := []any{bucket, after}
-	if collection != "" {
-		q = `SELECT item FROM sync_items WHERE bucket = ? AND collection = ? AND seq > ? ORDER BY seq`
-		args = []any{bucket, collection, after}
+	if len(f.Collections) > 0 {
+		q += ` AND collection IN (?` + strings.Repeat(`, ?`, len(f.Collections)-1) + `)`
+		for _, c := range f.Collections {
+			args = append(args, c)
+		}
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.Query(q+` ORDER BY seq`, args...)
 	if err != nil {
 		return err
 	}
@@ -105,6 +110,9 @@ func (s *SyncStore) Since(bucket, collection string, after uint64, fn func(synck
 		var it synckosh.Item
 		if err := json.Unmarshal(raw, &it); err != nil {
 			return err
+		}
+		if !f.Match(it) {
+			continue
 		}
 		if !fn(it) {
 			return nil
@@ -197,7 +205,7 @@ func (t *syncTx) Put(items []synckosh.Item) error {
 
 func (t *syncTx) RemoveBefore(collection string, before int64) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		DELETE FROM sync_items WHERE bucket = ? AND collection = ? AND guid != ? AND timestamp <= ?`,
-		t.bucket, collection, synckosh.DeleteBeforeItem, before)
+		DELETE FROM sync_items WHERE bucket = ? AND collection = ? AND timestamp <= ?`,
+		t.bucket, collection, before)
 	return err
 }
