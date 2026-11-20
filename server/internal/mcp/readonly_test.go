@@ -52,6 +52,7 @@ func TestMCPReadOnlyConnectorBlocksMutationsAllowsReads(t *testing.T) {
 		args map[string]any
 	}{
 		{"memory_write", map[string]any{"directory_id": dirID, "path": "memory/new.md", "content": "# Poison\n"}},
+		{"memory_edit", map[string]any{"directory_id": dirID, "path": "memory/seed.md", "edits": []map[string]any{{"op": "append", "text": "poison"}}}},
 		{"memory_move", map[string]any{"directory_id": dirID, "src": "memory/seed.md", "dst": "memory/moved.md"}},
 		{"memory_delete", map[string]any{"directory_id": dirID, "path": "memory/seed.md"}},
 		{"memory_delete_folder", map[string]any{"directory_id": dirID, "path": "memory"}},

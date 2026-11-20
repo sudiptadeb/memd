@@ -80,6 +80,7 @@ Storage primitives are agent-internal verbs:
 - `memory_graph(directory_id, path?)` - the directory's link graph; with no path, a summary of orphans and broken links; with a path, that file's neighbours. Navigate by relationship and find dead links.
 - `memory_feature_guide(feature, directory_id?)` - full rules for one structured-memory kind: base doctrine + user preferences + live state. Call before creating or editing that kind.
 - `memory_write(directory_id, path, content, message?)` - create/update a file; managed files get authoritative stats.
+- `memory_edit(directory_id, path, edits, message?)` - small in-place edits to an existing file (replace exact text, insert lines after/before an anchor, append, delete matching lines), all or none; use it instead of rewriting a large file such as `MEMORY.md` for a one-line change.
 - `memory_move(directory_id, src, dst, message?)` - move/rename file or folder; prefer this over write-then-delete.
 - `memory_delete(directory_id, path, message?)` - delete one file; cannot delete root `MEMORY.md`.
 - `memory_delete_folder(directory_id, path, message?)` - delete a folder recursively; cannot delete the root.

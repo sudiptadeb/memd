@@ -271,7 +271,7 @@ func guardedByLoad(name string) bool {
 	switch name {
 	case "memory_search", "memory_read", "memory_list", "memory_graph",
 		"memory_feature_guide",
-		"memory_write", "memory_move", "memory_delete", "memory_delete_folder":
+		"memory_write", "memory_edit", "memory_move", "memory_delete", "memory_delete_folder":
 		return true
 	}
 	return false
@@ -785,6 +785,35 @@ var toolsCatalog = []map[string]any{
 		},
 	},
 	{
+		"name":        "memory_edit",
+		"description": "[Agent-internal storage primitive.] Make small edits to an existing file without resending it: replace exact text, insert lines after or before an anchor, append lines, delete matching lines. Edits apply in order, all or none. Prefer it over memory_write for changes to a large file such as MEMORY.md. Front matter is handled as in memory_write.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"directory_id": map[string]any{"type": "string"},
+				"path":         map[string]any{"type": "string", "description": "File to edit; it must exist."},
+				"edits": map[string]any{
+					"type":        "array",
+					"description": "Applied in order; if any edit fails, nothing is written and the error names it. Ops: replace {old, new} (old must occur exactly once); insert_after {anchor, text} (text becomes whole line(s) after the line where anchor ends; anchor must occur exactly once); insert_before {anchor, text} (before the line where anchor starts); append {text} (line(s) at the end); delete_lines {match} (removes every line containing match; fails if none does). Anchors and old text are exact, case-sensitive substrings.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"op":     map[string]any{"type": "string", "enum": []string{"replace", "insert_after", "insert_before", "append", "delete_lines"}},
+							"old":    map[string]any{"type": "string", "description": "replace: exact text to replace."},
+							"new":    map[string]any{"type": "string", "description": "replace: replacement text (may be empty)."},
+							"anchor": map[string]any{"type": "string", "description": "insert_after / insert_before: exact text that locates the line."},
+							"text":   map[string]any{"type": "string", "description": "insert_after / insert_before / append: line(s) to add."},
+							"match":  map[string]any{"type": "string", "description": "delete_lines: one-line substring; every line containing it is removed."},
+						},
+						"required": []string{"op"},
+					},
+				},
+				"message": map[string]any{"type": "string", "description": "Optional commit message for git-backed directories."},
+			},
+			"required": []string{"directory_id", "path", "edits"},
+		},
+	},
+	{
 		"name":        "memory_move",
 		"description": "[Agent-internal storage primitive.] Rename or move a file or folder from src to dst inside the directory. Preferred over write-then-delete because git tracks it as a rename (history follows the file). Fails if dst already exists. Cannot move MEMORY.md at the root.",
 		"inputSchema": map[string]any{
@@ -963,6 +992,8 @@ func (s *Server) handleToolsCall(conn *registry.Connector, req *rpcReq, sid stri
 		text, isErr = s.toolRead(conn, params.Arguments)
 	case "memory_write":
 		text, isErr = s.toolWrite(conn, params.Arguments)
+	case "memory_edit":
+		text, isErr = s.toolEdit(conn, params.Arguments)
 	case "memory_move":
 		text, isErr = s.toolMove(conn, params.Arguments)
 	case "memory_delete":

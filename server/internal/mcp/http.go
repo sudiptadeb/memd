@@ -102,6 +102,8 @@ func (s *Server) httpAction(conn *registry.Connector, action string, r *http.Req
 		return httpResult(text, isErr)
 	case "memory_write":
 		return s.httpPostTool(conn, r, s.toolWrite)
+	case "memory_edit":
+		return s.httpPostTool(conn, r, s.toolEdit)
 	case "memory_move":
 		return s.httpPostTool(conn, r, s.toolMove)
 	case "memory_delete":
@@ -183,6 +185,8 @@ func HTTPSkill(baseURL string, conn *registry.Connector) string {
 Write endpoints require POST with the Authorization header and a JSON body:
 - POST ` + base + `/memory_write
   {"directory_id":"...","path":"memory/topic.md","content":"...","message":"optional"}
+- POST ` + base + `/memory_edit
+  {"directory_id":"...","path":"MEMORY.md","edits":[{"op":"insert_after","anchor":"exact text","text":"- new line"}],"message":"optional"}
 - POST ` + base + `/memory_move
   {"directory_id":"...","src":"old/path","dst":"new/path","message":"optional"}
 - POST ` + base + `/memory_delete
