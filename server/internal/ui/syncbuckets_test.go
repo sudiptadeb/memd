@@ -126,3 +126,90 @@ func TestSyncBucketsAPI(t *testing.T) {
 		t.Fatal("a deleted bucket's token still works")
 	}
 }
+
+// An export is a manifest line and then each item, still sealed, without the
+// token; exports are limited per account and per IP, with Retry-After, and a
+// bucket is exported one at a time.
+func TestSyncBucketExport(t *testing.T) {
+	accounts := openTestAccountStore(t)
+	ctx := context.Background()
+	ada, _ := accounts.CreateLocalUser(ctx, account.CreateUserInput{Username: "ada", Password: "correct horse battery staple"})
+	bob, _ := accounts.CreateLocalUser(ctx, account.CreateUserInput{Username: "bob", Password: "correct horse battery staple"})
+	mux, handler := newTestUI(t, accounts)
+	b, _ := accounts.CreateSyncBucket(ctx, ada.ID, "My phone")
+	err := accounts.SyncStore().Update(b.ID, func(tx server.Tx) error {
+		return tx.Put([]synckosh.Item{
+			{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 7, Sequence: 1},
+			{Collection: "_synckosh", Datatype: "key", GUID: "k", Timestamp: 9, Sequence: 2},
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	export := func(user account.User, ip, id string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/sync/buckets/"+id+"/export", nil)
+		req.RemoteAddr = ip + ":1234"
+		addSession(t, handler, req, user)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := export(ada, "10.0.0.1", b.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, `filename="My-phone-`) || !strings.HasSuffix(cd, `.synckosh.jsonl"`) {
+		t.Fatalf("Content-Disposition %q", cd)
+	}
+	lines := strings.Split(strings.TrimSuffix(rec.Body.String(), "\n"), "\n")
+	var m syncExportManifest
+	if len(lines) != 3 || json.Unmarshal([]byte(lines[0]), &m) != nil {
+		t.Fatalf("export body: %q", rec.Body.String())
+	}
+	if m.Format != "synckosh-export" || m.Protocol != 1 || m.Bucket != "My phone" || m.Items != 2 || m.Newest != 9 ||
+		m.Bytes != int64(len(lines[1])+len(lines[2])) {
+		t.Fatalf("manifest: %+v", m)
+	}
+	var it synckosh.Item
+	if json.Unmarshal([]byte(lines[1]), &it) != nil || it.GUID != "1" || json.Unmarshal([]byte(lines[2]), &it) != nil || it.GUID != "k" {
+		t.Fatalf("items: %q", lines[1:])
+	}
+	if strings.Contains(rec.Body.String(), b.Token) {
+		t.Fatal("the export carries the bucket's token")
+	}
+
+	// bob can't export ada's bucket, and that counts toward his own limit.
+	if rec := export(bob, "10.0.0.9", b.ID); rec.Code != http.StatusNotFound {
+		t.Fatalf("bob exporting ada's bucket: %d", rec.Code)
+	}
+
+	// Three an hour per account, whatever the IP.
+	export(ada, "10.0.0.2", b.ID)
+	export(ada, "10.0.0.3", b.ID)
+	rec = export(ada, "10.0.0.4", b.ID)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("fourth export by ada: %d %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	// Three an hour per IP, whatever the account: 10.0.0.1 has ada's first.
+	carol, _ := accounts.CreateLocalUser(ctx, account.CreateUserInput{Username: "carol", Password: "correct horse battery staple"})
+	cb, _ := accounts.CreateSyncBucket(ctx, carol.ID, "Carol's")
+	export(carol, "10.0.0.1", cb.ID)
+	export(carol, "10.0.0.1", cb.ID)
+	if rec := export(carol, "10.0.0.1", cb.ID); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("fourth export from 10.0.0.1: %d", rec.Code)
+	}
+
+	// One at a time per bucket.
+	dave, _ := accounts.CreateLocalUser(ctx, account.CreateUserInput{Username: "dave", Password: "correct horse battery staple"})
+	db, _ := accounts.CreateSyncBucket(ctx, dave.ID, "Dave's")
+	handler.exporting.Store(db.ID, true)
+	if rec := export(dave, "10.0.0.5", db.ID); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("export while one runs: %d", rec.Code)
+	}
+	handler.exporting.Delete(db.ID)
+	if rec := export(dave, "10.0.0.6", db.ID); rec.Code != http.StatusOK {
+		t.Fatalf("export after: %d", rec.Code)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,6 +140,8 @@ func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		logs.InfoUser(user.ID, "reset sync bucket id=%s", id)
 		w.WriteHeader(http.StatusNoContent)
+	case id != "" && action == "export" && r.Method == http.MethodPost:
+		h.exportSyncBucket(w, r, user.ID, id)
 	case id != "" && action == "" && r.Method == http.MethodDelete:
 		if err := h.accounts.DeleteSyncBucket(r.Context(), user.ID, id); err != nil {
 			httpErr(w, statusForAccountError(err), err)
@@ -149,4 +152,98 @@ func (h *Handler) syncBucketAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// Exports are limited per IP and per account, so neither many accounts behind
+// one IP nor one account behind many IPs can keep the server busy, and each
+// bucket is exported one at a time.
+const (
+	syncExportsPerWindow = 3
+	syncExportWindow     = time.Hour
+)
+
+// syncExportManifest is an export's first line. The lines after it are the
+// bucket's items as the server keeps them, sealed, one JSON object each.
+type syncExportManifest struct {
+	Format     string `json:"format"`
+	Protocol   int    `json:"protocol"`
+	Bucket     string `json:"bucket"`
+	CreatedAt  string `json:"created_at"`
+	ExportedAt string `json:"exported_at"`
+	Items      int    `json:"items"`
+	Bytes      int64  `json:"bytes"`
+	// Newest is the newest item's timestamp, in milliseconds.
+	Newest int64 `json:"newest"`
+}
+
+// exportSyncBucket streams everything the server holds for a bucket as JSON
+// lines: a manifest, then each item, still sealed. The token is not in it.
+func (h *Handler) exportSyncBucket(w http.ResponseWriter, r *http.Request, userID, id string) {
+	for _, key := range []string{"user:" + userID, "ip:" + clientIP(r)} {
+		if !h.exportLimiter.allow(key) {
+			tooMany(w, h.exportLimiter.retryIn(key), "export limit reached")
+			return
+		}
+	}
+	if _, busy := h.exporting.LoadOrStore(id, true); busy {
+		tooMany(w, time.Minute, "this bucket is being exported already")
+		return
+	}
+	defer h.exporting.Delete(id)
+
+	now := time.Now().UTC()
+	enc := json.NewEncoder(w)
+	err := h.accounts.ExportSyncBucket(r.Context(), userID, id,
+		func(ex account.SyncBucketExport) error {
+			name := exportFileName(ex.Bucket.Name, now)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+			w.Header().Set("Cache-Control", "no-store")
+			return enc.Encode(syncExportManifest{
+				Format: "synckosh-export", Protocol: 1, Bucket: ex.Bucket.Name,
+				CreatedAt: ex.Bucket.CreatedAt.UTC().Format(time.RFC3339), ExportedAt: now.Format(time.RFC3339),
+				Items: ex.Items, Bytes: ex.Bytes, Newest: ex.Newest,
+			})
+		},
+		func(raw []byte) error {
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+			_, err := w.Write([]byte("\n"))
+			return err
+		})
+	if errors.Is(err, account.ErrNotFound) {
+		httpErr(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		// Once the manifest is out the status is sent; the download just ends.
+		logs.Warn("sync: export bucket id=%s: %v", id, err)
+		return
+	}
+	logs.InfoUser(userID, "exported sync bucket id=%s", id)
+}
+
+func tooMany(w http.ResponseWriter, wait time.Duration, msg string) {
+	w.Header().Set("Retry-After", strconv.Itoa(int((wait+time.Second-1)/time.Second)))
+	httpErr(w, http.StatusTooManyRequests, errors.New(msg))
+}
+
+// exportFileName is <bucket>-<date>.synckosh.jsonl, with the bucket's name cut
+// down to letters, digits, "-" and "_".
+func exportFileName(bucket string, at time.Time) string {
+	var b strings.Builder
+	for _, c := range bucket {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+			b.WriteRune(c)
+		case c == ' ':
+			b.WriteByte('-')
+		}
+	}
+	name := b.String()
+	if name == "" {
+		name = "bucket"
+	}
+	return name + "-" + at.Format("2006-01-02") + ".synckosh.jsonl"
 }

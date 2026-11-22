@@ -2,7 +2,9 @@ package account
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/sudiptadeb/synckosh"
@@ -287,5 +289,67 @@ func TestSyncBucketStats(t *testing.T) {
 	}
 	if _, ok := stats[empty.ID]; ok {
 		t.Fatal("an empty bucket has stats")
+	}
+}
+
+// An export hands over every item the server holds, deletes and synckosh's own
+// among them, in sequence order across pages, after a head that counts them;
+// another user's bucket is not found.
+func TestExportSyncBucket(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	ada := newSyncTestUser(t, store, "ada")
+	bob := newSyncTestUser(t, store, "bob")
+	b, _ := store.CreateSyncBucket(ctx, ada.ID, "Personal")
+
+	n := 2*syncExportPage + 7
+	items := make([]synckosh.Item, 0, n)
+	for i := 1; i <= n; i++ {
+		it := synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: fmt.Sprint(i), Timestamp: int64(i), Sequence: uint64(i)}
+		if i == 3 {
+			it.Deleted, it.DeletedAt = true, 3
+		}
+		if i == n {
+			it.Collection = "_synckosh"
+		}
+		items = append(items, it)
+	}
+	if err := store.SyncStore().Update(b.ID, func(tx server.Tx) error { return tx.Put(items) }); err != nil {
+		t.Fatal(err)
+	}
+
+	var head SyncBucketExport
+	var got []synckosh.Item
+	var bytes int64
+	err := store.ExportSyncBucket(ctx, ada.ID, b.ID,
+		func(h SyncBucketExport) error { head = h; return nil },
+		func(raw []byte) error {
+			var it synckosh.Item
+			if err := json.Unmarshal(raw, &it); err != nil {
+				return err
+			}
+			bytes += int64(len(raw))
+			got = append(got, it)
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head.Bucket.Name != "Personal" || head.Bucket.Token != "" || head.Items != n || head.Bytes != bytes || head.Newest != int64(n) {
+		t.Fatalf("head: %+v (bytes %d)", head, bytes)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	for i, it := range got {
+		if it.Sequence != uint64(i+1) {
+			t.Fatalf("item %d has sequence %d", i, it.Sequence)
+		}
+	}
+	if err := store.ExportSyncBucket(ctx, bob.ID, b.ID, func(SyncBucketExport) error { return nil }, func([]byte) error { return nil }); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bob exporting ada's bucket: %v", err)
 	}
 }

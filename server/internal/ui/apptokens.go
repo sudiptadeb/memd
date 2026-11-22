@@ -134,7 +134,8 @@ func newPairingCode() (string, error) {
 	return string(out), nil
 }
 
-// ipLimiter is a fixed-window per-IP attempt counter for the redeem endpoint.
+// ipLimiter is a sliding-window attempt counter per key: an IP for the redeem
+// endpoint, an IP or an account for sync bucket exports.
 type ipLimiter struct {
 	mu     sync.Mutex
 	hits   map[string][]time.Time
@@ -179,6 +180,18 @@ func (l *ipLimiter) allow(ip string) bool {
 	}
 	l.hits[ip] = append(kept, now)
 	return true
+}
+
+// retryIn is how long until key may try again: until its oldest counted
+// attempt leaves the window.
+func (l *ipLimiter) retryIn(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ts := l.hits[key]
+	if len(ts) < l.limit {
+		return 0
+	}
+	return max(ts[0].Add(l.window).Sub(l.now()), time.Second)
 }
 
 // clientIP is the throttle key. Behind a reverse proxy every request shares

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
@@ -56,6 +57,10 @@ type Handler struct {
 	// in-memory only, and the redeem endpoint carries a small per-IP throttle.
 	appPairing    *pairingStore
 	redeemLimiter *ipLimiter
+	// exportLimiter counts sync bucket exports per IP and per account;
+	// exporting holds the ids of buckets being exported now, one at a time.
+	exportLimiter *ipLimiter
+	exporting     sync.Map
 }
 
 // RCController is the runtime handle on the reverse-tunnel rendezvous: the
@@ -101,6 +106,7 @@ func New(reg *registry.Registry, accounts *account.Store, baseURL string, sessio
 		baseURL:       baseURL,
 		appPairing:    newPairingStore(),
 		redeemLimiter: newIPLimiter(redeemAttemptsPerWindow, redeemWindow),
+		exportLimiter: newIPLimiter(syncExportsPerWindow, syncExportWindow),
 	}
 }
 

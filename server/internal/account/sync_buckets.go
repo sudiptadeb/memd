@@ -233,3 +233,78 @@ func (s *Store) SyncBucketStatsFor(ctx context.Context, userID string) (map[stri
 	}
 	return out, rows.Err()
 }
+
+// SyncBucketExport is what an export's manifest says of a bucket: every item
+// the server holds, deletes and synckosh's own among them, their bytes, and
+// the newest item's timestamp in milliseconds.
+type SyncBucketExport struct {
+	Bucket SyncBucket
+	Items  int
+	Bytes  int64
+	Newest int64
+}
+
+// syncExportPage is how many items an export reads per query. Each page is its
+// own query, so a slow download never holds the database between pages.
+const syncExportPage = 500
+
+// ExportSyncBucket hands fn the user's bucket and what it holds, then each item
+// as the server keeps it, sealed, in sequence order, a page at a time. Another
+// user's or a missing bucket is ErrNotFound.
+func (s *Store) ExportSyncBucket(ctx context.Context, userID, id string, head func(SyncBucketExport) error, item func([]byte) error) error {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, '', created_at FROM sync_buckets WHERE id = ? AND user_id = ?`, id, userID)
+	b, err := scanSyncBucket(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	ex := SyncBucketExport{Bucket: b}
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(LENGTH(item)), 0), COALESCE(MAX(timestamp), 0) FROM sync_items WHERE bucket = ?`,
+		id).Scan(&ex.Items, &ex.Bytes, &ex.Newest)
+	if err != nil {
+		return err
+	}
+	if err := head(ex); err != nil {
+		return err
+	}
+	var after int64 = -1
+	for {
+		page, last, err := s.syncExportPage(ctx, id, after)
+		if err != nil {
+			return err
+		}
+		for _, raw := range page {
+			if err := item(raw); err != nil {
+				return err
+			}
+		}
+		if len(page) < syncExportPage {
+			return nil
+		}
+		after = last
+	}
+}
+
+func (s *Store) syncExportPage(ctx context.Context, bucket string, after int64) ([][]byte, int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT seq, item FROM sync_items WHERE bucket = ? AND seq > ? ORDER BY seq LIMIT ?`,
+		bucket, after, syncExportPage)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var page [][]byte
+	var last int64
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&last, &raw); err != nil {
+			return nil, 0, err
+		}
+		page = append(page, raw)
+	}
+	return page, last, rows.Err()
+}
