@@ -26,7 +26,7 @@ import (
 	"github.com/sudiptadeb/memd/server/internal/storage"
 )
 
-// The web UI is two independently-built Vue apps under dist/<app> (produced by
+// The web UI is three independently-built Vue apps under dist/<app> (produced by
 // build/build.sh → web/ vite build). `all:` is required: Vite emits some chunks
 // whose names start with "_", which a plain embed would skip.
 //
@@ -126,16 +126,22 @@ func (h *Handler) rcActive() bool { return h.rc != nil && h.rc.Enabled() }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	// Each app is self-contained under dist/<app>: the dashboard is served at the
-	// root, the admin console under /admin/. Content-hashed bundles are immutable;
+	// root, the admin console under /admin/, the sync page at /synckosh. Content-hashed bundles are immutable;
 	// the two app shells revalidate so a deploy is picked up at once.
 	dashFS := mustSub(distFS, "dist/dashboard")
 	adminFS := mustSub(distFS, "dist/admin")
+	synckoshFS := mustSub(distFS, "dist/synckosh")
 	mux.Handle("/assets/", immutable(http.FileServer(http.FS(dashFS))))
 	mux.Handle("/admin/assets/", immutable(http.StripPrefix("/admin", http.FileServer(http.FS(adminFS)))))
+	mux.Handle("/synckosh/assets/", immutable(http.StripPrefix("/synckosh", http.FileServer(http.FS(synckoshFS)))))
 	// History-mode SPA fallbacks: any non-asset, non-API path serves the app's
 	// index.html so deep links and reloads boot the SPA, which then client-routes.
 	mux.HandleFunc("/admin", spaPage(mustReadFile(adminFS, "index.html")))
 	mux.HandleFunc("/admin/", spaPage(mustReadFile(adminFS, "index.html")))
+	// /synckosh is Project B's sync page: memd's accounts and sync bucket API,
+	// none of the dashboard.
+	mux.HandleFunc("/synckosh", spaPage(mustReadFile(synckoshFS, "index.html")))
+	mux.HandleFunc("/synckosh/", spaPage(mustReadFile(synckoshFS, "index.html")))
 	mux.HandleFunc("/", spaPage(mustReadFile(dashFS, "index.html")))
 	mux.HandleFunc("/api/session", h.sessionAPI)
 	mux.HandleFunc("/api/auth/login", h.loginAPI)

@@ -273,7 +273,7 @@ func TestNormalizeGitDirectoryAuthStripsInlineCredentials(t *testing.T) {
 	}
 }
 
-// The two app shells must revalidate (no-cache) so a deploy's new asset hashes
+// The app shells must revalidate (no-cache) so a deploy's new asset hashes
 // are picked up immediately, while content-hashed bundles are served immutable.
 func TestUIServesAppsWithCaching(t *testing.T) {
 	accounts := openTestAccountStore(t)
@@ -310,6 +310,36 @@ func TestUIServesAppsWithCaching(t *testing.T) {
 	}
 	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
 		t.Fatalf("%s Cache-Control = %q, want immutable", asset, got)
+	}
+}
+
+// /synckosh serves the sync page's own shell, not the dashboard's, and its
+// bundles from its own assets.
+func TestUIServesSynckoshPage(t *testing.T) {
+	accounts := openTestAccountStore(t)
+	mux, _ := newTestUI(t, accounts)
+
+	want, err := fs.ReadFile(distFS, "dist/synckosh/index.html")
+	if err != nil {
+		t.Fatalf("read embedded synckosh shell: %v (was the web UI built?)", err)
+	}
+	for _, target := range []string{"/synckosh", "/synckosh/"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != string(want) {
+			t.Fatalf("%s: %d, not the synckosh shell", target, rec.Code)
+		}
+	}
+
+	entries, err := fs.ReadDir(distFS, "dist/synckosh/assets")
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no embedded synckosh assets: %v", err)
+	}
+	asset := "/synckosh/assets/" + entries[0].Name()
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, asset, nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("%s: %d %q", asset, rec.Code, rec.Header().Get("Cache-Control"))
 	}
 }
 

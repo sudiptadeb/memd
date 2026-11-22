@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "dev:admin": "VITE_APP=admin vite",
+    "dev:synckosh": "VITE_APP=synckosh vite",
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "test": "node --test \"src/**/*.test.mjs\""

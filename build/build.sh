@@ -51,7 +51,7 @@ build_web() {
   fi
   echo "→ web UI: npm ci"
   ( cd "${WEB_DIR}" && npm ci )
-  for app in dashboard admin; do
+  for app in dashboard admin synckosh; do
     echo "→ web UI: building ${app}"
     ( cd "${WEB_DIR}" && VITE_APP="${app}" npm run build )
   done
