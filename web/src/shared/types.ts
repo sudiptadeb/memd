@@ -807,6 +807,18 @@ export interface SyncBucketStats {
   bytes: number;
   // The newest item's timestamp, in milliseconds.
   newest: number;
+  // The sealed copies of the bucket's data key, oldest first.
+  keys: SyncKeyCopy[];
+}
+
+// What the server can read of one sealed key copy; created is absent for a
+// copy that doesn't say when it was made.
+export interface SyncKeyCopy {
+  id: string;
+  label: string;
+  key_id: string;
+  backup_code: boolean;
+  created?: string;
 }
 
 // Response of GET /api/sync/buckets (ui.syncBucketsAPI).

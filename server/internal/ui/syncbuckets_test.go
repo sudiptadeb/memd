@@ -74,7 +74,11 @@ func TestSyncBucketsAPI(t *testing.T) {
 
 	// Once a device has synced, the list says what the server holds.
 	err := accounts.SyncStore().Update(made.Bucket.ID, func(tx server.Tx) error {
-		return tx.Put([]synckosh.Item{{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 42, Sequence: 1}})
+		return tx.Put([]synckosh.Item{
+			{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 42, Sequence: 1},
+			{Collection: "_synckosh", Datatype: synckosh.SealedKeyDatatype, GUID: "c1", Timestamp: 2, Sequence: 2,
+				Public: []byte(`{"label":"Backup, 22 Nov","code":true,"created":1795300000000,"key":"k1","kdf":"argon2id","salt":"SALT","box":"BOX"}`)},
+		})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +90,12 @@ func TestSyncBucketsAPI(t *testing.T) {
 	if st := list.Buckets[0].Stats; st == nil || st.Newest != 42 || st.Bytes == 0 ||
 		len(st.Collections) != 1 || st.Collections[0] != (syncCollectionView{Name: "bookmarks", Items: 1}) {
 		t.Fatalf("stats: %s", rec.Body.String())
+	}
+	if k := list.Buckets[0].Stats.Keys; len(k) != 1 || k[0] != (syncKeyView{ID: "c1", Label: "Backup, 22 Nov", KeyID: "k1", BackupCode: true, Created: "2026-11-21T22:26:40Z"}) {
+		t.Fatalf("keys: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "SALT") || strings.Contains(rec.Body.String(), "BOX") {
+		t.Fatalf("the list shows a sealed copy's salt or box: %s", rec.Body.String())
 	}
 	if rec := call(&bob, http.MethodGet, "/api/sync/buckets", ""); strings.Contains(rec.Body.String(), made.Bucket.ID) ||
 		strings.Contains(rec.Body.String(), made.Bucket.Token) {

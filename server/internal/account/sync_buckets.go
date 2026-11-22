@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/sudiptadeb/memd/server/internal/token"
+	"github.com/sudiptadeb/synckosh"
 	"github.com/sudiptadeb/synckosh/server"
 )
 
@@ -192,6 +194,20 @@ type SyncBucketStats struct {
 	Collections []SyncCollectionCount
 	Bytes       int64
 	Newest      int64
+	// Keys are the sealed copies of the bucket's data key, oldest first, as
+	// their public parts say; the sealed key itself is never read.
+	Keys []SyncKeyCopy
+}
+
+// SyncKeyCopy is one sealed copy of a bucket's data key: its item's guid,
+// the app's label, the data key's id, whether a backup code opens it, and when
+// it was made (zero when it doesn't say).
+type SyncKeyCopy struct {
+	ID         string
+	Label      string
+	KeyID      string
+	BackupCode bool
+	Created    time.Time
 }
 
 // SyncCollectionCount is one collection's live (not deleted) items.
@@ -226,12 +242,46 @@ func (s *Store) SyncBucketStatsFor(ctx context.Context, userID string) (map[stri
 		st := out[bucket]
 		st.Bytes += bytes
 		st.Newest = max(st.Newest, newest)
-		if items > 0 && collection != "_synckosh" {
+		if items > 0 && collection != synckosh.LibraryCollection {
 			st.Collections = append(st.Collections, SyncCollectionCount{Name: collection, Items: items})
 		}
 		out[bucket] = st
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.addSyncKeyCopies(ctx, userID, out)
+}
+
+// addSyncKeyCopies adds each bucket's live sealed key copies to its stats.
+func (s *Store) addSyncKeyCopies(ctx context.Context, userID string, out map[string]SyncBucketStats) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.bucket, i.item FROM sync_items i JOIN sync_buckets b ON b.id = i.bucket
+		 WHERE b.user_id = ? AND i.collection = ? AND i.deleted = 0
+		 ORDER BY i.bucket, i.seq`, userID, synckosh.LibraryCollection)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bucket string
+		var raw []byte
+		if err := rows.Scan(&bucket, &raw); err != nil {
+			return err
+		}
+		var it synckosh.Item
+		if json.Unmarshal(raw, &it) != nil || it.Datatype != synckosh.SealedKeyDatatype {
+			continue
+		}
+		c, err := synckosh.ReadCopy(it)
+		if err != nil {
+			continue
+		}
+		st := out[bucket]
+		st.Keys = append(st.Keys, SyncKeyCopy{ID: it.GUID, Label: c.Label, KeyID: c.KeyID, BackupCode: c.BackupCode, Created: c.Created})
+		out[bucket] = st
+	}
+	return rows.Err()
 }
 
 // SyncBucketExport is what an export's manifest says of a bucket: every item

@@ -37,6 +37,18 @@ type syncStatsView struct {
 	Bytes       int64                `json:"bytes"`
 	// Newest is the newest item's timestamp, in milliseconds.
 	Newest int64 `json:"newest"`
+	// Keys are the sealed copies of the bucket's data key, oldest first.
+	Keys []syncKeyView `json:"keys"`
+}
+
+// syncKeyView is what the server can read of one sealed key copy: never its
+// salt or sealed box. Created is empty for a copy that doesn't say.
+type syncKeyView struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	KeyID      string `json:"key_id"`
+	BackupCode bool   `json:"backup_code"`
+	Created    string `json:"created,omitempty"`
 }
 
 type syncCollectionView struct {
@@ -88,7 +100,15 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 				for _, c := range st.Collections {
 					cols = append(cols, syncCollectionView{Name: c.Name, Items: c.Items})
 				}
-				v.Stats = &syncStatsView{Collections: cols, Bytes: st.Bytes, Newest: st.Newest}
+				keys := make([]syncKeyView, 0, len(st.Keys))
+				for _, k := range st.Keys {
+					kv := syncKeyView{ID: k.ID, Label: k.Label, KeyID: k.KeyID, BackupCode: k.BackupCode}
+					if !k.Created.IsZero() {
+						kv.Created = k.Created.UTC().Format(time.RFC3339)
+					}
+					keys = append(keys, kv)
+				}
+				v.Stats = &syncStatsView{Collections: cols, Bytes: st.Bytes, Newest: st.Newest, Keys: keys}
 			}
 			views = append(views, v)
 		}

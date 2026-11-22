@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/sudiptadeb/synckosh"
 	"github.com/sudiptadeb/synckosh/server"
@@ -263,6 +264,12 @@ func TestSyncBucketStats(t *testing.T) {
 		synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "3", Timestamp: 20, Sequence: 3, Deleted: true, DeletedAt: 20},
 		synckosh.Item{Collection: "logins", Datatype: "l", GUID: "4", Timestamp: 5, Sequence: 4, Deleted: true, DeletedAt: 5},
 		synckosh.Item{Collection: "_synckosh", Datatype: "key", GUID: "5", Timestamp: 1, Sequence: 5},
+		synckosh.Item{Collection: "_synckosh", Datatype: synckosh.SealedKeyDatatype, GUID: "pass", Timestamp: 2, Sequence: 6,
+			Public: []byte(`{"label":"Main passphrase","created":1795300000000,"key":"k1","kdf":"argon2id","salt":"s","box":"b"}`)},
+		synckosh.Item{Collection: "_synckosh", Datatype: synckosh.SealedKeyDatatype, GUID: "code", Timestamp: 3, Sequence: 7,
+			Public: []byte(`{"label":"Backup, 22 Nov","code":true,"key":"k1","kdf":"argon2id","salt":"s","box":"b"}`)},
+		synckosh.Item{Collection: "_synckosh", Datatype: synckosh.SealedKeyDatatype, GUID: "gone", Timestamp: 4, Sequence: 8,
+			Deleted: true, DeletedAt: 4},
 	)
 	put(other.ID, synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 99, Sequence: 1})
 
@@ -276,6 +283,13 @@ func TestSyncBucketStats(t *testing.T) {
 	st := stats[full.ID]
 	if len(st.Collections) != 1 || st.Collections[0] != (SyncCollectionCount{Name: "bookmarks", Items: 2}) {
 		t.Fatalf("collections: %+v", st.Collections)
+	}
+	want := []SyncKeyCopy{
+		{ID: "pass", Label: "Main passphrase", KeyID: "k1", Created: time.UnixMilli(1795300000000)},
+		{ID: "code", Label: "Backup, 22 Nov", KeyID: "k1", BackupCode: true},
+	}
+	if len(st.Keys) != 2 || st.Keys[0] != want[0] || st.Keys[1] != want[1] {
+		t.Fatalf("keys: %+v", st.Keys)
 	}
 	if st.Newest != 30 {
 		t.Fatalf("newest: %d", st.Newest)
