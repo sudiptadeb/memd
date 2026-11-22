@@ -348,6 +348,19 @@ asks to be set up again: the first makes a new key with a passphrase, and the
 others join with it.
 The bucket, its address and its token stay as they are.
 
+**`/synckosh`** is the same buckets on a page of their own, for people who come
+from Project B's homepage: memd's sign-in, none of the dashboard, and Project B's
+look. It signs in with SSO (`/auth/login?return_to=/synckosh`) and makes, lists,
+resets and deletes buckets, with the address hidden until **Show**; **New
+token** stays on the dashboard. It also says in plain words what the server
+can't do and what it still sees, and links to self-hosting. It is the third web
+app, beside the dashboard and admin (`web/src/apps/synckosh`).
+
+Each bucket in the list (`GET /api/sync/buckets`) carries `stats` once it holds
+anything: live items per collection, the bytes kept and the newest item's
+timestamp in milliseconds, read from what the server already sees. synckosh's
+own `_synckosh` collection counts toward the bytes only.
+
 A device configures the bucket in either form, as with connectors:
 
 ```
