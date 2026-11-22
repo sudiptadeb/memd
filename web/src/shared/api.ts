@@ -595,6 +595,16 @@ export const sync = {
     });
   },
 
+  // POST /api/sync/buckets/:id/export — ui.syncBucketAPI. Everything the
+  // server holds for the bucket, still sealed, as JSON lines; the raw
+  // response, for the page to save. 429 with Retry-After past the limits.
+  export(id: string): Promise<Response> {
+    return fetch(`/api/sync/buckets/${encodeURIComponent(id)}/export`, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+  },
+
   // POST /api/sync/buckets/:id/reset — ui.syncBucketAPI. The server forgets
   // the bucket's items, its key's sealed copies among them, and takes a new
   // store id, so the devices are set up again (204). The bucket and its token

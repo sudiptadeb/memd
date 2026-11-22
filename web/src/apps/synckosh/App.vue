@@ -132,9 +132,19 @@
           <div class="actions">
             <a class="btn small" :href="syncDeepLink(b.token_url)">Open in Project B</a>
             <span class="spacer"></span>
-            <button class="textbtn" type="button" @click="reset(b)">Reset</button>
-            <button class="textbtn danger" type="button" @click="remove(b)">Delete</button>
+            <span class="quiet">
+              <button class="textbtn" type="button" @click="exportOpen[b.id] = !exportOpen[b.id]">Export…</button>
+              <button class="textbtn" type="button" @click="reset(b)">Reset</button>
+              <button class="textbtn danger" type="button" @click="remove(b)">Delete</button>
+            </span>
           </div>
+          <div class="export" v-if="exportOpen[b.id]">
+            <span class="note">Everything this server holds for this bucket, still encrypted. Only your devices can open it.</span>
+            <button class="btn small" type="button" :disabled="exporting[b.id]" @click="download(b)">
+              {{ exporting[b.id] ? "Preparing…" : "Download" }}
+            </button>
+          </div>
+          <p class="err" v-if="exportErr[b.id]" style="margin: 8px 0 0">{{ exportErr[b.id] }}</p>
         </template>
         <div class="actions" v-else>
           <span class="note" style="margin: 0">This bucket's address can be shown again after a new token, on the memd dashboard.</span>
@@ -169,6 +179,9 @@ const loaded = ref(false);
 const user = ref<SessionUser | null>(null);
 const buckets = ref<SyncBucketView[]>([]);
 const shown = reactive<Record<string, boolean>>({});
+const exportOpen = reactive<Record<string, boolean>>({});
+const exporting = reactive<Record<string, boolean>>({});
+const exportErr = reactive<Record<string, string>>({});
 const fresh = ref<SyncBucketView | null>(null);
 const adding = ref(false);
 const newName = ref("");
@@ -230,6 +243,35 @@ async function remove(b: SyncBucketView): Promise<void> {
     error.value = errText(e);
   }
   await reload();
+}
+
+async function download(b: SyncBucketView): Promise<void> {
+  exporting[b.id] = true;
+  exportErr[b.id] = "";
+  try {
+    const res = await sync.export(b.id);
+    if (res.status === 429) {
+      const min = Math.max(1, Math.ceil(Number(res.headers.get("Retry-After") || 60) / 60));
+      exportErr[b.id] = "Too many exports for now. Try again in " + min + (min === 1 ? " minute." : " minutes.");
+      return;
+    }
+    if (!res.ok) {
+      exportErr[b.id] = "Export failed (" + res.status + ").";
+      return;
+    }
+    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || "bucket.synckosh.jsonl";
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+    exportOpen[b.id] = false;
+  } catch (e) {
+    exportErr[b.id] = errText(e);
+  } finally {
+    exporting[b.id] = false;
+  }
 }
 
 async function copy(text: string): Promise<void> {
