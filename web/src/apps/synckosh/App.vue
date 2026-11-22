@@ -133,7 +133,15 @@
             <a class="btn small" :href="syncDeepLink(b.token_url)">Open in Project B</a>
             <span class="spacer"></span>
             <span class="quiet">
-              <button class="textbtn" type="button" @click="exportOpen[b.id] = !exportOpen[b.id]">Export…</button>
+              <button
+                class="textbtn"
+                :class="{ on: exportOpen[b.id] }"
+                type="button"
+                :aria-expanded="exportOpen[b.id] ? 'true' : 'false'"
+                @click="exportOpen[b.id] = !exportOpen[b.id]"
+              >
+                Export…
+              </button>
               <button class="textbtn" type="button" @click="reset(b)">Reset</button>
               <button class="textbtn danger" type="button" @click="remove(b)">Delete</button>
             </span>
