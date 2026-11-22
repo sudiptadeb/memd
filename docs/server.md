@@ -361,6 +361,16 @@ anything: live items per collection, the bytes kept and the newest item's
 timestamp in milliseconds, read from what the server already sees. synckosh's
 own `_synckosh` collection counts toward the bytes only.
 
+**Export** (`POST /api/sync/buckets/{id}/export`, and "Export…" on
+`/synckosh`) downloads everything the server holds for a bucket, still sealed,
+as `<bucket>-<date>.synckosh.jsonl`: a manifest line (`format`
+`synckosh-export`, `protocol` 1, the bucket's name, created and exported times,
+item count, bytes, newest timestamp), then each item as the server keeps it,
+deletes and the sealed key copies among them. The token is not in it. It is
+streamed a page of 500 items per query, so a slow download never holds the
+database. Exports are limited to 3 an hour per account and 3 an hour per IP,
+and one at a time per bucket; past that the answer is 429 with `Retry-After`.
+
 A device configures the bucket in either form, as with connectors:
 
 ```
