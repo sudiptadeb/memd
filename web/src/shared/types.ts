@@ -797,6 +797,16 @@ export interface SyncBucketView {
   url: string;
   token?: string;
   token_url?: string;
+  // What the server holds for the bucket, in the list only; absent while it
+  // holds nothing.
+  stats?: SyncBucketStats;
+}
+
+export interface SyncBucketStats {
+  collections: { name: string; items: number }[];
+  bytes: number;
+  // The newest item's timestamp, in milliseconds.
+  newest: number;
 }
 
 // Response of GET /api/sync/buckets (ui.syncBucketsAPI).

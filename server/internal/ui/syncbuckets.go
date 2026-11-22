@@ -26,6 +26,21 @@ type syncBucketView struct {
 	// bucket made while only the token's hash was kept, until a new token.
 	Token    string `json:"token,omitempty"`
 	TokenURL string `json:"token_url,omitempty"`
+	// Stats is what the server holds for the bucket, in the list only, and
+	// absent while the bucket holds nothing.
+	Stats *syncStatsView `json:"stats,omitempty"`
+}
+
+type syncStatsView struct {
+	Collections []syncCollectionView `json:"collections"`
+	Bytes       int64                `json:"bytes"`
+	// Newest is the newest item's timestamp, in milliseconds.
+	Newest int64 `json:"newest"`
+}
+
+type syncCollectionView struct {
+	Name  string `json:"name"`
+	Items int    `json:"items"`
 }
 
 func (h *Handler) syncURL() string { return h.baseURL + "/sync" }
@@ -44,7 +59,8 @@ func (h *Handler) syncBucketView(b account.SyncBucket) syncBucketView {
 	return v
 }
 
-// GET /api/sync/buckets lists the user's buckets; POST makes one.
+// GET /api/sync/buckets lists the user's buckets, each with what the server
+// holds for it; POST makes one.
 func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
@@ -58,9 +74,22 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, http.StatusInternalServerError, err)
 			return
 		}
+		stats, err := h.accounts.SyncBucketStatsFor(r.Context(), user.ID)
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err)
+			return
+		}
 		views := make([]syncBucketView, 0, len(buckets))
 		for _, b := range buckets {
-			views = append(views, h.syncBucketView(b))
+			v := h.syncBucketView(b)
+			if st, ok := stats[b.ID]; ok {
+				cols := make([]syncCollectionView, 0, len(st.Collections))
+				for _, c := range st.Collections {
+					cols = append(cols, syncCollectionView{Name: c.Name, Items: c.Items})
+				}
+				v.Stats = &syncStatsView{Collections: cols, Bytes: st.Bytes, Newest: st.Newest}
+			}
+			views = append(views, v)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"buckets": views})
 	case http.MethodPost:

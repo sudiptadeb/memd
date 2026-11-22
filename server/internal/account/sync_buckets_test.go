@@ -233,3 +233,59 @@ func TestResetSyncBucket(t *testing.T) {
 		t.Fatalf("the token after reset: %+v %v", b, err)
 	}
 }
+
+// Stats count each collection's live items, leave out synckosh's own and
+// deletes, sum the bytes kept and take the newest timestamp, for the user's
+// own buckets only.
+func TestSyncBucketStats(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	ada := newSyncTestUser(t, store, "ada")
+	bob := newSyncTestUser(t, store, "bob")
+	full, _ := store.CreateSyncBucket(ctx, ada.ID, "Personal")
+	empty, _ := store.CreateSyncBucket(ctx, ada.ID, "Work")
+	other, _ := store.CreateSyncBucket(ctx, bob.ID, "Bob's")
+
+	put := func(bucket string, items ...synckosh.Item) {
+		t.Helper()
+		if err := store.SyncStore().Update(bucket, func(tx server.Tx) error { return tx.Put(items) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(full.ID,
+		synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 10, Sequence: 1},
+		synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "2", Timestamp: 30, Sequence: 2},
+		synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "3", Timestamp: 20, Sequence: 3, Deleted: true, DeletedAt: 20},
+		synckosh.Item{Collection: "logins", Datatype: "l", GUID: "4", Timestamp: 5, Sequence: 4, Deleted: true, DeletedAt: 5},
+		synckosh.Item{Collection: "_synckosh", Datatype: "key", GUID: "5", Timestamp: 1, Sequence: 5},
+	)
+	put(other.ID, synckosh.Item{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 99, Sequence: 1})
+
+	stats, err := store.SyncBucketStatsFor(ctx, ada.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("want stats for the one bucket with items, got %+v", stats)
+	}
+	st := stats[full.ID]
+	if len(st.Collections) != 1 || st.Collections[0] != (SyncCollectionCount{Name: "bookmarks", Items: 2}) {
+		t.Fatalf("collections: %+v", st.Collections)
+	}
+	if st.Newest != 30 {
+		t.Fatalf("newest: %d", st.Newest)
+	}
+	var bytes int64
+	if err := store.db.QueryRowContext(ctx, `SELECT SUM(LENGTH(item)) FROM sync_items WHERE bucket = ?`, full.ID).Scan(&bytes); err != nil {
+		t.Fatal(err)
+	}
+	if st.Bytes != bytes || bytes == 0 {
+		t.Fatalf("bytes: %d, want %d", st.Bytes, bytes)
+	}
+	if _, ok := stats[empty.ID]; ok {
+		t.Fatal("an empty bucket has stats")
+	}
+}

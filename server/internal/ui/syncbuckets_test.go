@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/sudiptadeb/synckosh"
+	"github.com/sudiptadeb/synckosh/server"
 )
 
 func TestSyncBucketsAPI(t *testing.T) {
@@ -65,8 +67,25 @@ func TestSyncBucketsAPI(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
 	}
-	if len(list.Buckets) != 1 || list.Buckets[0].Token != made.Bucket.Token || list.Buckets[0].TokenURL != made.Bucket.TokenURL {
+	if len(list.Buckets) != 1 || list.Buckets[0].Token != made.Bucket.Token || list.Buckets[0].TokenURL != made.Bucket.TokenURL ||
+		list.Buckets[0].Stats != nil {
 		t.Fatalf("list: %+v", list.Buckets)
+	}
+
+	// Once a device has synced, the list says what the server holds.
+	err := accounts.SyncStore().Update(made.Bucket.ID, func(tx server.Tx) error {
+		return tx.Put([]synckosh.Item{{Collection: "bookmarks", Datatype: "b", GUID: "1", Timestamp: 42, Sequence: 1}})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = call(&ada, http.MethodGet, "/api/sync/buckets", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Buckets) != 1 {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	if st := list.Buckets[0].Stats; st == nil || st.Newest != 42 || st.Bytes == 0 ||
+		len(st.Collections) != 1 || st.Collections[0] != (syncCollectionView{Name: "bookmarks", Items: 1}) {
+		t.Fatalf("stats: %s", rec.Body.String())
 	}
 	if rec := call(&bob, http.MethodGet, "/api/sync/buckets", ""); strings.Contains(rec.Body.String(), made.Bucket.ID) ||
 		strings.Contains(rec.Body.String(), made.Bucket.Token) {

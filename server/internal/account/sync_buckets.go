@@ -184,3 +184,52 @@ func scanSyncBucket(row userScanner) (SyncBucket, error) {
 	b.CreatedAt = mustParseTime(created)
 	return b, nil
 }
+
+// SyncBucketStats is what the server holds for one bucket, read only from what
+// it can see: live items per collection, the bytes it keeps, and the newest
+// item's timestamp, in milliseconds as the device sent it.
+type SyncBucketStats struct {
+	Collections []SyncCollectionCount
+	Bytes       int64
+	Newest      int64
+}
+
+// SyncCollectionCount is one collection's live (not deleted) items.
+type SyncCollectionCount struct {
+	Name  string
+	Items int
+}
+
+// SyncBucketStatsFor returns the stats of each of the user's buckets that holds
+// items, by bucket id. Collections are by name; synckosh's own `_synckosh`
+// counts toward the bytes but not the collections, and a collection with only
+// deletes is left out.
+func (s *Store) SyncBucketStatsFor(ctx context.Context, userID string) (map[string]SyncBucketStats, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.bucket, i.collection, SUM(1 - i.deleted), SUM(LENGTH(i.item)), MAX(i.timestamp)
+		  FROM sync_items i JOIN sync_buckets b ON b.id = i.bucket
+		 WHERE b.user_id = ?
+		 GROUP BY i.bucket, i.collection
+		 ORDER BY i.bucket, i.collection`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]SyncBucketStats{}
+	for rows.Next() {
+		var bucket, collection string
+		var items int
+		var bytes, newest int64
+		if err := rows.Scan(&bucket, &collection, &items, &bytes, &newest); err != nil {
+			return nil, err
+		}
+		st := out[bucket]
+		st.Bytes += bytes
+		st.Newest = max(st.Newest, newest)
+		if items > 0 && collection != "_synckosh" {
+			st.Collections = append(st.Collections, SyncCollectionCount{Name: collection, Items: items})
+		}
+		out[bucket] = st
+	}
+	return out, rows.Err()
+}
