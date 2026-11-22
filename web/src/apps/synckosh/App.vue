@@ -55,6 +55,7 @@
           <ul>
             <li>What kinds of things you sync, how many, their sizes, and when.</li>
             <li>It can hold items back, stop answering, or show a device an older copy.</li>
+            <li>The names of the keys that open your bucket, and when each was added.</li>
             <li>It can guess at your passphrase, so choose a long one.</li>
           </ul>
         </div>
@@ -120,7 +121,18 @@
             <b>{{ c.items.toLocaleString() }}</b>{{ c.name }}
           </div>
           <div class="stat"><b>{{ size(b.stats.bytes) }}</b>stored</div>
+          <div class="stat" v-if="b.stats.keys.length">
+            <b>{{ b.stats.keys.length }}</b>{{ b.stats.keys.length === 1 ? "key" : "keys" }}
+          </div>
         </div>
+        <ul class="keys" v-if="b.stats && b.stats.keys.length">
+          <li v-for="k in b.stats.keys" :key="k.id">
+            <span class="klabel">{{ k.label || "No label" }}</span>
+            <span class="kkind">{{ k.backup_code ? "backup code" : "passphrase" }}</span>
+            <span class="kmeta">{{ k.created ? "added " + day(k.created) : "date not recorded" }}</span>
+            <span class="kid" :title="'copy ' + k.id + ', data key ' + k.key_id">key {{ short(k.key_id) }} · {{ short(k.id) }}</span>
+          </li>
+        </ul>
         <template v-if="b.token_url">
           <div class="addr">
             <code :class="{ shown: shown[b.id] }">{{ shown[b.id] ? b.token_url : masked(b.token_url) }}</code>
@@ -308,6 +320,15 @@ function ago(ms: number, withAgo = true): string {
     min < 1 ? "now" : min < 60 ? min + " min" : min < 1440 ? Math.round(min / 60) + " h" : days + (days === 1 ? " day" : " days");
   if (text === "now") return withAgo ? "just now" : "a moment";
   return withAgo ? text + " ago" : text;
+}
+
+function day(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+// An id cut to its end: time-ordered ids share their start, not their end.
+function short(id: string): string {
+  return id.length > 14 ? "…" + id.slice(-8) : id;
 }
 
 function size(bytes: number): string {
