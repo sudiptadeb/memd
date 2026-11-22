@@ -323,7 +323,7 @@ function ago(ms: number, withAgo = true): string {
 }
 
 function day(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 // An id cut to its end: time-ordered ids share their start, not their end.
