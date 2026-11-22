@@ -359,7 +359,11 @@ app, beside the dashboard and admin (`web/src/apps/synckosh`).
 Each bucket in the list (`GET /api/sync/buckets`) carries `stats` once it holds
 anything: live items per collection, the bytes kept and the newest item's
 timestamp in milliseconds, read from what the server already sees. synckosh's
-own `_synckosh` collection counts toward the bytes only.
+own `_synckosh` collection counts toward the bytes only. `stats.keys` lists the
+bucket's live sealed key copies (synckosh 0.3.0's `sealedkey` items), oldest
+first, as their public parts say: the item's `id`, the app's `label`, the data
+key's `key_id`, `backup_code`, and `created` when the copy says. A copy's salt
+and sealed box are never sent. `/synckosh` shows them as a list on each card.
 
 **Export** (`POST /api/sync/buckets/{id}/export`, and "Export…" on
 `/synckosh`) downloads everything the server holds for a bucket, still sealed,
