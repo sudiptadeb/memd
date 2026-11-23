@@ -309,6 +309,13 @@ server {
     listen 80;
     server_name <domain>;
 
+    # nginx leaves proxied responses uncompressed by default; memd's web apps
+    # are a few hundred KB of scripts that compress to about 40%.
+    gzip on;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types text/css text/javascript application/javascript application/json image/svg+xml;
+
     location / {
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
