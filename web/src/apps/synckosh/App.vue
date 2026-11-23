@@ -188,6 +188,7 @@ import { nextTick, onMounted, reactive, ref } from "vue";
 import { auth, session, sync, ApiError } from "@/shared/api";
 import { copyToClipboard } from "@/shared/utils";
 import { syncDeepLink } from "@/apps/dashboard/components/syncLink";
+import { publicURL } from "@/apps/dashboard/components/connUrls";
 import type { SessionUser, SyncBucketView } from "@/shared/types";
 
 const sealingURL = "https://github.com/sudiptadeb/synckosh/blob/main/SPEC.md#what-sealing-protects";
@@ -209,13 +210,20 @@ const busy = ref(false);
 const error = ref("");
 const nameInput = ref<HTMLInputElement | null>(null);
 
+// The server builds a bucket's addresses from memd's own listen address, which
+// behind the proxy is not the public one; every address on this page is put on
+// the origin the page was opened from, as the dashboard does.
+function onThisOrigin(b: SyncBucketView): SyncBucketView {
+  return { ...b, url: publicURL(b.url), token_url: b.token_url ? publicURL(b.token_url) : b.token_url };
+}
+
 function errText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
 }
 
 async function reload(): Promise<void> {
   try {
-    buckets.value = (await sync.list()).buckets || [];
+    buckets.value = ((await sync.list()).buckets || []).map(onThisOrigin);
   } catch (e) {
     error.value = errText(e);
   }
@@ -233,7 +241,7 @@ async function create(): Promise<void> {
   busy.value = true;
   error.value = "";
   try {
-    fresh.value = (await sync.create(newName.value.trim())).bucket;
+    fresh.value = onThisOrigin((await sync.create(newName.value.trim())).bucket);
     adding.value = false;
     await reload();
   } catch (e) {
