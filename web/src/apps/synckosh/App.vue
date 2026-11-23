@@ -78,9 +78,27 @@
           This address is the key to your bucket. Keep it like a password: anyone with it can sync to this bucket,
           though not read it.
         </p>
-        <div class="addr">
-          <code class="shown">{{ fresh.token_url }}</code>
-          <button class="btn small" type="button" @click="copy(fresh.token_url)">Copy</button>
+        <div class="field">
+          <span class="flabel">Address</span>
+          <div class="addr">
+            <code class="shown">{{ fresh.token_url }}</code>
+            <button class="btn small" type="button" @click="copy(fresh.token_url)">Copy</button>
+          </div>
+        </div>
+        <p class="note apart">Or, where an app asks for a server and a token, the two apart:</p>
+        <div class="field">
+          <span class="flabel">Server</span>
+          <div class="addr">
+            <code>{{ fresh.url }}</code>
+            <button class="btn small" type="button" @click="copy(fresh.url)">Copy</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="flabel">Token</span>
+          <div class="addr">
+            <code class="shown">{{ fresh.token }}</code>
+            <button class="btn small" type="button" @click="copy(fresh.token || '')">Copy</button>
+          </div>
         </div>
         <div class="actions">
           <a class="btn primary" :href="syncDeepLink(fresh.token_url)">Open in Project B</a>
@@ -141,6 +159,34 @@
             </button>
             <button class="btn small" type="button" @click="copy(b.token_url)">Copy</button>
           </div>
+          <button
+            class="textbtn"
+            :class="{ on: apart[b.id] }"
+            type="button"
+            :aria-expanded="apart[b.id] ? 'true' : 'false'"
+            @click="apart[b.id] = !apart[b.id]"
+          >
+            Server and token apart…
+          </button>
+          <template v-if="apart[b.id]">
+            <div class="field">
+              <span class="flabel">Server</span>
+              <div class="addr">
+                <code>{{ b.url }}</code>
+                <button class="btn small" type="button" @click="copy(b.url)">Copy</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="flabel">Token</span>
+              <div class="addr">
+                <code :class="{ shown: shownToken[b.id] }">{{ shownToken[b.id] ? b.token : "•".repeat(20) }}</code>
+                <button class="btn small" type="button" @click="shownToken[b.id] = !shownToken[b.id]">
+                  {{ shownToken[b.id] ? "Hide" : "Show" }}
+                </button>
+                <button class="btn small" type="button" @click="copy(b.token || '')">Copy</button>
+              </div>
+            </div>
+          </template>
           <div class="actions">
             <a class="btn small" :href="syncDeepLink(b.token_url)">Open in Project B</a>
             <span class="spacer"></span>
@@ -200,6 +246,8 @@ const loaded = ref(false);
 const user = ref<SessionUser | null>(null);
 const buckets = ref<SyncBucketView[]>([]);
 const shown = reactive<Record<string, boolean>>({});
+const apart = reactive<Record<string, boolean>>({});
+const shownToken = reactive<Record<string, boolean>>({});
 const exportOpen = reactive<Record<string, boolean>>({});
 const exporting = reactive<Record<string, boolean>>({});
 const exportErr = reactive<Record<string, string>>({});

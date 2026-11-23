@@ -351,8 +351,11 @@ The bucket, its address and its token stay as they are.
 **`/synckosh`** is the same buckets on a page of their own, for people who come
 from Project B's homepage: memd's sign-in, none of the dashboard, and Project B's
 look. It signs in with SSO (`/auth/login?return_to=/synckosh`) and makes, lists,
-resets and deletes buckets, with the address hidden until **Show**; **New
-token** stays on the dashboard. It also says in plain words what the server
+resets and deletes buckets, with the address hidden until **Show**, and under
+**Server and token apart…** the same bucket as `https://<host>/sync` and its
+token, each with its own Copy, for apps that take a URL and a bearer token.
+**Open in Project B** sends the full address, which every app version reads;
+**New token** stays on the dashboard. It also says in plain words what the server
 can't do and what it still sees, and links to self-hosting. It is the third web
 app, beside the dashboard and admin (`web/src/apps/synckosh`). memd serves the
 page with the signed-in user and their buckets already in it, in a

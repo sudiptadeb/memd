@@ -90,6 +90,10 @@ h2 { font-size: clamp(22px, 2.5vw, 28px); line-height: 1.15; letter-spacing: -0.
 .keys .kkind { font: 12px var(--mono); color: var(--ink); }
 .keys .kmeta { color: var(--muted); font-size: 13px; }
 .keys .kid { margin-left: auto; font: 12px var(--mono); color: var(--faint); }
+.field { margin: 10px 0; }
+.field .addr { margin: 4px 0 0; }
+.flabel { font: 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.note.apart { margin: 14px 0 0; }
 .addr { display: flex; align-items: center; gap: 8px; background: var(--code); border-radius: 12px; padding: 6px 6px 6px 12px; margin: 14px 0; }
 .addr code { flex: 1; min-width: 0; font: 13px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .addr code.shown { color: var(--text); white-space: normal; word-break: break-all; line-height: 1.7; }
@@ -107,7 +111,5 @@ h2 { font-size: clamp(22px, 2.5vw, 28px); line-height: 1.15; letter-spacing: -0.
 @media (max-width: 640px) {
   .trust { grid-template-columns: 1fr; }
   .who .email { display: none; }
-  .fresh .addr { flex-direction: column; align-items: stretch; padding: 10px 12px; }
-  .fresh .addr .btn { align-self: flex-start; }
   .keys .kid { flex-basis: 100%; margin-left: 0; }
 }
