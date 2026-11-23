@@ -345,14 +345,18 @@ function size(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+// The session and the bucket list are asked for together, not one after the
+// other: on a phone each round trip is most of the wait. Signed out, the list
+// answers 401 and is dropped.
 onMounted(async () => {
-  try {
-    user.value = (await session.get()).user;
-    if (user.value) await reload();
-  } catch (e) {
-    error.value = errText(e);
-  } finally {
-    loaded.value = true;
+  const [me, list] = await Promise.allSettled([session.get(), sync.list()]);
+  if (me.status === "rejected") {
+    error.value = errText(me.reason);
+  } else {
+    user.value = me.value.user;
+    if (user.value && list.status === "fulfilled") buckets.value = (list.value.buckets || []).map(onThisOrigin);
+    else if (user.value && list.status === "rejected") error.value = errText(list.reason);
   }
+  loaded.value = true;
 });
 </script>
