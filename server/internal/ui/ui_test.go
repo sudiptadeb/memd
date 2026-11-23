@@ -313,22 +313,56 @@ func TestUIServesAppsWithCaching(t *testing.T) {
 	}
 }
 
-// /synckosh serves the sync page's own shell, not the dashboard's, and its
-// bundles from its own assets.
+// /synckosh serves the sync page's own shell, not the dashboard's, with the
+// signed-in user and their buckets in it, kept out of the browser's cache, and
+// its bundles from its own assets.
 func TestUIServesSynckoshPage(t *testing.T) {
 	accounts := openTestAccountStore(t)
-	mux, _ := newTestUI(t, accounts)
+	mux, handler := newTestUI(t, accounts)
+	ctx := context.Background()
+	ada, _ := accounts.CreateLocalUser(ctx, account.CreateUserInput{Username: "ada", Password: "correct horse battery staple"})
+	b, _ := accounts.CreateSyncBucket(ctx, ada.ID, "</script><b>x")
 
-	want, err := fs.ReadFile(distFS, "dist/synckosh/index.html")
+	shell, err := fs.ReadFile(distFS, "dist/synckosh/index.html")
 	if err != nil {
 		t.Fatalf("read embedded synckosh shell: %v (was the web UI built?)", err)
 	}
-	for _, target := range []string{"/synckosh", "/synckosh/"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-		if rec.Code != http.StatusOK || rec.Body.String() != string(want) {
-			t.Fatalf("%s: %d, not the synckosh shell", target, rec.Code)
+	page := func(user *account.User, target string) (synckoshState, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		if user != nil {
+			addSession(t, handler, req, *user)
 		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s: %d %q", target, rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		const open = `<script id="synckosh-state" type="application/json">`
+		i := strings.Index(body, open)
+		j := strings.Index(body[i+len(open):], "</script>")
+		if i < 0 || j < 0 || strings.Replace(body, body[i:i+len(open)+j+len("</script>")], "", 1) != string(shell) {
+			t.Fatalf("%s: not the synckosh shell with its state: %s", target, body)
+		}
+		var st synckoshState
+		if err := json.Unmarshal([]byte(body[i+len(open):i+len(open)+j]), &st); err != nil {
+			t.Fatalf("%s: state: %v", target, err)
+		}
+		return st, body
+	}
+
+	for _, target := range []string{"/synckosh", "/synckosh/"} {
+		if st, _ := page(nil, target); st.User != nil || len(st.Buckets) != 0 {
+			t.Fatalf("%s signed out: %+v", target, st)
+		}
+	}
+	st, body := page(&ada, "/synckosh")
+	if st.User == nil || st.User.Username != "ada" || len(st.Buckets) != 1 || st.Buckets[0].Name != b.Name || st.Buckets[0].Token != b.Token {
+		t.Fatalf("signed in: %+v", st)
+	}
+	if strings.Contains(body, "<b>x") {
+		t.Fatal("a bucket's name broke out of the state script")
 	}
 
 	entries, err := fs.ReadDir(distFS, "dist/synckosh/assets")

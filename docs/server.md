@@ -354,7 +354,11 @@ look. It signs in with SSO (`/auth/login?return_to=/synckosh`) and makes, lists,
 resets and deletes buckets, with the address hidden until **Show**; **New
 token** stays on the dashboard. It also says in plain words what the server
 can't do and what it still sees, and links to self-hosting. It is the third web
-app, beside the dashboard and admin (`web/src/apps/synckosh`).
+app, beside the dashboard and admin (`web/src/apps/synckosh`). memd serves the
+page with the signed-in user and their buckets already in it, in a
+`<script id="synckosh-state" type="application/json">` element, so it draws
+without asking for them after its script loads; the response is
+`Cache-Control: no-store`, since it holds the user's tokens.
 
 Each bucket in the list (`GET /api/sync/buckets`) carries `stats` once it holds
 anything: live items per collection, the bytes kept and the newest item's

@@ -345,17 +345,20 @@ function size(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-// The session and the bucket list are asked for together, not one after the
-// other: on a phone each round trip is most of the wait. Signed out, the list
-// answers 401 and is dropped.
+// memd puts the signed-in user and their buckets into the page (ui/synckosh.go),
+// so it draws at once. Vite's dev server has no such state; it asks instead.
 onMounted(async () => {
-  const [me, list] = await Promise.allSettled([session.get(), sync.list()]);
-  if (me.status === "rejected") {
-    error.value = errText(me.reason);
+  const el = document.getElementById("synckosh-state");
+  if (el?.textContent) {
+    const st = JSON.parse(el.textContent) as { user: SessionUser | null; buckets: SyncBucketView[]; error?: string };
+    user.value = st.user;
+    buckets.value = st.buckets.map(onThisOrigin);
+    error.value = st.error || "";
   } else {
-    user.value = me.value.user;
+    const [me, list] = await Promise.allSettled([session.get(), sync.list()]);
+    if (me.status === "rejected") error.value = errText(me.reason);
+    else user.value = me.value.user;
     if (user.value && list.status === "fulfilled") buckets.value = (list.value.buckets || []).map(onThisOrigin);
-    else if (user.value && list.status === "rejected") error.value = errText(list.reason);
   }
   loaded.value = true;
 });

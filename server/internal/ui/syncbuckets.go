@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -72,6 +73,40 @@ func (h *Handler) syncBucketView(b account.SyncBucket) syncBucketView {
 	return v
 }
 
+// syncBucketViews is the user's buckets as the list shows them, each with what
+// the server holds for it.
+func (h *Handler) syncBucketViews(ctx context.Context, userID string) ([]syncBucketView, error) {
+	buckets, err := h.accounts.ListSyncBuckets(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := h.accounts.SyncBucketStatsFor(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]syncBucketView, 0, len(buckets))
+	for _, b := range buckets {
+		v := h.syncBucketView(b)
+		if st, ok := stats[b.ID]; ok {
+			cols := make([]syncCollectionView, 0, len(st.Collections))
+			for _, c := range st.Collections {
+				cols = append(cols, syncCollectionView{Name: c.Name, Items: c.Items})
+			}
+			keys := make([]syncKeyView, 0, len(st.Keys))
+			for _, k := range st.Keys {
+				kv := syncKeyView{ID: k.ID, Label: k.Label, KeyID: k.KeyID, BackupCode: k.BackupCode}
+				if !k.Created.IsZero() {
+					kv.Created = k.Created.UTC().Format(time.RFC3339)
+				}
+				keys = append(keys, kv)
+			}
+			v.Stats = &syncStatsView{Collections: cols, Bytes: st.Bytes, Newest: st.Newest, Keys: keys}
+		}
+		views = append(views, v)
+	}
+	return views, nil
+}
+
 // GET /api/sync/buckets lists the user's buckets, each with what the server
 // holds for it; POST makes one.
 func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
@@ -82,35 +117,10 @@ func (h *Handler) syncBucketsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		buckets, err := h.accounts.ListSyncBuckets(r.Context(), user.ID)
+		views, err := h.syncBucketViews(r.Context(), user.ID)
 		if err != nil {
 			httpErr(w, http.StatusInternalServerError, err)
 			return
-		}
-		stats, err := h.accounts.SyncBucketStatsFor(r.Context(), user.ID)
-		if err != nil {
-			httpErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		views := make([]syncBucketView, 0, len(buckets))
-		for _, b := range buckets {
-			v := h.syncBucketView(b)
-			if st, ok := stats[b.ID]; ok {
-				cols := make([]syncCollectionView, 0, len(st.Collections))
-				for _, c := range st.Collections {
-					cols = append(cols, syncCollectionView{Name: c.Name, Items: c.Items})
-				}
-				keys := make([]syncKeyView, 0, len(st.Keys))
-				for _, k := range st.Keys {
-					kv := syncKeyView{ID: k.ID, Label: k.Label, KeyID: k.KeyID, BackupCode: k.BackupCode}
-					if !k.Created.IsZero() {
-						kv.Created = k.Created.UTC().Format(time.RFC3339)
-					}
-					keys = append(keys, kv)
-				}
-				v.Stats = &syncStatsView{Collections: cols, Bytes: st.Bytes, Newest: st.Newest, Keys: keys}
-			}
-			views = append(views, v)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"buckets": views})
 	case http.MethodPost:

@@ -146,8 +146,8 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/", spaPage(mustReadFile(adminFS, "index.html")))
 	// /synckosh is Project B's sync page: memd's accounts and sync bucket API,
 	// none of the dashboard.
-	mux.HandleFunc("/synckosh", spaPage(mustReadFile(synckoshFS, "index.html")))
-	mux.HandleFunc("/synckosh/", spaPage(mustReadFile(synckoshFS, "index.html")))
+	mux.HandleFunc("/synckosh", h.synckoshPage(mustReadFile(synckoshFS, "index.html")))
+	mux.HandleFunc("/synckosh/", h.synckoshPage(mustReadFile(synckoshFS, "index.html")))
 	mux.HandleFunc("/", spaPage(mustReadFile(dashFS, "index.html")))
 	mux.HandleFunc("/api/session", h.sessionAPI)
 	mux.HandleFunc("/api/auth/login", h.loginAPI)
