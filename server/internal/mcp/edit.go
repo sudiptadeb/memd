@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 // fileEdit is one small change applied by memory_edit. Op picks which of the

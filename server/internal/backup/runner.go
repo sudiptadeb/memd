@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/logs"
-	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/storage"
 )
 
 const (

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/logs"
-	"github.com/sudiptadeb/memd/server/internal/oidc"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/oidc"
 )
 
 // oidcConfigView is the admin-facing representation of the OIDC settings. The

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/storage"
 )
 
 func TestBuild_EdgesOrphansBroken(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/synckosh"
-	"github.com/sudiptadeb/synckosh/server"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/synckosh"
+	"github.com/debkosh/synckosh/server"
 )
 
 func TestSyncBucketsAPI(t *testing.T) {

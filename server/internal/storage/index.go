@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // GeneratedIndexName is the per-directory auto-generated manifest file. It is

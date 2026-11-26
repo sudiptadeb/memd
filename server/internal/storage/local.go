@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // Local is a memory backend backed by a plain folder of files.

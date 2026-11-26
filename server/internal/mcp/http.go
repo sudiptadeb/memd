@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, prefix string) {

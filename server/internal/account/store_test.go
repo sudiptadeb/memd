@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/config"
 )
 
 func TestStoreInitAndSuperAdminLogin(t *testing.T) {

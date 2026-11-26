@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/backup"
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/backup"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // manualBackupTimeout bounds a "back up now" request: snapshot, encrypt,

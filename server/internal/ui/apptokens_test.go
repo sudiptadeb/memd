@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/account"
 )
 
 func TestAppPairRedeemAndSessionFlow(t *testing.T) {

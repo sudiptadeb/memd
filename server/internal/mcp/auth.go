@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 const bearerPrefix = "bearer "

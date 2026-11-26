@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/config"
 	_ "modernc.org/sqlite"
 )
 

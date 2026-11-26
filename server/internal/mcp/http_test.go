@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 func TestHTTPConnectorMemoryLoadAndSkill(t *testing.T) {

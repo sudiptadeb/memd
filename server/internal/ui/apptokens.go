@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // Phone-app pairing. OIDC accounts cannot use POST /api/auth/login and get

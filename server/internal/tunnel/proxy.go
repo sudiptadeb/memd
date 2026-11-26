@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // viewerCtxKey carries the viewer routing decision through the request

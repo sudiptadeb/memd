@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/doctrine"
-	"github.com/sudiptadeb/memd/server/internal/feature"
-	"github.com/sudiptadeb/memd/server/internal/mcp"
-	"github.com/sudiptadeb/memd/server/internal/registry"
-	"github.com/sudiptadeb/memd/server/internal/version"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/doctrine"
+	"github.com/debkosh/memd/server/internal/feature"
+	"github.com/debkosh/memd/server/internal/mcp"
+	"github.com/debkosh/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/version"
 )
 
 func Run(dir string) error {

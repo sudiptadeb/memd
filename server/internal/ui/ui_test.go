@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/logs"
-	"github.com/sudiptadeb/memd/server/internal/oidc"
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/oidc"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 func TestLogsAPIIsNotCached(t *testing.T) {

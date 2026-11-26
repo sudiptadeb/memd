@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/config"
 )
 
 // TestInitUpgradesV2Database simulates a pre-OIDC (schema v2) database — a users

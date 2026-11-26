@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/account"
 )
 
 func TestEnsureAccountDBInitWithSuperAdminOptions(t *testing.T) {

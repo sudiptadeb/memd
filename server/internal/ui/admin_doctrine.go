@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // adminDoctrinesAPI lists the live-editable doctrines (super admin only): the

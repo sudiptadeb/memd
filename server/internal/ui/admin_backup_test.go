@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/backup"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/backup"
 )
 
 func newBackupTestUI(t *testing.T) (*http.ServeMux, *Handler, *account.Store) {

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/logs"
 )
 
 // allowedGitProtocols is the colon-separated allowlist handed to git via

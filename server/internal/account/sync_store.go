@@ -7,8 +7,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/sudiptadeb/synckosh"
-	"github.com/sudiptadeb/synckosh/server"
+	"github.com/debkosh/synckosh"
+	"github.com/debkosh/synckosh/server"
 )
 
 // SyncStore is the synckosh server.Store over memd's database: sync_stores

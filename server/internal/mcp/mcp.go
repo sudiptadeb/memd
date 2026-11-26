@@ -14,14 +14,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/doctrine"
-	"github.com/sudiptadeb/memd/server/internal/feature"
-	"github.com/sudiptadeb/memd/server/internal/graph"
-	"github.com/sudiptadeb/memd/server/internal/logs"
-	"github.com/sudiptadeb/memd/server/internal/registry"
-	"github.com/sudiptadeb/memd/server/internal/storage"
-	"github.com/sudiptadeb/memd/server/internal/tasks"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/doctrine"
+	"github.com/debkosh/memd/server/internal/feature"
+	"github.com/debkosh/memd/server/internal/graph"
+	"github.com/debkosh/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/tasks"
 )
 
 const protocolVersion = "2025-03-26"

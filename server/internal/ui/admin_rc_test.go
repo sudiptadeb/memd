@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/account"
 )
 
 // fakeRC stands in for *tunnel.Handler behind the RCController interface.

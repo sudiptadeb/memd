@@ -16,15 +16,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/backup"
-	"github.com/sudiptadeb/memd/server/internal/config"
-	"github.com/sudiptadeb/memd/server/internal/doctrine"
-	"github.com/sudiptadeb/memd/server/internal/feature"
-	"github.com/sudiptadeb/memd/server/internal/logs"
-	"github.com/sudiptadeb/memd/server/internal/oidc"
-	"github.com/sudiptadeb/memd/server/internal/registry"
-	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/backup"
+	"github.com/debkosh/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/doctrine"
+	"github.com/debkosh/memd/server/internal/feature"
+	"github.com/debkosh/memd/server/internal/logs"
+	"github.com/debkosh/memd/server/internal/oidc"
+	"github.com/debkosh/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/storage"
 )
 
 // The web UI is three independently-built Vue apps under dist/<app> (produced by

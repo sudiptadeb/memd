@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/config"
+	"github.com/debkosh/memd/server/internal/config"
 )
 
 // TestInitAddsFeaturesColumn simulates a pre-feature (schema v7) user_directories

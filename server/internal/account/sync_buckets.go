@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/token"
-	"github.com/sudiptadeb/synckosh"
-	"github.com/sudiptadeb/synckosh/server"
+	"github.com/debkosh/memd/server/internal/token"
+	"github.com/debkosh/synckosh"
+	"github.com/debkosh/synckosh/server"
 )
 
 // A sync bucket is one synckosh bucket: a synced space for a user's devices,

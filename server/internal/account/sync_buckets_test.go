@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sudiptadeb/synckosh"
-	"github.com/sudiptadeb/synckosh/server"
+	"github.com/debkosh/synckosh"
+	"github.com/debkosh/synckosh/server"
 )
 
 func newSyncTestUser(t *testing.T, store *Store, name string) User {

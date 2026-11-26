@@ -1,6 +1,6 @@
 package feature
 
-import "github.com/sudiptadeb/memd/server/internal/doctrine"
+import "github.com/debkosh/memd/server/internal/doctrine"
 
 // RegisterDoctrines seeds the Live doctrine store with each feature's base
 // doctrine, so a super admin can edit feature doctrines at runtime alongside the

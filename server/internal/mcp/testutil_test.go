@@ -1,9 +1,9 @@
 package mcp
 
 import (
-	"github.com/sudiptadeb/memd/server/internal/doctrine"
-	"github.com/sudiptadeb/memd/server/internal/feature"
-	"github.com/sudiptadeb/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/doctrine"
+	"github.com/debkosh/memd/server/internal/feature"
+	"github.com/debkosh/memd/server/internal/registry"
 )
 
 // newTestServer builds an MCP server with a live doctrine store seeded with a

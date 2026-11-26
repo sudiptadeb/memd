@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/synckosh"
-	"github.com/sudiptadeb/synckosh/bolt"
-	"github.com/sudiptadeb/synckosh/client"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/synckosh"
+	"github.com/debkosh/synckosh/bolt"
+	"github.com/debkosh/synckosh/client"
 )
 
 type env struct {

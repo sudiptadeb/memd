@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/token"
+	"github.com/debkosh/memd/server/internal/token"
 )
 
 func (s *Store) CreateTeamForActor(ctx context.Context, in CreateTeamInput) (Team, error) {

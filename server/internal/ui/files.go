@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/account"
-	"github.com/sudiptadeb/memd/server/internal/graph"
-	"github.com/sudiptadeb/memd/server/internal/registry"
-	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/account"
+	"github.com/debkosh/memd/server/internal/graph"
+	"github.com/debkosh/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/storage"
 )
 
 // rawFileLimit caps how many bytes the raw endpoint serves. Memory files are

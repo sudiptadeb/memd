@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sudiptadeb/memd/server/internal/storage"
+	"github.com/debkosh/memd/server/internal/storage"
 )
 
 // Node is one memory file in the graph.

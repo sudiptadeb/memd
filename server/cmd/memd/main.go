@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sudiptadeb/memd/server/internal/backup"
-	"github.com/sudiptadeb/memd/server/internal/migrate"
-	"github.com/sudiptadeb/memd/server/internal/quick"
-	"github.com/sudiptadeb/memd/server/internal/serve"
-	"github.com/sudiptadeb/memd/server/internal/version"
+	"github.com/debkosh/memd/server/internal/backup"
+	"github.com/debkosh/memd/server/internal/migrate"
+	"github.com/debkosh/memd/server/internal/quick"
+	"github.com/debkosh/memd/server/internal/serve"
+	"github.com/debkosh/memd/server/internal/version"
 	"golang.org/x/term"
 )
 
