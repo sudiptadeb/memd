@@ -477,7 +477,7 @@ only linked driver today; other SQL URLs are parsed for the future adapter layer
 
 ## Remote Terminal Rendezvous (termulaa rc)
 
-memd can act as the rendezvous server for [termulaa](https://github.com/sudiptadeb/termulaa)'s
+memd can act as the rendezvous server for [termulaa](https://github.com/debkosh/termulaa)'s
 reverse tunnel, so a terminal running loopback-only on your own machine is
 reachable from anywhere — behind memd's existing login. memd is a reference
 implementation of the termulaa rc protocol; the normative wire spec lives in

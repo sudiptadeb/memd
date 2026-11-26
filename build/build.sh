@@ -21,7 +21,7 @@ BINARY="memd"
 DIST_DIR="dist"
 WEB_DIR="web"
 UI_DIST="server/internal/ui/dist"
-LDFLAGS="-s -w -X github.com/sudiptadeb/memd/server/internal/version.Value=${VERSION}"
+LDFLAGS="-s -w -X github.com/debkosh/memd/server/internal/version.Value=${VERSION}"
 
 sync_doctrine() {
   # Mirror the canonical doctrine into the embedded copy so go:embed picks

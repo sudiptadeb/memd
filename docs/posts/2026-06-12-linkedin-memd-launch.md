@@ -14,7 +14,7 @@ It doesn't just store. Five workflows keep the memory organised, named after wha
 
 I've run my own work and personal memory on it for weeks. This post was drafted by an agent reading from that memory.
 
-memd now lives at memd.debkosh.com, the source is MIT licensed at github.com/sudiptadeb/memd. If you run more than one AI agent and you're tired of repeating yourself, give it a look. Feedback welcome, especially the critical kind.
+memd now lives at memd.debkosh.com, the source is MIT licensed at github.com/debkosh/memd. If you run more than one AI agent and you're tired of repeating yourself, give it a look. Feedback welcome, especially the critical kind.
 
 ## Plain-text version (for AI-detector pass)
 
@@ -28,7 +28,7 @@ It doesn't just store. Five workflows keep the memory organised, named after wha
 
 I've run my own work and personal memory on it for weeks. This post was drafted by an agent reading from that memory.
 
-memd now lives at memd.debkosh.com, the source is MIT licensed at github.com/sudiptadeb/memd. If you run more than one AI agent and you're tired of repeating yourself, give it a look. Feedback welcome, especially the critical kind.
+memd now lives at memd.debkosh.com, the source is MIT licensed at github.com/debkosh/memd. If you run more than one AI agent and you're tired of repeating yourself, give it a look. Feedback welcome, especially the critical kind.
 
 ## Image
 

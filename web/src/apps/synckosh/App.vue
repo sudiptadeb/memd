@@ -237,8 +237,8 @@ import { syncDeepLink } from "@/apps/dashboard/components/syncLink";
 import { publicURL } from "@/apps/dashboard/components/connUrls";
 import type { SessionUser, SyncBucketView } from "@/shared/types";
 
-const sealingURL = "https://github.com/sudiptadeb/synckosh/blob/main/SPEC.md#what-sealing-protects";
-const selfHostURL = "https://github.com/sudiptadeb/memd/blob/main/docs/self-hosting.md";
+const sealingURL = "https://github.com/debkosh/synckosh/blob/main/SPEC.md#what-sealing-protects";
+const selfHostURL = "https://github.com/debkosh/memd/blob/main/docs/self-hosting.md";
 const signInURL = auth.ssoLoginUrl("/synckosh");
 const host = location.host;
 

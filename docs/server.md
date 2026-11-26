@@ -334,7 +334,7 @@ Some cloud agents can fetch URLs but cannot connect to MCP. Create an HTTP conne
 ## Sync Buckets
 
 memd also hosts sync buckets for apps that sync a person's data between their
-devices with [synckosh](https://github.com/sudiptadeb/synckosh). A sync bucket
+devices with [synckosh](https://github.com/debkosh/synckosh). A sync bucket
 is one synced space: a user makes one on the dashboard's **Sync buckets** page,
 which shows its address and token to its owner at any time, so another device
 can be set up later. The token is stored readable in `memd.db`, like a

@@ -364,7 +364,7 @@
         <div class="phone-actions">
           <a
             class="btn primary"
-            href="https://github.com/sudiptadeb/termulaa/releases/latest/download/termulaa.apk"
+            href="https://github.com/debkosh/termulaa/releases/latest/download/termulaa.apk"
             download
           >
             <MIcon name="download" />
@@ -378,7 +378,7 @@
         <p class="setup-hint">
           Android only. Sideloaded — your phone will ask you to allow installs from your browser.
           Source in the
-          <a href="https://github.com/sudiptadeb/termulaa" target="_blank" rel="noopener noreferrer"
+          <a href="https://github.com/debkosh/termulaa" target="_blank" rel="noopener noreferrer"
             >termulaa repo</a
           >.
         </p>
@@ -763,7 +763,7 @@ function shellQuote(value: string): string {
 // detached where no service manager serves the account). The server this
 // dashboard is served from is the rendezvous, so the origin comes from the
 // address bar — never a hardcoded hostname.
-const installScriptURL = "https://raw.githubusercontent.com/sudiptadeb/termulaa/main/install.sh";
+const installScriptURL = "https://raw.githubusercontent.com/debkosh/termulaa/main/install.sh";
 
 const pairFlags = computed(() => {
   if (!minted.value) return "";
@@ -784,7 +784,7 @@ const goCommand = computed(() => {
   let save =
     "termulaa -rc-save -rc-server " + window.location.origin + " -rc-token " + shellQuote(minted.value.token);
   if (mintedLabel.value) save += " -rc-label " + shellQuote(mintedLabel.value);
-  return "go install github.com/sudiptadeb/termulaa/src/cmd/termulaa@latest\n" + save;
+  return "go install github.com/debkosh/termulaa/src/cmd/termulaa@latest\n" + save;
 });
 
 // Where the paired terminal will open: the token's path-mode URL, or the
