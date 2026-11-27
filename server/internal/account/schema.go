@@ -1,6 +1,6 @@
 package account
 
-const latestSchemaVersion = 13
+const latestSchemaVersion = 14
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -156,6 +156,27 @@ var schemaStatements = []string{
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_sync_buckets_user_id ON sync_buckets(user_id)`,
+	// Notification channels (schema v14): one each, reached at /notify with
+	// its token, which is kept readable like a sync bucket's. Messages are
+	// kept as they came (senders seal them) for a day, newest last by seq.
+	`CREATE TABLE IF NOT EXISTS notify_channels (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		token TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_notify_channels_user_id ON notify_channels(user_id)`,
+	`CREATE TABLE IF NOT EXISTS notify_messages (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel TEXT NOT NULL,
+		id TEXT NOT NULL,
+		time INTEGER NOT NULL,
+		message TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_notify_messages_channel ON notify_messages(channel, seq)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_notify_messages_id ON notify_messages(channel, id)`,
 	// directory_owner_user_id is the directory's owner, which differs from the
 	// connector's owner when a team member attaches a teammate's shared
 	// directory.

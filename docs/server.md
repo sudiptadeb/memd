@@ -408,6 +408,41 @@ timestamps, public parts and sizes. Items live in `memd.db` (`sync_stores` and
 `sync_items`). synckosh's default limits apply, and deletes older than 90 days
 are removed once a day; a device away longer starts over from the server's copy.
 
+## Notification Channels
+
+A notification channel is an address that scripts and agents send short
+messages to and a phone app listens on. It speaks the part of
+[ntfy](https://ntfy.sh)'s protocol that a sender and a phone need, so a client
+made for an ntfy.sh topic works with the channel's address instead, with no
+daily message quota. A user makes one on the dashboard's **Notifications**
+page, which shows its address, `https://<host>/notify/<token>`, to its owner
+at any time. **New token** replaces the address; the old one stops working at
+once, for senders and for streams already open (within 45 seconds).
+**Delete** removes the channel and its messages.
+
+```
+POST|PUT <address>               publish the body, at most 4096 bytes (413 beyond)
+GET      <address>/ws?since=     a WebSocket of events
+GET      <address>/json?since=   the same as JSON lines; poll=1 answers at once
+```
+
+Events are ntfy's: `open` when a stream starts, `keepalive` every 45 seconds
+(under nginx's default 60-second proxy timeout), and `message` with `id`,
+`time` (unix seconds) and `message`. `since` is a message id, `all`, or unix
+seconds; an id the channel no longer keeps, or never gave, means everything
+kept, so a phone moved from another server misses nothing. Without `since` a
+stream sends only what comes next. A publish answers with its `message` event.
+
+The token in the address is the channel's only lock, as a topic name is on
+ntfy.sh: anyone with the address can send and read. memd stores each message
+as it came and keeps it for a day, at most 500 per channel, for a phone that
+was away; senders should seal what they send for the phone (termulaa's
+`notify` encrypts each message with age to a key only the phone holds). The
+token is stored readable in `memd.db`, like a sync bucket's, with its sha256
+hash, which requests are looked up by. Code: `internal/notifychannel` (the
+endpoint), `internal/account/notify_channels.go` (the store) and
+`internal/ui/notifychannels.go` (the dashboard API, `/api/notify/channels`).
+
 ## Where Config Lives
 
 | Platform | Path |

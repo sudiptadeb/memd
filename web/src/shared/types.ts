@@ -784,6 +784,29 @@ export interface AppTokensResponse {
   tokens: AppTokenView[];
 }
 
+// --- Notification channels (ui/notifychannels.go) --------------------------
+
+// ui.notifyChannelView — one of the user's notification channels. `url` holds
+// its token: senders POST to it and the phone listens at `<url>/ws`, as with
+// an ntfy.sh topic. `messages` is how many the server keeps now (list only).
+export interface NotifyChannelView {
+  id: string;
+  name: string;
+  created_at: string;
+  url: string;
+  messages: number;
+}
+
+// Response of GET /api/notify/channels (ui.notifyChannelsAPI).
+export interface NotifyChannelsResponse {
+  channels: NotifyChannelView[];
+}
+
+// Response of POST /api/notify/channels and POST /api/notify/channels/:id/rotate.
+export interface NotifyChannelResponse {
+  channel: NotifyChannelView;
+}
+
 // --- Sync buckets (ui/syncbuckets.go) ---------------------------------------
 
 // ui.syncBucketView — one of the user's sync buckets. `url` is its address for

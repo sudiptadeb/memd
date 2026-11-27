@@ -20,6 +20,7 @@ import (
 	"github.com/debkosh/memd/server/internal/logs"
 	"github.com/debkosh/memd/server/internal/mcp"
 	"github.com/debkosh/memd/server/internal/registry"
+	"github.com/debkosh/memd/server/internal/notifychannel"
 	"github.com/debkosh/memd/server/internal/syncbucket"
 	"github.com/debkosh/memd/server/internal/tunnel"
 	"github.com/debkosh/memd/server/internal/ui"
@@ -103,6 +104,12 @@ func RunOptions(opts Options) error {
 	syncCtx, syncStop := context.WithCancel(context.Background())
 	defer syncStop()
 	syncHandler.Start(syncCtx)
+
+	// Notification channels at /notify (ntfy's protocol, each reached with its
+	// token), and the hourly removal of messages older than a day.
+	notifyHandler := notifychannel.New(accountStore)
+	notifyHandler.Mount(mux)
+	notifyHandler.Start(syncCtx)
 
 	// The reverse-tunnel rendezvous (termulaa rc) is on by default and toggled
 	// at runtime by a super admin (the setting persists in app_settings, so it

@@ -128,6 +128,7 @@ const items = computed<NavItem[]>(() => {
     { to: "/tasks", icon: "list-checks", label: "Tasks", title: "Tasks" },
     { to: "/connectors", icon: "plug", label: "Connectors", title: "Connectors" },
     { to: "/sync-buckets", icon: "refresh-cw", label: "Sync buckets", title: "Sync buckets" },
+    { to: "/notifications", icon: "bell", label: "Notifications", title: "Notification channels" },
     { to: "/activity", icon: "activity", label: "Activity", title: "Activity" },
   );
   // Only when the feature is effectively on: it defaults to on, but a super

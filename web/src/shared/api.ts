@@ -56,6 +56,8 @@ import type {
   SetTeamMemberRoleRequest,
   SetUserDisabledRequest,
   SetUserPasswordRequest,
+  NotifyChannelResponse,
+  NotifyChannelsResponse,
   SyncBucketResponse,
   SyncBucketsResponse,
   TaskMutateRequest,
@@ -571,6 +573,34 @@ export const app = {
   // phone's next session refresh fails with 401 and it signs itself out.
   revoke(id: string): Promise<void> {
     return request<void>(`/api/app/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+};
+
+// --- Notification channels (ui/notifychannels.go) --------------------------
+
+export const notify = {
+  // GET /api/notify/channels — ui.notifyChannelsAPI. The user's channels.
+  list(): Promise<NotifyChannelsResponse> {
+    return request<NotifyChannelsResponse>("/api/notify/channels");
+  },
+
+  // POST /api/notify/channels — ui.notifyChannelsAPI. Makes a channel.
+  create(name: string): Promise<NotifyChannelResponse> {
+    return request<NotifyChannelResponse>("/api/notify/channels", { method: "POST", body: { name } });
+  },
+
+  // POST /api/notify/channels/:id/rotate — ui.notifyChannelAPI. A new address;
+  // the old one stops working at once.
+  rotate(id: string): Promise<NotifyChannelResponse> {
+    return request<NotifyChannelResponse>(`/api/notify/channels/${encodeURIComponent(id)}/rotate`, {
+      method: "POST",
+    });
+  },
+
+  // DELETE /api/notify/channels/:id — ui.notifyChannelAPI. Deletes the channel
+  // and its messages (204).
+  remove(id: string): Promise<void> {
+    return request<void>(`/api/notify/channels/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };
 
